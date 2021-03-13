@@ -33,21 +33,20 @@ class ColoredText:
 
     class _ColoredChunk:
         # Chunk of ColoredText which has same color.
-        __slots__ = '_c_prefix', 'text', '_c_suffix'
+        __slots__ = 'c_prefix', 'text', 'c_suffix'
         def __init__(self, prefix, text, suffix):
-            self._c_prefix = prefix
+            self.c_prefix = prefix
             self.text = text
-            self._c_suffix = suffix
+            self.c_suffix = suffix
 
         def _equal(self, other):
             return (
-                self._c_prefix == other._c_prefix
+                self.c_prefix == other.c_prefix
                 and self.text == other.text
-                and self._c_suffix == other._c_suffix)
+                and self.c_suffix == other.c_suffix)
 
         def _clone(self):
-            return ColoredText._ColoredChunk(
-                self._c_prefix, self.text, self._c_suffix)
+            return type(self)(self.c_prefix, self.text, self.c_suffix)
 
     def __init__(self, *parts):
         """Construct colored text.
@@ -68,7 +67,7 @@ class ColoredText:
 
     def __str__(self):
         # produce colored text
-        return "".join(f"{p._c_prefix}{p.text}{p._c_suffix}" for p in self.parts)
+        return "".join(f"{p.c_prefix}{p.text}{p.c_suffix}" for p in self.parts)
 
     def __len__(self):
         return self.scrlen
@@ -91,9 +90,9 @@ class ColoredText:
                 return not self.parts and not other
 
             p = self.parts[0]
-            return p._c_prefix == "" and p.text == other and p._c_suffix == ""
+            return p.c_prefix == "" and p.text == other and p.c_suffix == ""
 
-        raise NotImplemented
+        return NotImplemented
 
     def no_color(self):
         """produce not-colored text"""
@@ -101,10 +100,10 @@ class ColoredText:
 
     def __iadd__(self, other):
         """add some text (colored or usual) to self"""
-        if isinstance(other, list) or isinstance(other, tuple):
+        if isinstance(other, (list, tuple)):
             for part in other:
                 self += part
-        elif hasattr(other, '_c_prefix'):
+        elif hasattr(other, 'c_prefix'):
             self._append_colored_chunk(other)
         elif hasattr(other, 'parts') and hasattr(other, 'scrlen'):
             # looks like this is another ColoredText object
@@ -164,8 +163,8 @@ class ColoredText:
                 width = int(width_part)
             except ValueError:
                 raise ValueError(
-                        f"Can't format ColoredText object: "
-                        f"invalid width '{width_part}' specified")
+                    f"Can't format ColoredText object: "
+                    f"invalid width '{width_part}' specified")
 
         # read fill character
         filler_ch = format_spec[0] if align_ch_pos == 1 else ' '
@@ -185,7 +184,7 @@ class ColoredText:
 
     def _append_colored_chunk(self, part, try_merge=True):
         # append _ColoredChunk to self
-        if try_merge and self.parts and part._c_prefix == self.parts[-1]._c_prefix:
+        if try_merge and self.parts and part.c_prefix == self.parts[-1].c_prefix:
             self.parts[-1].text += part.text
         else:
             self.parts.append(part._clone())
