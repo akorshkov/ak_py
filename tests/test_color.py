@@ -1,15 +1,15 @@
-"""Test ColorPrinter and ColorTest"""
+"""Test ColorFmt and ColorTest"""
 
 import unittest
 
-from ak.color import ColoredText, ColorPrinter
+from ak.color import ColoredText, ColorFmt
 
 
-class TestColorPrinter(unittest.TestCase):
+class TestColorFmt(unittest.TestCase):
 
     def test_simple_usage(self):
-        """Test successfull scenarios of using ColorPrinter."""
-        green_printer = ColorPrinter('GREEN')
+        """Test successfull scenarios of using ColorFmt."""
+        green_printer = ColorFmt('GREEN')
         raw_text = 'test'
         green_text = green_printer(raw_text)
 
@@ -26,11 +26,11 @@ class TestColorPrinter(unittest.TestCase):
         self.assertEqual(raw_text, green_text.no_color())
 
     def test_advanced_scenarios(self):
-        """Test other scenarios of ColorPrinter usage."""
+        """Test other scenarios of ColorFmt usage."""
 
         raw_text = 'test'
 
-        blink_text = ColorPrinter(
+        blink_text = ColorFmt(
             'YELLOW', bg_color='BLUE', bold=True, underline=True,
             blink=True, crossed=True)(raw_text)
 
@@ -43,7 +43,7 @@ class TestColorPrinter(unittest.TestCase):
 
         raw_text = 'test'
 
-        dummy_printer = ColorPrinter(
+        dummy_printer = ColorFmt(
             'YELLOW', bg_color='BLUE', bold=True, underline=True,
             blink=True, crossed=True, use_effects=False)
 
@@ -51,12 +51,12 @@ class TestColorPrinter(unittest.TestCase):
 
         self.assertEqual(
             raw_text, t,
-            "'t' should have no special effects as ColorPrinter "
+            "'t' should have no special effects as ColorFmt "
             "was created with 'use_effects = False'")
 
     def test_wrong_color(self):
         with self.assertRaises(ValueError) as exc:
-            ColorPrinter('BAD_COLOR')
+            ColorFmt('BAD_COLOR')
 
         err_msg = str(exc.exception)
         self.assertIn("Invalid color name", err_msg)
@@ -67,7 +67,7 @@ class TestColorPrinter(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError) as exc:
-            ColorPrinter(None, bg_color='BAD_COLOR')
+            ColorFmt(None, bg_color='BAD_COLOR')
 
         err_msg = str(exc.exception)
         self.assertIn("Invalid bg_color name", err_msg)
@@ -82,7 +82,7 @@ class TestColoredTextProperties(unittest.TestCase):
 
     def test_nocolor_text(self):
         raw_text = 'text'
-        nocolor_text = ColorPrinter(None)(raw_text)
+        nocolor_text = ColorFmt(None)(raw_text)
 
         self.assertEqual(len(raw_text), len(nocolor_text))
         self.assertEqual(raw_text, nocolor_text.no_color())
@@ -102,7 +102,7 @@ class TestColoredTextProperties(unittest.TestCase):
     def test_making_copies(self):
         """Make sure operations with the copy no not affect original."""
         raw_text = "some_text"
-        orig = ColorPrinter('GREEN')(raw_text)
+        orig = ColorFmt('GREEN')(raw_text)
 
         t = ColoredText(orig)
         self.assertEqual(raw_text, orig.no_color())
@@ -110,7 +110,7 @@ class TestColoredTextProperties(unittest.TestCase):
         t = ColoredText(orig, "some more")
         self.assertEqual(raw_text, orig.no_color())
 
-        other_t = ColorPrinter('GREEN')("other text")
+        other_t = ColorFmt('GREEN')("other text")
         t = ColoredText(other_t, orig)
         self.assertEqual(raw_text, orig.no_color())
         t = ColoredText(orig, other_t)
@@ -126,10 +126,10 @@ class TestColoredTextProperties(unittest.TestCase):
         ColoredText with no color considered equal to raw string.
         """
         raw_text = "text"
-        green_text = ColorPrinter('GREEN')(raw_text)
-        green_text1 = ColorPrinter('GREEN')(raw_text)
-        red_text = ColorPrinter('RED')(raw_text)
-        nocolor_text = ColorPrinter(None)(raw_text)
+        green_text = ColorFmt('GREEN')(raw_text)
+        green_text1 = ColorFmt('GREEN')(raw_text)
+        red_text = ColorFmt('RED')(raw_text)
+        nocolor_text = ColorFmt(None)(raw_text)
 
         self.assertTrue(green_text == green_text)
         self.assertTrue(green_text == green_text1)
@@ -153,11 +153,11 @@ class TestColoredTextProperties(unittest.TestCase):
     def test_concatenation(self):
         """Text different ways to concatenate ColoredText."""
 
-        part_1 = ColorPrinter('GREEN')("p1")
-        part_2 = ColorPrinter('GREEN')("p2")
+        part_1 = ColorFmt('GREEN')("p1")
+        part_2 = ColorFmt('GREEN')("p2")
 
         t = part_1 + part_2
-        expected = ColorPrinter('GREEN')("p1p2")
+        expected = ColorFmt('GREEN')("p1p2")
 
         self.assertTrue(t == expected)
         self.assertEqual("p1", part_1.no_color())
@@ -173,7 +173,7 @@ class TestColoredTextProperties(unittest.TestCase):
     def test_formatting(self):
         """Test string formatting of ColoredText objects"""
 
-        t = ColorPrinter('GREEN')("text")
+        t = ColorFmt('GREEN')("text")
 
         # just check formatting produce no errors
         s = f"{t}"        # printed as "text"

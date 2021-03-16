@@ -8,12 +8,12 @@ ColoredText - objects of this class are string-like objects, which can be
     specifier when formatting such strings.
     ColoredText objects can be printed using format specifiers.
 
-ColorPrinter - class which produces ColoredText objects.
+ColorFmt - class which produces ColoredText objects.
 
 Example of usage:
-    green_printer = ColorPrinter('GREEN')
+    green_printer = ColorFmt('GREEN')
     t = green_printer("some green text") + " and normal text "
-    t += [" and ", ColorPrinter('RED')("some red text")]
+    t += [" and ", ColorFmt('RED')("some red text")]
 
     # produce string with color excape sequences
     str(t)
@@ -192,7 +192,7 @@ class ColoredText:
         self.scrlen += len(part.text)
 
 
-class ColorPrinter:
+class ColorFmt:
     """Objects of this class produce colored text."""
 
     __slots__ = '_color_prefix', '_color_suffix'
