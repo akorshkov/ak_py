@@ -161,10 +161,11 @@ class ColoredText:
         if width_part:
             try:
                 width = int(width_part)
-            except ValueError:
+            except ValueError as err:
                 raise ValueError(
                     f"Can't format ColoredText object: "
-                    f"invalid width '{width_part}' specified")
+                    f"invalid width '{width_part}' specified"
+                ) from err
 
         # read fill character
         filler_ch = format_spec[0] if align_ch_pos == 1 else ' '
