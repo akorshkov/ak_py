@@ -55,31 +55,27 @@ class TestColorPrinter(unittest.TestCase):
             "was created with 'use_effects = False'")
 
     def test_wrong_color(self):
-        try:
+        with self.assertRaises(ValueError) as exc:
             ColorPrinter('BAD_COLOR')
-        except ValueError as exc:
-            err_msg = str(exc)
-            self.assertIn("Invalid color name", err_msg)
-            self.assertIn("BAD_COLOR", err_msg)
-            self.assertIn(
-                'MAGENTA', err_msg,
-                "error message should contain list of valid color codes",
-            )
-        else:
-            self.assertTrue(False, "ValueError not raised")
 
-        try:
+        err_msg = str(exc.exception)
+        self.assertIn("Invalid color name", err_msg)
+        self.assertIn("BAD_COLOR", err_msg)
+        self.assertIn(
+            'MAGENTA', err_msg,
+            "error message should contain list of valid color codes",
+        )
+
+        with self.assertRaises(ValueError) as exc:
             ColorPrinter(None, bg_color='BAD_COLOR')
-        except ValueError as exc:
-            err_msg = str(exc)
-            self.assertIn("Invalid bg_color name", err_msg)
-            self.assertIn("BAD_COLOR", err_msg)
-            self.assertIn(
-                'MAGENTA', err_msg,
-                "error message should contain list of valid color codes",
-            )
-        else:
-            self.assertTrue(False, "ValueError not raised")
+
+        err_msg = str(exc.exception)
+        self.assertIn("Invalid bg_color name", err_msg)
+        self.assertIn("BAD_COLOR", err_msg)
+        self.assertIn(
+            'MAGENTA', err_msg,
+            "error message should contain list of valid color codes",
+        )
 
 
 class TestColoredTextProperties(unittest.TestCase):
@@ -187,18 +183,14 @@ class TestColoredTextProperties(unittest.TestCase):
         s = f"{t:>>10}"   # printed as ">>>>>>text"
 
         # test bad format strings
-        try:
-            s = f"{t:d}"
-        except ValueError as exc:
-            err_msg = str(exc)
-            self.assertIn("invalid format type 'd'", err_msg)
-        else:
-            self.assertTrue(False, "ValueError not raised")
+        with self.assertRaises(ValueError) as exc:
+            f"{t:d}"
 
-        try:
-            s = f"{t:1a0}"
-        except ValueError as exc:
-            err_msg = str(exc)
-            self.assertIn("invalid width '1a0'", err_msg)
-        else:
-            self.assertTrue(False, "ValueError not raised")
+        err_msg = str(exc.exception)
+        self.assertIn("invalid format type 'd'", err_msg)
+
+        with self.assertRaises(ValueError) as exc:
+            f"{t:1a0}"
+
+        err_msg = str(exc.exception)
+        self.assertIn("invalid width '1a0'", err_msg)
