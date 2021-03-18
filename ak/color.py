@@ -22,6 +22,9 @@ Example of usage:
 
     # produce string with same text but no color escape sequences
     t_no_color = t.no_color()
+
+    # print color examples table: each cell have different color/effects
+    print(make_examples('text'))
 """
 
 
@@ -261,3 +264,33 @@ class ColorFmt:
     def __call__(self, text):
         """text -> colored text (ColoredText object)."""
         return ColoredText.make(self._color_prefix, text, self._color_suffix)
+
+
+def make_examples(text="text"):
+    """Produce color examples table (simple printable string)"""
+
+    def _produce_lines():
+        width = max(len(text), 15)
+        first_col_width = 20
+        fmt_opts = [
+            ('--', {}),
+            ('bold', {"bold": True}),
+            ('faint', {'faint': True}),
+            ('both', {'bold': True, 'faint': True}),
+        ]
+
+        cols_descr = 'Color \\ modifiers'
+        header_str = f"{cols_descr:{first_col_width}}"
+        for col_name, _ in fmt_opts:
+            header_str += f"{col_name:^{width}}"
+        yield header_str
+
+        for color in [None, 'BLACK', 'RED', 'GREEN', 'YELLOW',
+                      'BLUE', 'MAGENTA', 'CYAN', 'WHITE']:
+            line = f"{str(color):{first_col_width}}"
+            for col_name, opts in fmt_opts:
+                colored_text = ColorFmt(color, **opts)(text)
+                line += f"{colored_text:^{width}}"
+            yield line
+
+    return "\n".join(line for line in _produce_lines())
