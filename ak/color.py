@@ -211,6 +211,8 @@ class ColorFmt:
         'WHITE'  : "37",
     }
 
+    _NO_COLOR = None  # dummy ColorFmt object, will be initialized on demand
+
     def __init__(
             self, color, *, bg_color=None,
             bold=None, faint=None, underline=None, blink=None, crossed=None,
@@ -260,6 +262,45 @@ class ColorFmt:
         else:
             self._color_prefix = ""
             self._color_suffix = ""
+
+    @classmethod
+    def make(cls, color_obj, use_colors=True):
+        """Helper method which produce ColorFmt object.
+
+        Arguments:
+        - color_obj: can be either:
+            - ColorFmt object.
+            - color name string
+            - tuple of ("color name", {effect_name: value}).
+              Check ColorFmt constructor for possible values of color
+              and effects.
+            - None (to use text w/o any effects)
+        - use_colors: if False, the first argument is ignored and dummy
+            ColorFmt object is returned (it produces text w/o any effects)
+        """
+        if not use_colors:
+            return cls.get_nocolor_fmt()
+        elif isinstance(color_obj, cls):
+            return color_obj
+        elif isinstance(color_obj, str):
+            return cls(color_obj)
+        elif isinstance(color_obj, tuple):
+            assert len(color_obj) == 2, (
+                f"Invalid argument(s) for ColorFmt: {color_obj}. "
+                f"Expected tuple of two elements: color_name and dict."
+            )
+            return cls(color_obj[0], **color_obj[1])
+        elif color_obj is None:
+            return cls.get_nocolor_fmt()
+
+        raise ValueError(f"Invalid arg {color_obj} for ColorFmt")
+
+    @classmethod
+    def get_nocolor_fmt(cls):
+        """Get dummy ColorFmt object (it produces text w/o any effects)."""
+        if cls._NO_COLOR is None:
+            cls._NO_COLOR = cls(None)
+        return cls._NO_COLOR
 
     def __call__(self, text):
         """text -> colored text (ColoredText object)."""

@@ -26,17 +26,13 @@ class PrettyPrinter:
         - color_keyword: specifies format for 'True', 'False' and 'None' constants
         - use_colors: if False, the "color_*" arguments are ignored and
             plain text is produced.
-        Each 'color_*" argument can be be either:
-            - ColorFmt object
-            - color name string
-            - tuple of ("color name", {effect_name: value}).
-              Check ColorFmt constructor for possible values of color
-              and effects.
-            - None (to use text w/o any effects)
+        - color_* - You can specify these arguments to override predefined
+            colors. Check help(ColorFmt.make) for possible values of these
+            arguments.
         """
-        self._color_name = self._mk_color_fmt(color_name, use_colors)
-        self._color_number = self._mk_color_fmt(color_number, use_colors)
-        self._color_keyword = self._mk_color_fmt(color_keyword, use_colors)
+        self._color_name = ColorFmt.make(color_name, use_colors)
+        self._color_number = ColorFmt.make(color_number, use_colors)
+        self._color_keyword = ColorFmt.make(color_keyword, use_colors)
 
     def pretty_print(self, obj_to_print):
         """Generic pretty print of json-like python objects."""
@@ -46,24 +42,6 @@ class PrettyPrinter:
         """Make a pretty string representation of json-like python object."""
         return "".join(
             line for line in self._gen_pp_str_for_obj(obj_to_print, offset=0))
-
-    def _mk_color_fmt(self, arg, use_colors):
-        if not use_colors:
-            return self._NO_COLOR
-        elif isinstance(arg, ColorFmt):
-            return arg
-        elif isinstance(arg, str):
-            return ColorFmt(arg)
-        elif isinstance(arg, tuple):
-            assert len(arg) == 2, (
-                f"Invalid arg for ColorFmt: {arg}. "
-                f"Expected tuple of two elements: color_name and dict"
-            )
-            return ColorFmt(arg[0], **arg[1])
-        elif arg is None:
-            return self._NO_COLOR
-
-        raise ValueError(f"Invalid arg {arg} for ColorFmt")
 
     def _gen_pp_str_for_obj(self, obj_to_print, offset=0):
         # generate parts for 'make_pp_str' method

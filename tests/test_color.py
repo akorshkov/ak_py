@@ -6,6 +6,7 @@ from ak.color import ColoredText, ColorFmt
 
 
 class TestColorFmt(unittest.TestCase):
+    """Test ColorFmt: object wich produce colored text."""
 
     def test_simple_usage(self):
         """Test successfull scenarios of using ColorFmt."""
@@ -76,6 +77,17 @@ class TestColorFmt(unittest.TestCase):
             'MAGENTA', err_msg,
             "error message should contain list of valid color codes",
         )
+
+    def test_make_colored_fmt(self):
+        """Text ColorFmt.make method."""
+
+        # Check that the 'make' method does not fail with different
+        # types of arguents.
+        _ = ColorFmt.make(None)  # produces dummy formatter
+        _ = ColorFmt.make('GREEN')
+        _ = ColorFmt.make(('GREEN', {'bold': True}))
+        _ = ColorFmt.make((None, {'bold': True}))
+        _ = ColorFmt.make('GREEN', use_colors=False)
 
 
 class TestColoredTextProperties(unittest.TestCase):
