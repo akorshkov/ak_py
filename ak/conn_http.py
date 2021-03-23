@@ -90,15 +90,15 @@ class HttpConn:
 
         Arguments:
         - path: request path
-        - method: request method. By default is "GET" or "POST" if 'data' provided
+        - method: request method. By default is "GET" or "POST" (if 'data' provided)
         - params: dictionary of request parameters
         - data: data for request. Can be bytes, string or any python object, which
             can be dumped to json.
-        - headers: dict, explicit header for request
+        - headers: dict, explicit headers for request
         - raw_response: specifies how response is handled.
             False - (default) method expects that response contains a valid
-               json and returns decoded json. Exception is thrown if
-               request was not successful.
+               json (or no data) and returns decoded json (or empty str). Exception
+               is thrown if request was not successful.
             True - urllib Response object is returned "as-is".
         """
 
@@ -158,8 +158,10 @@ class HttpConn:
 
         self._log_response(response, url)
 
-        if not raw_response and not is_error and response.data:
-            ret_val = json.loads(response.data.decode('utf-8'))
+        if not raw_response and not is_error:
+            ret_val = response.data.decode('utf-8')
+            if ret_val:
+                ret_val = json.loads()
         else:
             ret_val = response
 

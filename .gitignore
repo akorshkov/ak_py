@@ -1,2 +1,4 @@
 *.swp
 *.pyc
+.ak.log
+ak_pytools.egg-info
