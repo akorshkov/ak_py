@@ -69,7 +69,8 @@ disable=too-few-public-methods,
         too-many-branches,
         no-self-use,
         unnecessary-pass,
-        global-statement
+        global-statement,
+        bare-except
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option

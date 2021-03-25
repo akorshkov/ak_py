@@ -10,7 +10,6 @@ class PrettyPrinter:
     _COLOR_NAME = ColorFmt('GREEN', bold=True)
     _COLOR_NUMBER = ColorFmt('YELLOW')
     _COLOR_KEYWORD = ColorFmt('BLUE', bold=True)
-    _NO_COLOR = ColorFmt(None)
 
     def __init__(
             self, *,
@@ -26,7 +25,8 @@ class PrettyPrinter:
         - color_keyword: specifies format for 'True', 'False' and 'None' constants
         - use_colors: if False, the "color_*" arguments are ignored and
             plain text is produced.
-        - color_* - You can specify these arguments to override predefined
+
+        Note: You can specify 'color_*' arguments to override predefined
             colors. Check help(ColorFmt.make) for possible values of these
             arguments.
         """
