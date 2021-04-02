@@ -233,6 +233,56 @@ class HDocItemFunc:
             yield f"    {line}"
 
 
+class HDocItemCls:
+    """Data for h-doc od class."""
+
+    __slots__ = (
+        'cls_name',
+        'h_items_by_tag',  # {tag: [h_items having this main_tag]}
+    )
+
+    def __init__(self, class_obj):
+        self.cls_name = class_obj.__name__
+
+        self.h_items_by_tag = {}
+        for h_item in self._create_hitems_for_methods(class_obj):
+            self.h_items_by_tag.setdefault(h_item.main_tag, []).append(h_item)
+        for h_items in self.h_items_by_tag.values():
+            h_items.sort(key=lambda x: x.main_tag)
+
+    @staticmethod
+    def _create_hitems_for_methods(class_obj):
+        # create h_items for methods of class_obj
+        # returns set of all the h_items of class_obj which should be printed
+
+        new_h_items = {}
+
+        assert hasattr(class_obj, '__dict__'), (
+            "Expected some class. Arg is: " + str(
+                type(class_obj)) + " " + str(class_obj)
+        )
+
+        for attr_name, attr_value in class_obj.__dict__.items():
+            if attr_name.startswith('__'):
+                continue
+            doc_str = getattr(attr_value, '__doc__', None)
+            if doc_str:
+                h_item = HDocItemFunc(attr_value, attr_name, doc_str)
+                attr_value._h_doc = h_item
+                if not getattr(attr_value, '_ignore_hdoc', False):
+                    new_h_items[attr_name] = h_item
+
+        # return all the help items
+        # 1. first all the help_items of parent class
+        if hasattr(class_obj, '_h_docs'):
+            for h_item in class_obj._h_docs.h_items_by_tag.values():
+                yield h_item
+
+        # 2. and new help items (corresponding to methods in the class_obj)
+        for h_item in new_h_items.values():
+            yield h_item
+
+
 def h_doc(obj):
     """Decorator which creates h_doc data for a class or function.
 
@@ -240,7 +290,7 @@ def h_doc(obj):
     it's enough to decorate class itself.
     """
     if isinstance(obj, type):
-        raise NotImplementedError
+        obj._h_docs = HDocItemCls(obj)
     else:
         obj._h_doc = HDocItemFunc(obj, obj.__name__, obj.__doc__)
 

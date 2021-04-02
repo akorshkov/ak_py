@@ -2,7 +2,7 @@
 
 import unittest
 
-from ak.hdoc import HDocItemFunc, h_doc
+from ak.hdoc import HDocItemFunc, HDocItemCls, h_doc
 
 
 class TestHDocItemFunc(unittest.TestCase):
@@ -43,6 +43,48 @@ class TestHDocItemFunc(unittest.TestCase):
         self.assertEqual({"tag1", "tag2", "tag3", "tag4"}, h_doc.tags)
 
 
+class TestHDocItemCls(unittest.TestCase):
+    """Test h-doc created for a class"""
+
+    def test_success(self):
+        """Test success scenario of h-doc creation for class."""
+
+        class TClass:
+            """HDocItemCls will be created from it."""
+
+            def __init__(self, x):
+                self.x = x
+
+            def method_1(self):
+                """will have h-doc
+
+                Some description
+
+                #tag_main #tag_1
+                """
+                return self.x
+
+            def method_2(self):
+                """will have no h-doc because explicitely turned off
+
+                Some description
+
+                #tag_main #tag_1
+                """
+                return self.x
+
+            def method_2(self):
+                # no doc string - no h-doc
+                return self.x
+
+        hdoc = HDocItemCls(TClass)
+        self.assertEqual('TClass', hdoc.cls_name)
+        self.assertIn('tag_main', hdoc.h_items_by_tag)
+        self.assertNotIn('tag_1', hdoc.h_items_by_tag)
+
+        self.assertEqual(1, len(hdoc.h_items_by_tag['tag_main']))
+
+
 class TestHDocDecorator(unittest.TestCase):
     """Test behavior of h_doc decorator."""
 
@@ -64,3 +106,26 @@ class TestHDocDecorator(unittest.TestCase):
 
         self.assertTrue(hasattr(t2, '_h_doc'))
         self.assertTrue(isinstance(t2._h_doc, HDocItemFunc))
+
+    def test_h_doc_decorator_class(self):
+        """Test h_doc decorator with class."""
+
+        @h_doc
+        class TClass:
+            """HDocItemCls will be created from it."""
+
+            def __init__(self, x):
+                self.x = x
+
+            def method_1(self):
+                """will have h-doc
+
+                Some description
+
+                #tag_main #tag_1
+                """
+                return self.x
+
+        self.assertTrue(hasattr(TClass, '_h_docs'))
+        h_docs = TClass._h_docs
+        self.assertEqual(1, len(TClass._h_docs.h_items_by_tag['tag_main']))
