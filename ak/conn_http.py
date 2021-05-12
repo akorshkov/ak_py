@@ -105,6 +105,8 @@ class HttpConn:
         # 1. params
         if params:
             path += "?" + urlencode(params)
+        if not self.address.endswith('/') and not path.startswith('/'):
+            path = '/' + path
         url = self.address + path
 
         # 2. headers
@@ -126,7 +128,12 @@ class HttpConn:
         elif isinstance(data, bytes):
             req_data = data
         else:
-            str_data = data if isinstance(data, str) else json.dumps(data)
+            if isinstance(data, str):
+                str_data = data
+            else:
+                str_data = json.dumps(data)
+                if 'Content-Type' not in req_headers:
+                    req_headers['Content-Type'] = 'application/json'
             req_data = str_data.encode(encoding='utf-8')
 
         request = urllib.request.Request(
@@ -161,7 +168,7 @@ class HttpConn:
         if not raw_response and not is_error:
             ret_val = response.data.decode('utf-8')
             if ret_val:
-                ret_val = json.loads()
+                ret_val = json.loads(ret_val)
         else:
             ret_val = response
 
