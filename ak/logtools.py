@@ -64,7 +64,8 @@ def register_colored_levelnames(
 
 def log_configure(
         level=None, *,
-        filename=None, use_colors=True, use_logfile_colors=True,
+        filename=None, file_log_level=logging.DEBUG,
+        use_colors=True, use_logfile_colors=True,
         log_colors=None):
     """High-level method for configuring logging in common scenarios.
 
@@ -75,8 +76,9 @@ def log_configure(
     - level: (optional) level of stderr logs. Default value depends on if
         'filename' is specified. 'ERROR' if filename is specified,
         'DEBUG' othrewise.
-    - 'filename' is specified, debug logs are saved to the file. Affects default
-        value of 'value' argument.
+    - filename: (optional) name of log file. Affects default value of 'level' argument.
+    - file_log_level: level of log file. Default is DEBUG, ignored if filename is
+        not specified.
     - use_colors, use_logfile_colors - by default both values are 'True'. (So, you
         can 'tail -f' log file and see debug logs in separate terminal)
     - log_colors: optional dictionary {logging.LEVEL: color_obj}
@@ -101,8 +103,11 @@ def log_configure(
     stderr_handler.setLevel(level)
     stderr_handler.setFormatter(stderr_formatter)
 
+    root_logger_level = level
+    if use_logfile:
+        root_logger_level = min(level, file_log_level)
     root_logger = logging.getLogger('')
-    root_logger.setLevel(logging.DEBUG if use_colors else level)
+    root_logger.setLevel(root_logger_level)
     root_logger.addHandler(stderr_handler)
 
     # log file
@@ -115,6 +120,6 @@ def log_configure(
 
         file_handler = logging.FileHandler(filename)
         file_handler.setFormatter(file_formatter)
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(file_log_level)
 
         root_logger.addHandler(file_handler)
