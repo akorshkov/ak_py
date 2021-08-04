@@ -234,7 +234,7 @@ class HDocItemFunc:
 
 
 class HDocItemCls:
-    """Data for h-doc od class."""
+    """Data for h-doc of class."""
 
     __slots__ = (
         'cls_name',
