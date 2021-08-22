@@ -195,8 +195,25 @@ class ColoredText:
         self.scrlen += len(part.text)
 
 
+class Palette:
+    """Simple mapping 'syntax_name' -> ColorFmt"""
+
+    def __init__(self, colors, use_colors=True):
+        self.colors = colors.copy()
+        self.use_colors = use_colors
+
+    def get_color(self, syntax_name):
+        """syntax_name -> ColorFmt"""
+        no_color = ColorFmt.get_nocolor_fmt()
+
+        if not self.use_colors:
+            return no_color
+
+        return self.colors.get(syntax_name, no_color)
+
+
 class ColorFmt:
-    """Objects of this class produce colored text."""
+    """Objects of this class produce text with specified color."""
 
     __slots__ = '_color_prefix', '_color_suffix'
 
