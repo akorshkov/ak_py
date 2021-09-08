@@ -476,7 +476,7 @@ class HDocItemCls(HDocItem):
             if attr_name.startswith('__'):
                 continue
             doc_str = getattr(attr_value, '__doc__', None)
-            if doc_str:
+            if doc_str and callable(attr_value):
                 h_item = HDocItemFunc(attr_value, attr_name, doc_str)
                 attr_value._h_doc = h_item
                 h_items_by_name[h_item.name] = h_item

@@ -78,6 +78,8 @@ class TestHDocItemCls(unittest.TestCase):
         class TClass:
             """base class summary"""
 
+            SOME_CLASS_ATTR = {1:1, 2:2}  # should not break hdocs
+
             def __init__(self, x):
                 self.x = x
 
