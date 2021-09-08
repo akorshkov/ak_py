@@ -15,11 +15,11 @@ from ak.color import ColorFmt, Palette
 #########################
 # 'll'-command specific classes
 
-class _LLImpl:
+class LLImpl:
     """Implementation of 'll' command.
 
     Usage:
-    >>> ll = _LLImpl(locals())
+    >>> ll = LLImpl(locals())
     >>> ll
     ... summary of local variables is printed ...
     """
@@ -54,6 +54,7 @@ class _LLImpl:
         # does not print strings with color sequences properly. So, print it
         # and return nothing
         print("\n".join(line for line in self._make_ll_report()))
+        return ""
 
     def _make_ll_report(self):
         # generate lines (string values) which make a summary of
@@ -473,7 +474,7 @@ class HDocItemCls(HDocItem):
                     h_item.name = attr_name
                 h_items_by_name[h_item.name] = h_item
                 continue
-            if attr_name.startswith('__'):
+            if attr_name.startswith('_'):
                 continue
             doc_str = getattr(attr_value, '__doc__', None)
             if doc_str and callable(attr_value):

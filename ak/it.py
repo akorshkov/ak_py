@@ -12,6 +12,7 @@ $ python
 from . import logtools as _logtools
 from . import conn_http as _conn_http
 from .ppobj import PrettyPrinter as _PrettyPrinter
+from . import hdoc
 
 
 def conf_logs(filename=".ak.log"):
@@ -35,12 +36,21 @@ def http_bauth_conn(address, login, password):
     return _conn_http.bauth_conn(address, login, password)
 
 
-_DFLT_PPRINTER = None
-
-
-def pp(obj_to_print):
+class _PPrintCommand:
     """Generic pretty print of json-like python object."""
-    global _DFLT_PPRINTER
-    if _DFLT_PPRINTER is None:
-        _DFLT_PPRINTER = _PrettyPrinter()
-    _DFLT_PPRINTER.pretty_print(obj_to_print)
+
+    def __init__(self):
+        self._pprinter = _PrettyPrinter()
+
+    def __call__(self, obj_to_print):
+        print(self._pprinter(obj_to_print))
+
+    def _get_ll_descr(self):
+        # object description for 'll' command
+        return "Console tools", "Command which pretty prints objects"
+
+
+pp = _PPrintCommand()
+
+h = hdoc.HCommand()
+LLImpl = hdoc.LLImpl

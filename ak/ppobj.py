@@ -34,17 +34,13 @@ class PrettyPrinter:
         self._color_number = ColorFmt.make(color_number, use_colors)
         self._color_keyword = ColorFmt.make(color_keyword, use_colors)
 
-    def pretty_print(self, obj_to_print):
-        """Generic pretty print of json-like python objects."""
-        print(self.make_pp_str(obj_to_print))
-
-    def make_pp_str(self, obj_to_print):
+    def __call__(self, obj_to_print):
         """Make a pretty string representation of json-like python object."""
         return "".join(
-            line for line in self._gen_pp_str_for_obj(obj_to_print, offset=0))
+            chunk for chunk in self._gen_pp_str_for_obj(obj_to_print, offset=0))
 
     def _gen_pp_str_for_obj(self, obj_to_print, offset=0):
-        # generate parts for 'make_pp_str' method
+        # generate parts for colored text result
         if self._value_is_simple(obj_to_print):
             yield str(self._colorp_simple_value(obj_to_print))
         elif isinstance(obj_to_print, dict):
