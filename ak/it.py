@@ -1,46 +1,19 @@
-"""Tools to be used in interactive sessions,
+"""Method for creatoin of interactive sessions.
 
-Example of usage:
-$ python
->>> from ak.it import *
->>> conf_logs()
->>> conn = http_conn("http://some.address.com")
->>> resp_data = conn("method/path", {"a": 1, "b": 2})
->>> pp(resp_data)
+The created console has specified local objects and 'h', 'll', 'pp' functions.
 """
 
-from . import logtools as _logtools
-from . import conn_http as _conn_http
-from .ppobj import PrettyPrinter as _PrettyPrinter
+import sys
+import code
+from . import ppobj
 from . import hdoc
-
-
-def conf_logs(filename=".ak.log"):
-    """Configure logging.
-
-    Argument:
-    - filename: if not None debug logs are saved to the file, errors - to stderr.
-        If None - debug logs printed to stderr.
-    """
-
-    _logtools.log_configure(None, filename=filename)
-
-
-def http_conn(address):
-    """Make HttpConn object"""
-    return _conn_http.HttpConn(address)
-
-
-def http_bauth_conn(address, login, password):
-    """Make HttpConn with basic authorization."""
-    return _conn_http.bauth_conn(address, login, password)
 
 
 class _PPrintCommand:
     """Generic pretty print of json-like python object."""
 
     def __init__(self):
-        self._pprinter = _PrettyPrinter()
+        self._pprinter = ppobj.PrettyPrinter()
 
     def __call__(self, obj_to_print):
         print(self._pprinter(obj_to_print))
@@ -50,7 +23,31 @@ class _PPrintCommand:
         return "Console tools", "Command which pretty prints objects"
 
 
-pp = _PPrintCommand()
+def start_interactive_console(locals_for_console=None, banner=None, exitmsg=None):
+    """Start interactive console, make 'h' and 'll' commands available in it."""
+    if banner is None:
+        banner = (
+            f"Python {sys.version} on {sys.platform}\n"
+            f"Following commands from 'ak' package are available:\n"
+            f"ll                 <- list local variables\n"
+            f"h(obj)             <- help command\n"
+            f"pp(obj)            <- pretty printer for json-like python objects\n"
+        )
 
-h = hdoc.HCommand()
-LLImpl = hdoc.LLImpl
+    if locals_for_console is None:
+        locals_for_console = {}
+
+    if 'h' not in locals_for_console:
+        locals_for_console['h'] = hdoc.HCommand()
+
+    if 'll' not in locals_for_console:
+        locals_for_console['ll'] = hdoc.LLImpl(locals_for_console)
+
+    if 'pp' not in locals_for_console:
+        locals_for_console['pp'] = _PPrintCommand()
+
+    if exitmsg is None:
+        exitmsg = "Good bye!"
+
+    code.interact(
+        banner=banner, readfunc=None, local=locals_for_console, exitmsg=exitmsg)

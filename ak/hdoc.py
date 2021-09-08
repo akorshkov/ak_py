@@ -162,6 +162,10 @@ class HCommand:
             yield from obj._h_doc.gen_help_text(
                 obj, filt, self.palette, fmt_all_dets, fmt_oneline)
 
+    def _get_ll_descr(self):
+        # object description for 'll' command
+        return "Console tools", "Help for misc classes and objects"
+
 
 class HDocItem:
     """Base for classes which hold h-doc information for some object"""
