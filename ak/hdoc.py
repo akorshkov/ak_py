@@ -1,8 +1,12 @@
 """Implementation of 'h' and 'll' methods to be used in python console.
 
-'h' method is similar to standard python's 'help' method. Information it
-produces is also based on doc strings, but it tends to provide less text and
-is more sutable for fast lookup of available methods, signatures, etc.
+'h' (and 'hh') methods print out a description of an object. It's a
+responsibility of an object to provide the description. Object is
+'h_doc friendly' if it has '_h_doc' attribute of HDocItem class.
+Printed text should be similar to the doc string, main purpose is to
+provide short fast lookup of available methods, their signatures, etc.
+This module provides implemendations of 'h' (and 'hh') mehtods and tools
+to make objects 'h_doc friendly'.
 
 'll' method is designed to print information about objects available in
 python's concole scope.
@@ -132,13 +136,15 @@ class HCommand:
     """
 
     _DFLT_FILT_ARG = object()
+    _LEVEL_H, _LEVEL_HH = 1, 2  # correspond to 'h' and 'hh' commands
 
-    def __init__(self):
+    def __init__(self, dets_level=_LEVEL_H):
         self.palette = Palette({
             'func_name': ColorFmt("BLUE"),
             'tags':  ColorFmt("GREEN"),
             'warning': ColorFmt('RED'),
         })
+        self.dets_level = dets_level
 
     def __call__(self, obj, filt=_DFLT_FILT_ARG):
         # this method does not return the help text, but prints it
@@ -151,16 +157,17 @@ class HCommand:
         # prepare help text to be printed by __call__.
         # It's a separate method to be used in tests.
         return "\n".join(
-            self._gen_help_text(obj, filt, fmt_all_dets=False, fmt_oneline=False)
+            self._gen_help_text(
+                obj, filt, dets_level=self.dets_level, fmt_oneline=False)
         )
 
-    def _gen_help_text(self, obj, filt, fmt_all_dets, fmt_oneline):
+    def _gen_help_text(self, obj, filt, dets_level, fmt_oneline):
         # generate lines of text which make output of 'h' command
 
         # Object is h-doc capable if it has '_h_doc' attribute.
         if hasattr(obj, '_h_doc'):
             yield from obj._h_doc.gen_help_text(
-                obj, filt, self.palette, fmt_all_dets, fmt_oneline)
+                obj, filt, self.palette, dets_level, fmt_oneline)
 
     def _get_ll_descr(self):
         # object description for 'll' command
@@ -170,7 +177,7 @@ class HCommand:
 class HDocItem:
     """Base for classes which hold h-doc information for some object"""
 
-    def gen_help_text(self, obj, filt, palette, fmt_all_dets, fmt_oneline):
+    def gen_help_text(self, obj, filt, palette, dets_level, fmt_oneline):
         """Generate h-doc text for an object.
 
         Arguments:
@@ -179,34 +186,50 @@ class HDocItem:
         - filt: some object which can be specified to modify generated help text.
             Processing of this object may be implemented in derived classes.
         - palette: colors to be used
-        - fmt_all_dets: specifies if to display "more details".
-            Processing to be implemented in derived classes.
+        - dets_level: details level.
         - fmt_oneline: henerate one-line help.
         """
         assert hasattr(obj, '_h_doc')
         assert obj._h_doc is self
 
         if fmt_oneline:
-            yield from self._gen_help_oneline(obj, filt, palette, fmt_all_dets)
+            yield from self._gen_help_oneline(obj, filt, palette, dets_level)
         else:
-            yield from self._gen_help_text(obj, filt, palette, fmt_all_dets)
+            yield from self._gen_help_text(obj, filt, palette, dets_level)
 
-    def _gen_help_text(self, _obj, _filt, _palette, _fmt_all_dets,
+    def _gen_help_text(self, _obj, _filt, _palette, _dets_level,
                        _bm_notes=None):
         # to be implemented in derived classes
         yield ""
         raise NotImplementedError
 
-    def _gen_help_oneline(self, _obj, _filt, _palette, _fmt_all_dets,
+    def _gen_help_oneline(self, _obj, _filt, _palette, _dets_level,
                           _bm_notes=None):
         # to be implemented in derived classes
         yield ""
         raise NotImplementedError
 
 
-class _BoundMethodNotes:
-    # Additional information about a method in context of an object (bound
-    # method)
+class BoundMethodNotes:
+    """h_doc-related info about a bound method.
+
+    In case the help is generated for a bound method (f.e. 'h(x.method)')
+    the information is taken from two objects:
+    1. x.method._h_doc - 'static' HDocItem object, which does not depend
+      from the object 'x'
+    2. the BoundMethodNotes, which contains information about the 'method'
+      in context of the object 'x'
+
+    In order for this functionality to work the 'x' object should have
+    implemented a method '_get_hdoc_method_notes'. Like this:
+
+    class ClassX:
+        def _get_hdoc_method_notes(self, bound_method, palette):
+            assert self is bound_method.__self__
+            assert hasattr(bound_method, '_h_doc')
+            ...
+            return BoundMethodNotes(...)
+    """
 
     __slots__ = 'is_available', 'note_short', 'note_line'
 
@@ -217,8 +240,8 @@ class _BoundMethodNotes:
         - is_available: False if it does not make sence to call the bound method
         - note_short:  text to be included into h-doc of the bound method.
                        F.e.: "n/a"
-       - note_line:  text to be included into h-doc of the bound method. F.e.:
-                     "! requires tocken access, not basic auth !"
+        - note_line:  text to be included into h-doc of the bound method. F.e.:
+                      "! requires token access, not basic auth !"
         """
         self.is_available = is_available
         self.note_short = note_short
@@ -347,7 +370,7 @@ class HDocItemFunc(HDocItem):
         self.tags = ds.tags
         self.main_tag = self.tags[0] if self.tags else "misc"
 
-    def _gen_help_oneline(self, obj, _filt, palette, _fmt_all_dets,
+    def _gen_help_oneline(self, obj, _filt, palette, _dets_level,
                           _bm_notes=None):
         # generate one-line function description
 
@@ -357,14 +380,14 @@ class HDocItemFunc(HDocItem):
         args_descr = ", ".join(self.arg_names)
         yield f"{f_name}({args_descr}) {bm_notes.note_short} {self.short_descr}"
 
-    def _gen_help_text(self, obj, _filt, palette, _fmt_all_dets,
+    def _gen_help_text(self, obj, _filt, palette, _dets_level,
                        _bm_notes=None):
         # generate detailed function description
 
         bm_notes = _bm_notes or self._get_bound_method_notes(obj, palette)
 
         yield from self._gen_help_oneline(
-            obj, _filt, palette, _fmt_all_dets, bm_notes)
+            obj, _filt, palette, _dets_level, bm_notes)
 
         if bm_notes.note_line:
             yield f"    {bm_notes.note_line}"
@@ -382,8 +405,8 @@ class HDocItemFunc(HDocItem):
         tags = " ".join(f"#{ct(tag)}" for tag in _gen_tags())
         yield "    " + tags
 
-    def _get_bound_method_notes(self, obj, palette) -> _BoundMethodNotes:
-        # get the _BoundMethodNotes in case the h-doc is being generated
+    def _get_bound_method_notes(self, obj, palette) -> BoundMethodNotes:
+        # get the BoundMethodNotes in case the h-doc is being generated
         # for bound method
         try:
             # detect situation when h-doc is generated for bound method.
@@ -391,9 +414,10 @@ class HDocItemFunc(HDocItem):
             # try to call obj_of_class._get_hdoc_method_notes
             notes_method = obj.__self__._get_hdoc_method_notes
         except AttributeError:
-            return _BoundMethodNotes(True, "", "")
+            return BoundMethodNotes(True, "", "")
 
-        return _BoundMethodNotes(*notes_method(self, palette))
+        # if we got here the 'obj' corresponds to bound method
+        return notes_method(obj, palette)
 
 
 class HDocItemCls(HDocItem):
@@ -403,14 +427,14 @@ class HDocItemCls(HDocItem):
         'name',
         'h_items_by_name',
         'h_items_by_tag',  # {tag: [h_items having this main_tag]}
-        'short_descr', # short description from doc_string
-        'body_doc', # body of the doc string
+        'short_descr',  # short description from doc_string
+        'body_doc',  # body of the doc string
     )
 
-    def __init__(self, class_obj):
-        self.name = class_obj.__name__
+    def __init__(self, obj_class):
+        self.name = obj_class.__name__
 
-        ds = _ParsedDocStr(getattr(class_obj, '__doc__', ""))
+        ds = _ParsedDocStr(getattr(obj_class, '__doc__', ""))
         self.short_descr = ds.short_descr
         self.body_doc = ds.body_lines
 
@@ -418,7 +442,7 @@ class HDocItemCls(HDocItem):
         self.h_items_by_name = {}
 
         try:
-            base_classes = class_obj.mro()
+            base_classes = obj_class.mro()
         except Exception:
             base_classes = []
 
@@ -432,7 +456,7 @@ class HDocItemCls(HDocItem):
                 self.h_items_by_name[name] = h_item
 
         # process h-items of methods defined in current class
-        for h_item in self._create_hitems_for_methods(class_obj):
+        for h_item in self._create_hitems_for_methods(obj_class):
             if 'no_hdoc' not in h_item.tags:
                 self.h_items_by_name[h_item.name] = h_item
 
@@ -443,18 +467,18 @@ class HDocItemCls(HDocItem):
             h_items.sort(key=lambda x: x.name)
 
     @staticmethod
-    def _create_hitems_for_methods(class_obj):
-        # create h_items for methods of class_obj
+    def _create_hitems_for_methods(obj_class):
+        # create h_items for methods of obj_class
 
-        assert hasattr(class_obj, '__dict__'), (
+        assert hasattr(obj_class, '__dict__'), (
             "Expected some class. Arg is: " + str(
-                type(class_obj)) + " " + str(class_obj)
+                type(obj_class)) + " " + str(obj_class)
         )
 
         # detect if base class already has h-docs (that must be inherited
         # from parent class)
         try:
-            parent_class_h_items = class_obj._h_doc.h_items_by_tag
+            parent_class_h_items = obj_class._h_doc.h_items_by_tag
         except AttributeError:
             parent_class_h_items = {}
 
@@ -465,7 +489,7 @@ class HDocItemCls(HDocItem):
         }
 
         # process methods defined in current class
-        for attr_name, attr_value in class_obj.__dict__.items():
+        for attr_name, attr_value in obj_class.__dict__.items():
             if hasattr(attr_value, '_h_doc'):
                 # h-doc was already prepared (with explicit decorator)
                 h_item = attr_value._h_doc
@@ -489,7 +513,7 @@ class HDocItemCls(HDocItem):
         for h_item in h_items_by_name.values():
             yield h_item
 
-    def _gen_help_oneline(self, _obj, _filt, palette, _fmt_all_dets,
+    def _gen_help_oneline(self, _obj, _filt, palette, _dets_level,
                           _bm_notes=None):
         # generate one-line class description
         assert _bm_notes is None, (
@@ -500,15 +524,24 @@ class HDocItemCls(HDocItem):
 
         yield f"{cls_name}  {self.short_descr}"
 
-    def _gen_help_text(self, obj, _filt, palette, _fmt_all_dets,
-                       _bm_notes=None):
+    def _gen_help_text(self, obj, _filt, palette, dets_level, _bm_notes=None):
         # generate detailed class (or object) description
+        #
+        # In case "h(x.method)" was called, of this method will be:
+        # self - ClassOfX._h_doc
+        # obj - x.method
 
         assert _bm_notes is None, (
             "'_bm_notes' are applicable for bound methods, but this mehod "
             "generates h-doc for class or object of class")
 
-        yield from self._gen_help_oneline(obj, _filt, palette, _fmt_all_dets)
+        yield from self._gen_help_oneline(obj, _filt, palette, dets_level)
+
+        # check if report methods defined in class, but n/a in the obj.
+        # F.e. the method requires some authorization not provided
+        # by the obj - technically you can call the obj.method, but
+        # will get an error.
+        report_na_methods = dets_level >= HCommand._LEVEL_HH
 
         # generate descriptions of methods
         for tag, h_items in self.h_items_by_tag.items():
@@ -519,30 +552,37 @@ class HDocItemCls(HDocItem):
                 # object of class, the methods are actually bound methods and
                 # additional information (bm_notes) may be available.
                 bm_notes = self._get_bound_method_notes(obj, h_item, palette)
-                if not bm_notes.is_available:
+                if not bm_notes.is_available and not report_na_methods:
                     continue
 
                 for method_help_line in h_item._gen_help_oneline(
-                    obj, _filt, palette, _fmt_all_dets, bm_notes):
+                    obj, _filt, palette, dets_level, bm_notes):
                     yield "  " + method_help_line
 
     def _get_bound_method_notes(self, obj, h_item, palette):
-        # get the _BoundMethodNotes for methods defined in the class if
+        # get the BoundMethodNotes for methods defined in the class if
         # h-doc is being generated not for a class, but for an object of
         # class.
+        #
+        # If we got here the 'obj' may be either a class or an object
         try:
             # check that obj._get_hdoc_method_notes is a bound method
             # (that would mean that 'obj' is not a class, but an object of
-            # class, and _BoundMethodNotes may be available for other h-items)
-            _ = obj._get_hdoc_method_notes.__self__
-            is_obj = True
+            # class, and BoundMethodNotes may be available for other h-items)
+            obj_self = obj._get_hdoc_method_notes.__self__
         except AttributeError:
-            is_obj = False
+            obj_self = None
 
-        if is_obj:
-            return _BoundMethodNotes(*obj._get_hdoc_method_notes(h_item, palette))
+        if obj_self:
+            # if we get here the 'obj' is an object of class
+            bound_method = getattr(obj, h_item.name, None)
+            assert bound_method is not None, (
+                f"Object '{obj}' of type '{type(obj)}' has no attr '{h_item.name}'"
+            )
 
-        return _BoundMethodNotes(True, "", "")
+            return obj_self._get_hdoc_method_notes(bound_method, palette)
+
+        return BoundMethodNotes(True, "", "")
 
 
 def h_doc(obj):
