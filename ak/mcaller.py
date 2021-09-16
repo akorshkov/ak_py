@@ -96,13 +96,13 @@ class Meta_MethodsCaller(type):
 
         # helper method to get method meta from inside the method
         # It will be included into the new class
-        def _get_mcaller_meta(self):
+        def get_mcaller_meta(self):
             """Get _mcaller_meta from inside decorated method.
 
             Example of usage:
                 @some_mcaller_decorator(properties)  # creates _mcaller_meta
                 def call_some_api_method(self, arguments):
-                    m = self._get_mcaller_meta()  # returns the _mcaller_meta
+                    m = self.get_mcaller_meta()  # returns the _mcaller_meta
                                                   # created by decorator
             """
             if not hasattr(self, '_MCALLERS_METAS'):
@@ -110,12 +110,22 @@ class Meta_MethodsCaller(type):
 
             # in order to find out what method to get info for some
             # inspect-magic is required
-            caller_code_obj = inspect.currentframe().f_back.f_code
-            orig_method_name = caller_code_obj.co_name
+            cur_frame = inspect.currentframe().f_back
+            while cur_frame is not None:
+                cur_frame_name = cur_frame.f_code.co_name
+                if cur_frame_name in self._MCALLERS_METAS:
+                    return self._MCALLERS_METAS[cur_frame_name]
+                cur_frame = cur_frame.f_back
 
-            return self._MCALLERS_METAS.get(orig_method_name)
+            # metadata was not found. This means that there is no 'wrapper'
+            # mehod in the current call stack. There is no _mcaller_meta
+            # to return.
+            raise ValueError(
+                "No 'methods caller' metadata found. 'get_mcaller_meta' "
+                "should be called from inside 'method wrapper' methods only."
+            )
 
-        classdict['_get_mcaller_meta'] = _get_mcaller_meta
+        classdict['get_mcaller_meta'] = get_mcaller_meta
 
         created_class = super().__new__(meta, classname, supers, classdict)
 

@@ -24,7 +24,7 @@ class TestMethodsWrapperClass(unittest.TestCase):
 
                 To check that it is properly decorated.
                 """
-                mtd_meta = self._get_mcaller_meta()
+                mtd_meta = self.get_mcaller_meta()
                 return {"arg": arg, "val": self.val, "auth":mtd_meta['auth']}
 
             @m_wrapper(auth="x2x", pprint=dummy_pprinter)
@@ -33,7 +33,7 @@ class TestMethodsWrapperClass(unittest.TestCase):
 
                 To check custom pretty-printing result.
                 """
-                mtd_meta = self._get_mcaller_meta()
+                mtd_meta = self.get_mcaller_meta()
                 return {"arg": arg, "val": self.val, "auth":mtd_meta['auth']}
 
             @m_wrapper(auth="x3x")
@@ -42,7 +42,7 @@ class TestMethodsWrapperClass(unittest.TestCase):
 
                 To check custom pretty-printing result.
                 """
-                mtd_meta = self._get_mcaller_meta()
+                mtd_meta = self.indirect_get_meta()
                 _ = 42
                 return {"arg": arg, "val": self.val, "auth":mtd_meta['auth']}
 
@@ -53,6 +53,16 @@ class TestMethodsWrapperClass(unittest.TestCase):
             def method_4(self, arg):
                 """is not decorated, so should behave as usual method"""
                 return {"arg": arg, "val": self.val}
+
+            def indirect_get_meta(self):
+                """Test indirect calls of self.get_mcaller_meta.
+
+                To test that inspect-related magic of self.get_mcaller_meta
+                still works if it is called not directly from 'm_wrapper'
+                decorated method.
+                """
+                mtd_meta = self.get_mcaller_meta()
+                return mtd_meta
 
         # 0. prepare an object for test
 
@@ -106,3 +116,15 @@ class TestMethodsWrapperClass(unittest.TestCase):
         # make sure custom pprinter is used
         repr_str = result._get_repr_str()
         self.assertEqual(repr_str, "self repr string")
+
+        # 4. check get_mcaller_meta direct call
+        try:
+            tst_obj.get_mcaller_meta()
+        except ValueError as err:
+            msg = str(err)
+            self.assertIn('get_mcaller_meta', msg)
+        else:
+            self.assertTrue(False, (
+                "direct call of get_mcaller_meta must fail because "
+                "no the data it should return is not present in any "
+                "method in the current call stack"))
