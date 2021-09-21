@@ -2,7 +2,7 @@
 
 import unittest
 
-from ak.color import ColoredText, ColorFmt
+from ak.color import ColoredText, ColorFmt, ColorBytes
 
 
 class TestColorFmt(unittest.TestCase):
@@ -206,3 +206,22 @@ class TestColoredTextProperties(unittest.TestCase):
 
         err_msg = str(exc.exception)
         self.assertIn("invalid width '1a0'", err_msg)
+
+
+class TestColorFmtBytes(unittest.TestCase):
+    """Test using ColorFmt to process bytes."""
+
+    def test_simple_with_bytes(self):
+        """Test successfull scenarios of using ColorFmt with bytes."""
+
+        green_printer_b = ColorBytes('GREEN')
+        raw_bytes = b'test'
+        green_bytes = green_printer_b(raw_bytes)
+
+        self.assertGreater(
+            len(green_bytes), len(raw_bytes),
+            f"formatte bytes should contain additional escape "
+            f"characters: {green_bytes}")
+
+        with self.assertRaises(TypeError) as err:
+            green_printer_b("string_text")

@@ -10,6 +10,12 @@ ColoredText - objects of this class are string-like objects, which can be
 
 ColorFmt - class which produces ColoredText objects.
 
+ColorBytes - analog of ColorFmt, but for bytes.
+    Both ColorFmt and ColorBytes produce a single mono-colored chunk, but
+    - ColorFmt produces ColoredText - object which supports formatting and
+      can be converted to str
+    - ColorBytes produces simple bytes.
+
 Example of usage:
     green_printer = ColorFmt('GREEN')
     t = green_printer("some green text") + " and normal text "
@@ -212,10 +218,8 @@ class Palette:
         return self.colors.get(syntax_name, no_color)
 
 
-class ColorFmt:
-    """Objects of this class produce text with specified color."""
-
-    __slots__ = '_color_prefix', '_color_suffix'
+class ColorSequences:
+    """Constructor of color escape sequences"""
 
     _COLORS = {
         'BLACK'  : "30",
@@ -228,35 +232,34 @@ class ColorFmt:
         'WHITE'  : "37",
     }
 
-    _NO_COLOR = None  # dummy ColorFmt object, will be initialized on demand
-
-    def __init__(
-            self, color, *, bg_color=None,
-            bold=None, faint=None, underline=None, blink=None, crossed=None,
-            use_effects=True):
-        """Create an object which converts text to text with specified effects.
+    @classmethod
+    def make(cls, color, bg_color=None,
+             bold=None, faint=None, underline=None, blink=None, crossed=None,
+             use_effects=True, make_bytes=False):
+        """Make prefix and suffix to decorate text with specified effects.
 
         Arguments:
             most arguments are self-explained.
             - use_effects: if False, all other arguments are ignored and
-                created object is 'dummy' - it does not add any effects to text.
+                empty strings are returned.
+            - make_bytes: produce bytes instead of strings
         """
-        if color is not None and color not in self._COLORS:
+        if color is not None and color not in cls._COLORS:
             raise ValueError(
                 f"Invalid color name '{color}' specified. "
-                f"Valid color names: {self._COLORS.keys()}")
-        if bg_color is not None and bg_color not in self._COLORS:
+                f"Valid color names: {cls._COLORS.keys()}")
+        if bg_color is not None and bg_color not in cls._COLORS:
             raise ValueError(
                 f"Invalid bg_color name '{bg_color}' specified. "
-                f"Valid color names: {self._COLORS.keys()}")
+                f"Valid color names: {cls._COLORS.keys()}")
 
         color_codes = []
         if use_effects:
             if color is not None:
-                color_codes.append(self._COLORS[color])
+                color_codes.append(cls._COLORS[color])
 
             if bg_color is not None:
-                color_codes.append("4" + self._COLORS[bg_color][1:])
+                color_codes.append("4" + cls._COLORS[bg_color][1:])
 
             if bold:
                 color_codes.append("1")
@@ -274,11 +277,40 @@ class ColorFmt:
                 color_codes.append("9")
 
         if color_codes:
-            self._color_prefix = "\033[" + ";".join(c for c in color_codes) + "m"
-            self._color_suffix = "\033[0m"
+            color_prefix = "\033[" + ";".join(c for c in color_codes) + "m"
+            color_suffix = "\033[0m"
         else:
-            self._color_prefix = ""
-            self._color_suffix = ""
+            color_prefix = ""
+            color_suffix = ""
+
+        if make_bytes:
+            color_prefix = color_prefix.encode()
+            color_suffix = color_suffix.encode()
+
+        return color_prefix, color_suffix
+
+
+class ColorFmt:
+    """Objects of this class produce text with specified color."""
+
+    __slots__ = '_color_prefix', '_color_suffix'
+
+    _NO_COLOR = None  # dummy ColorFmt object, will be initialized on demand
+
+    def __init__(
+            self, color, *, bg_color=None,
+            bold=None, faint=None, underline=None, blink=None, crossed=None,
+            use_effects=True):
+        """Create an object which converts text to text with specified effects.
+
+        Arguments:
+            most arguments are self-explained.
+            - use_effects: if False, all other arguments are ignored and
+                created object is 'dummy' - it does not add any effects to text.
+        """
+        self._color_prefix, self._color_suffix = ColorSequences.make(
+            color, bg_color, bold, faint, underline, blink, crossed,
+            use_effects)
 
     @classmethod
     def make(cls, color_obj, use_colors=True):
@@ -322,6 +354,30 @@ class ColorFmt:
     def __call__(self, text):
         """text -> colored text (ColoredText object)."""
         return ColoredText.make(self._color_prefix, text, self._color_suffix)
+
+
+class ColorBytes:
+    """Objects of this class produce bytes with color sequences."""
+
+    __slots__ = '_color_prefix', '_color_suffix'
+
+    def __init__(
+            self, color, *, bg_color=None,
+            bold=None, faint=None, underline=None, blink=None, crossed=None,
+            use_effects=True):
+        """Create an object which decorates bytes color sequences.
+
+        Arguments:
+            most arguments are self-explained.
+            - use_effects: if False, all other arguments are ignored and
+                created object is 'dummy' - it does not add any effects to text.
+        """
+        self._color_prefix, self._color_suffix = ColorSequences.make(
+            color, bg_color, bold, faint, underline, blink, crossed,
+            use_effects, make_bytes=True)
+
+    def __call__(self, bytes_text):
+        return self._color_prefix + bytes_text + self._color_suffix
 
 
 def make_examples(text="text"):
