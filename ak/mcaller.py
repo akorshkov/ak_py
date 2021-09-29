@@ -60,7 +60,7 @@ class Meta_MethodsCaller(type):
             orig_method_name: meta_obj
             for parent_class in reversed(supers)
             for orig_method_name, meta_obj in getattr(
-                parent_class, '_MCALLERS_METAS', {})
+                parent_class, '_MCALLERS_METAS', {}).items()
         }
 
         for name, value in classdict.items():

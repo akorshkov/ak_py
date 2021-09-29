@@ -56,6 +56,8 @@ class RequestArguments:
 class RequestAdapter:
     """Base class for adapters, used when processing requests by HttpConn"""
 
+    AUTH_TYPE = None
+
     def process_req_args(self, req_args):
         """pre-process http request"""
         pass
@@ -291,7 +293,7 @@ class _HttpConnBase:
         # request - be polite and do not create such connections
         self.auth_type = next(
             (a.AUTH_TYPE for a in self.adapters if a.AUTH_TYPE is not None),
-            "")
+            None)
 
     def __str__(self):
         if self.descr is None:
@@ -344,8 +346,10 @@ class _HttpConnBase:
 
 class HttpConn(_HttpConnBase):
     """Send plain http requests"""
-    def __init__(self, conn_data):
-        super().__init__([], conn_data)
+    def __init__(self, conn_data, *, adapters=None):
+        if adapters is None:
+            adapters = []
+        super().__init__(adapters, conn_data)
 
 
 class BAuthConn(_HttpConnBase):
@@ -431,3 +435,16 @@ class TokenAuthConn(_HttpConnBase):
         super().__init__(
             self.Adapter(token, token_descr),
             conn_data)
+
+
+class RequestAdapterAddPathPrefix(RequestAdapter):
+    """Request adapter which adds specified prefix to request path."""
+
+    def __init__(self, prefix):
+        self.prefix = prefix
+
+    def process_req_args(self, req_args):
+        req_args.path = self.prefix + req_args.path
+
+    def mk_descr(self):
+        return f"with path prefix '{self.prefix}'"
