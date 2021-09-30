@@ -62,21 +62,36 @@ def register_colored_levelnames(
     logging.setLogRecordFactory(record_factory)
 
 
-def log_configure(
-        level=None, *,
-        filename=None, file_log_level=logging.DEBUG,
+_BY_VERBOCITY_LOG_LEVELS = {
+    -1: logging.ERROR,
+    0: logging.WARNING,
+    1: logging.INFO,
+    2: logging.DEBUG,
+}
+
+def logs_configure(
+        verbocity=0, *,
+        level=None,
+        filename=None, file_log_level=None,
         use_colors=True, use_logfile_colors=True,
         log_colors=None):
     """High-level method for configuring logging in common scenarios.
 
-    By default configutres logging with predefined colors, stderr output, debug
+    By default configutres logging with predefined colors, stderr output, warnings
     level.
 
-    Arguments:
-    - level: (optional) level of stderr logs. Default value depends on if
-        'filename' is specified. 'ERROR' if filename is specified,
-        'DEBUG' othrewise.
-    - filename: (optional) name of log file. Affects default value of 'level' argument.
+    Arguments (all arguments are optional):
+    - verbocity: integer verbocity level (f.e. if specified by command line
+        arguments '-v', '-vv', etc.). Converted to log level according to following
+        rules:
+        verbocity     level
+        -1            logging.ERROR
+        0  (default)  logging.WARNING
+        1             logging.INFO
+        2             logging.DEBUG
+        Can be overriden by explicitely specified log level.
+    - level: level of stderr logs. Overrides log level corresponding to verbocity argument.
+    - filename:  name of log file.
     - file_log_level: level of log file. Default is DEBUG, ignored if filename is
         not specified.
     - use_colors, use_logfile_colors - by default both values are 'True'. (So, you
@@ -87,8 +102,15 @@ def log_configure(
     """
     use_logfile = filename is not None
 
+    v_log_level = _BY_VERBOCITY_LOG_LEVELS.get(verbocity, None)
+    if v_log_level is None:
+        # specified verbocity is too high or too low
+        v_log_level = logging.ERROR if verbocity < -1 else logging.DEBUG
+
     if level is None:
-        level = logging.ERROR if use_logfile else logging.DEBUG
+        level = v_log_level
+    if file_log_level is None:
+        file_log_level = logging.DEBUG
 
     if use_colors or use_logfile_colors:
         register_colored_levelnames(log_colors=log_colors)
