@@ -2,19 +2,16 @@
 
 import unittest
 
-from ak.mcaller import m_wrapper, Meta_MethodsCaller
+from ak.mcaller import m_wrapper, MCaller
 
 
-class TestMethodsWrapperClass(unittest.TestCase):
-    """Test creation and basic properties classed created with Meta_MethodsCaller.
-
-    of "method wrappers
-    """
+class TestMCallerClass(unittest.TestCase):
+    """Test creation and basic properties of MCaller derived classes."""
     def test_simple_wrapper_class(self):
 
         dummy_pprinter = lambda _: "dummy pprint string"
 
-        class MyMethodCaller(metaclass=Meta_MethodsCaller):
+        class MyMethodCaller(MCaller):
             def __init__(self, val):
                 self.val = val
 

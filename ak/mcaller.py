@@ -17,7 +17,7 @@ console:
 from functools import wraps
 import inspect
 from ak.ppobj import PrettyPrinter
-from ak.hdoc import h_doc
+from ak.hdoc import h_doc, BoundMethodNotes
 
 
 class Meta_MethodsCaller(type):
@@ -197,7 +197,7 @@ def _safe_get_attr(obj, attr_name, default=None):
 
     try:
         return obj[attr_name]
-    except Exception:
+    except (TypeError, KeyError):
         pass
 
     return default
@@ -210,3 +210,45 @@ def m_wrapper(**kwargs):
         return method
 
     return decorator
+
+
+class MCaller(metaclass=Meta_MethodsCaller):
+    """Base class for "method caller's".
+
+    Main purpose is to make such objects of these classes console friendly.
+    Methods, tuned to be called from python interactive console (console
+    methods) produce pretty-printable results, objects are integrated with
+    ak.hdoc help system ('h' command).
+
+    If the 'console' mathod is a simple wrapper of an http call, inmlement
+    this method in a class (mixin) derived from ak.mcaller_http.MCallerHttp,
+    and then derive you class from that mixin. MCallerHttp implements
+    implements functionality, which makes creation of http wrappers easier.
+    Other such classes exist for wrappers of other types.
+    """
+
+    def _get_hdoc_method_notes(self, bound_method, palette) -> BoundMethodNotes:
+        # generic implementation of the method wich returns BoundMethodNotes
+        #
+        # The result BoundMethodNotes depends on the type of the method.
+        # Here try to find out type of the method, find corresponding method
+        # which would create BoundMethodNotes, and call this corresponding
+        # method.
+        assert self is bound_method.__self__
+        assert hasattr(bound_method, '_h_doc')
+
+        if not hasattr(bound_method, '_mcaller_meta'):
+            # looks like it's a 'usual' method
+            # metatata not available - return default BoundMethodNotes
+            return BoundMethodNotes(True, "", None)
+
+        method_meta = bound_method._mcaller_meta
+
+        # creation rules of BoundMethodNotes depend of method type.
+        notes_maker_method_name = getattr(method_meta, '_MAKE_BM_NOTES_METHOD', "")
+        notes_maker_method = getattr(self, notes_maker_method_name, None)
+
+        if notes_maker_method is None:
+            return BoundMethodNotes(True, "", None)
+
+        return notes_maker_method(bound_method, palette)

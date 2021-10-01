@@ -1,7 +1,8 @@
 """Tools for creation of "methods caller" objects for http calls."""
 
-from ak.mcaller import Meta_MethodsCaller
 from ak import conn_http
+from ak.hdoc import BoundMethodNotes
+from ak.mcaller import MCaller
 
 
 class MCallerMetaHttpMethod:
@@ -9,6 +10,11 @@ class MCallerMetaHttpMethod:
 
     Created by decorator of http method wrapper.
     """
+
+    # name of the method, which will prepare BoundMethodNotes for
+    # methods decorated with this decorator
+    _MAKE_BM_NOTES_METHOD = '_make_bm_notes_http'
+
     def __init__(self, auth_type, component=None):
         self.auth_type = auth_type
         self.component = component
@@ -31,7 +37,7 @@ def method_http(auth_type, component=None):
     return decorator
 
 
-class MCallerHttp(metaclass=Meta_MethodsCaller):
+class MCallerHttp(MCaller):
     """Base class for "http method collers".
 
     Base for classes, whose methods are python wrappers of http calls.
@@ -99,3 +105,48 @@ class MCallerHttp(metaclass=Meta_MethodsCaller):
             conn = base_conn
 
         return conn
+
+    def _make_bm_notes_http(self, bound_method, palette) -> BoundMethodNotes:
+        # create BoundMethodNotes for bound http method (method
+        # decorated with 'method_http')
+        assert hasattr(bound_method, '_mcaller_meta')
+        method_meta = bound_method._mcaller_meta
+        for attr in ['auth_type', 'component']:
+            # '_make_bm_notes_http' must have been specified in method_meta,
+            # so method_meta must have these attributes
+            assert hasattr(method_meta, attr)
+
+        if not hasattr(self, 'http_conn'):
+            return BoundMethodNotes(
+                False, '<n/a>', "object has no 'http_conn' attribute")
+
+        auth_descr = ""
+        if isinstance(method_meta.auth_type, (list, tuple)):
+            auth_ok = self.http_conn.auth_type in method_meta.auth_type
+            auth_descr = (
+                f"wrong connection auth type "
+                f"('{self.http_conn.auth_type}' not in '{method_meta.auth_type}')")
+        else:
+            auth_ok = self.http_conn.auth_type == method_meta.auth_type
+            auth_descr = (
+                f"wrong connection auth type "
+                f"('{self.http_conn.auth_type}' != '{method_meta.auth_type}')")
+
+        component_ok = True
+        component_problem_descr = ""
+        if method_meta.component is not None:
+            if method_meta.component not in getattr(self, 'http_prefixes', []):
+                component_ok = False
+                component_problem_descr = (
+                    f"object has no http connection to component "
+                    f"'{method_meta.component}'")
+
+        method_available = auth_ok and component_ok
+        note_short = ""
+        note_line = None
+        if not method_available:
+            note_short = "<n/a"
+            note_line = "; ".join(
+                s for s in [auth_descr, component_problem_descr] if s)
+
+        return BoundMethodNotes(method_available, note_short, note_line)

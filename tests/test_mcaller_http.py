@@ -3,6 +3,7 @@
 import unittest
 
 from ak.conn_http import HttpConn
+from ak.hdoc import HCommand
 from ak.mcaller_http import MCallerHttp, method_http
 
 from .mock_http import mock_http
@@ -45,6 +46,16 @@ class TestMCallerHttp(unittest.TestCase):
 
         @method_http(None, "componentA")
         def call_v3(self, param, arg):
+            """sample http wrapper method."""
+            conn = self.get_conn()
+            return conn(
+                "/my/test/another_path",
+                params={'param': param},
+                data={'arg': arg},
+            )
+
+        @method_http(None, "componentB")
+        def call_v4(self, param, arg):
             """sample http wrapper method."""
             conn = self.get_conn()
             return conn(
@@ -125,3 +136,39 @@ class TestMCallerHttp(unittest.TestCase):
 
         self.assertIn(
             "dummy.com:8080/cmpA/prefix/my/test/another_path", req.full_url)
+
+    def test_http_mcsaller_hdoc(self):
+        """Check 'h' command with MCallerHttp class and objects"""
+        class MyCompHttpCaller(self.MethodsCollection1, self.MethodsCollection3):
+            """Test class to test 'h' command."""
+            def __init__(self, address):
+                self.http_conn = HttpConn(address)
+                self.http_prefixes = {
+                    'componentA': '/cmpA/prefix',
+                }
+
+        h = HCommand()._make_help_text
+
+        # verify help generated for class
+        hdoc_class = h(MyCompHttpCaller)
+        self.assertIn('call_it', hdoc_class, "method from MethodsCollection1")
+        self.assertIn('call_v3', hdoc_class, "method from MethodsCollection3")
+        self.assertIn('call_v4', hdoc_class, "method from MethodsCollection3")
+
+        # verify help generated for individual methods in class
+        self.assertIn('call_it', h(MyCompHttpCaller.call_it))
+        self.assertIn('call_v3', h(MyCompHttpCaller.call_v3))
+        self.assertIn('call_v4', h(MyCompHttpCaller.call_v4))
+
+        # verify help generated for an object of class
+        x = MyCompHttpCaller("https://some.address.org")
+        hdoc_obj = h(x)
+
+        self.assertIn('call_it', hdoc_obj, "method from MethodsCollection1")
+        self.assertIn('call_v3', hdoc_obj, "method from MethodsCollection3")
+        self.assertNotIn(
+            'call_v4', hdoc_obj,
+            "this mehod should not be present in help because it's "
+            "unavailable in the object. Method requires http connection for"
+            "component 'componentB', but the object has only connection "
+            "to componentA")
