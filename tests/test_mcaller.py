@@ -2,7 +2,7 @@
 
 import unittest
 
-from ak.mcaller import m_wrapper, MCaller
+from ak.mcaller import method_attrs, MCaller
 
 
 class TestMCallerClass(unittest.TestCase):
@@ -15,25 +15,29 @@ class TestMCallerClass(unittest.TestCase):
             def __init__(self, val):
                 self.val = val
 
-            @m_wrapper(auth="x1x")
+            @method_attrs(auth="x1x")
             def method_1(self, arg):
                 """Test method.
 
                 To check that it is properly decorated.
                 """
                 mtd_meta = self.get_mcaller_meta()
-                return {"arg": arg, "val": self.val, "auth":mtd_meta['auth']}
+                return {
+                    "arg": arg, "val": self.val,
+                    "auth": mtd_meta.properties['auth']}
 
-            @m_wrapper(auth="x2x", pprint=dummy_pprinter)
+            @method_attrs(auth="x2x", pprint=dummy_pprinter)
             def method_2(self, arg):
                 """Anothe test method.
 
                 To check custom pretty-printing result.
                 """
                 mtd_meta = self.get_mcaller_meta()
-                return {"arg": arg, "val": self.val, "auth":mtd_meta['auth']}
+                return {
+                    "arg": arg, "val": self.val,
+                    "auth": mtd_meta.properties['auth']}
 
-            @m_wrapper(auth="x3x")
+            @method_attrs(auth="x3x")
             def method_3(self, arg):
                 """Anothe test method.
 
@@ -41,7 +45,9 @@ class TestMCallerClass(unittest.TestCase):
                 """
                 mtd_meta = self.indirect_get_meta()
                 _ = 42
-                return {"arg": arg, "val": self.val, "auth":mtd_meta['auth']}
+                return {
+                    "arg": arg, "val": self.val,
+                    "auth": mtd_meta.properties['auth']}
 
             def _method_3_pprint(self, result_obj):
                 """should provide custom pretty-printing for 'method_3'"""
@@ -55,7 +61,7 @@ class TestMCallerClass(unittest.TestCase):
                 """Test indirect calls of self.get_mcaller_meta.
 
                 To test that inspect-related magic of self.get_mcaller_meta
-                still works if it is called not directly from 'm_wrapper'
+                still works if it is called not directly from 'method_attrs'
                 decorated method.
                 """
                 mtd_meta = self.get_mcaller_meta()

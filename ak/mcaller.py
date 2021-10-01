@@ -20,7 +20,7 @@ from ak.ppobj import PrettyPrinter
 from ak.hdoc import h_doc, BoundMethodNotes
 
 
-class Meta_MethodsCaller(type):
+class _Meta_MethodsCaller(type):
     """meta-class for "methods caller" classes.
 
     Decorates specified methods during creation of "methods caller" class.
@@ -75,8 +75,8 @@ class Meta_MethodsCaller(type):
             # 1. specified in the class
             obj_pprint_method_name = f"_{name}_pprint"
             # 2. specified in mcaller_meta object or default one
-            pprinter_obj = _safe_get_attr(
-                mcaller_meta, 'pprint', PrettyPrinter())
+            pprinter_obj = getattr(
+                mcaller_meta, 'pprinter', MCallerMetaGeneral._DEFAULT_PPRINTER)
 
             decorated_method = meta._make_wrapped_caller_method(
                 orig_method_body, mcaller_meta,
@@ -189,30 +189,48 @@ class PPrintableResult:
         return self._pprinter(self.r)
 
 
-def _safe_get_attr(obj, attr_name, default=None):
-    try:
-        return getattr(obj, attr_name)
-    except AttributeError:
-        pass
+class MCallerMetaGeneral:
+    """Properties of MethodCaller method.
 
-    try:
-        return obj[attr_name]
-    except (TypeError, KeyError):
-        pass
+    Created by 'method_attrs' decorator. Check this decorator for more details.
+    """
 
-    return default
+    # name of the method, which will prepare BoundMethodNotes for
+    # methods decorated with this decorator
+    _MAKE_BM_NOTES_METHOD = '_make_bm_notes_general'
+    _DEFAULT_PPRINTER = PrettyPrinter()
+
+    __slots__ = 'pprinter', 'components', 'properties'
+
+    def __init__(self, pprinter, components, properties):
+        self.pprinter = pprinter
+        self.components = components
+        self.properties = properties
 
 
-def m_wrapper(**kwargs):
-    """Simple decorator to mark method a 'wrapper'"""
+def method_attrs(*components, **kwargs):
+    """Decorator to specify metadata for managed methods of MCaller.
+
+    This decorator is quite generic: it allowes you to specify list of
+    'components' required by a method, and a dictionary of any other
+    attributes.
+
+    List of required components will be used to check bound method availability.
+
+    'pprint' is a special kwarg: if it is specified, it should be a custom
+    pretty-printer, which will be used to print the results of the decorated
+    method.
+    """
+    pprinter = kwargs.pop('pprint', MCallerMetaGeneral._DEFAULT_PPRINTER)
+
     def decorator(method):
-        method._mcaller_meta = kwargs.copy()
+        method._mcaller_meta = MCallerMetaGeneral(pprinter, components, kwargs)
         return method
 
     return decorator
 
 
-class MCaller(metaclass=Meta_MethodsCaller):
+class MCaller(metaclass=_Meta_MethodsCaller):
     """Base class for "method caller's".
 
     Main purpose is to make such objects of these classes console friendly.
@@ -252,3 +270,21 @@ class MCaller(metaclass=Meta_MethodsCaller):
             return BoundMethodNotes(True, "", None)
 
         return notes_maker_method(bound_method, palette)
+
+    def _make_bm_notes_general(self, bound_method, palette) -> BoundMethodNotes:
+        # create BoundMethodNotes for 'general' bound methods (methods
+        # decorated with 'method_attrs' decorator)
+        assert hasattr(bound_method, '_mcaller_meta')
+        method_meta = bound_method._mcaller_meta
+        assert hasattr(method_meta, 'components')
+
+        available_components = getattr(self, 'available_components', [])
+        missing_components = [
+            n for n in method_meta.components if n not in available_components]
+
+        if missing_components:
+            return BoundMethodNotes(True, "", None)
+        else:
+            return BoundMethodNotes(
+                False, "<n/a>",
+                f"object has no access to components {missing_components}")

@@ -8,12 +8,14 @@ from ak.mcaller import MCaller
 class MCallerMetaHttpMethod:
     """Properties of MethodsCaller method, which wraps http call.
 
-    Created by decorator of http method wrapper.
+    Created by 'method_http' decorator.
     """
 
     # name of the method, which will prepare BoundMethodNotes for
     # methods decorated with this decorator
     _MAKE_BM_NOTES_METHOD = '_make_bm_notes_http'
+
+    __slots__ = 'auth_type', 'component'
 
     def __init__(self, auth_type, component=None):
         self.auth_type = auth_type
