@@ -259,7 +259,7 @@ class _HttpConnBase:
             # 'adapters' is not a list, but a single adapter. Make it a list
             adapters = [adapters, ]
 
-        if hasattr(conn_data, 'conn_impl') and callable(conn_data):
+        if isinstance(conn_data, _HttpConnBase):
             # conn_data is another connection object, self will wrap it
             parent_conn = conn_data
         elif isinstance(conn_data, str):
@@ -321,13 +321,12 @@ class _HttpConnBase:
         self.adapters.append(adapter)
         self.descr = None  # to be re-evaluated by demand
 
-    def __call__(self, path, method=None, *,
-                 params=None, data=None, headers=None, raw_response=False):
-        """Make specified https(s) request.
+    def get(self, path, *,
+            params=None, data=None, headers=None, raw_response=False):
+        """Make GET https(s) request.
 
         Arguments:
         - path: request path
-        - method: request method. By default is "GET" or "POST" (if 'data' provided)
         - params: dictionary of request parameters
         - data: data for request. Can be bytes, string or any python object, which
             can be dumped to json.
@@ -338,10 +337,46 @@ class _HttpConnBase:
                is thrown if request was not successful.
             True - urllib Response object is returned "as-is".
         """
-        # small shortcat: instead of calling self.parent_conn call the final
+        # small shortcut: instead of calling self.parent_conn call the final
         # element of the chain immediately
         return self.conn_impl.do_request(
-            self.adapters, path, method, params, data, headers, raw_response)
+            self.adapters, path, "GET", params, data, headers, raw_response)
+
+    def post(self, path, *,
+             params=None, data=None, headers=None, raw_response=False):
+        """Make POST https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self.conn_impl.do_request(
+            self.adapters, path, "POST", params, data, headers, raw_response)
+
+    def put(self, path, *,
+            params=None, data=None, headers=None, raw_response=False):
+        """Make PUT https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self.conn_impl.do_request(
+            self.adapters, path, "PUT", params, data, headers, raw_response)
+
+    def delete(self, path, *,
+               params=None, data=None, headers=None, raw_response=False):
+        """Make DELETE https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self.conn_impl.do_request(
+            self.adapters, path, "DELETE", params, data, headers, raw_response)
+
+    def patch(self, path, *,
+               params=None, data=None, headers=None, raw_response=False):
+        """Make PATCH https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self.conn_impl.do_request(
+            self.adapters, path, "PATCH", params, data, headers, raw_response)
 
 
 class HttpConn(_HttpConnBase):

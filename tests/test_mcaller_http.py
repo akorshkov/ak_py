@@ -22,7 +22,7 @@ class TestMCallerHttp(unittest.TestCase):
         def call_it(self, param, arg):
             """sample http wrapper method."""
             conn = self.get_conn()
-            return conn(
+            return conn.post(
                 "/my/test/path",
                 params={'param': param},
                 data={'arg': arg},
@@ -35,7 +35,7 @@ class TestMCallerHttp(unittest.TestCase):
         def call_it_another(self, param, arg):
             """sample http wrapper method."""
             conn = self.get_conn()
-            return conn(
+            return conn.post(
                 "/my/test/another_path",
                 params={'param': param},
                 data={'arg': arg},
@@ -48,7 +48,7 @@ class TestMCallerHttp(unittest.TestCase):
         def call_v3(self, param, arg):
             """sample http wrapper method."""
             conn = self.get_conn()
-            return conn(
+            return conn.post(
                 "/my/test/another_path",
                 params={'param': param},
                 data={'arg': arg},
@@ -58,7 +58,7 @@ class TestMCallerHttp(unittest.TestCase):
         def call_v4(self, param, arg):
             """sample http wrapper method."""
             conn = self.get_conn()
-            return conn(
+            return conn.post(
                 "/my/test/another_path",
                 params={'param': param},
                 data={'arg': arg},
