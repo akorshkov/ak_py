@@ -40,7 +40,7 @@ class MCallerSql(MCaller):
     Derived class should look like:
     class MyCaller(MCallerSql):
 
-        _SQL_MTD_1 = SQLMethod(....)
+        _SQL_MTD_1 = SqlMethod(....)
 
         def __init__(self, ...):
             self.sql_dbs_addrs = {

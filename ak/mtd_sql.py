@@ -5,9 +5,13 @@ requests. It's a simple wrapper for manually prepared sql requests.
 """
 
 from collections import namedtuple
+import logging
 
 
-class SQLMethod:
+logger = logging.getLogger(__name__)
+
+
+class SqlMethod:
     """Python wrapper of sql request."""
 
     __slots__ = (
@@ -16,25 +20,49 @@ class SQLMethod:
         'sql_request',
     )
 
-    def __init__(self, record_name, col_titles, params_names, sql_request):
-        """Create SQLMethod object.
+    def __init__(self, sql_request, params_names, record_name, col_titles=None):
+        """Create SqlMethod object.
 
         Arguments:
-        - record_name, col_titles: type_name and field_names of the namedtuples
-            this method will return
+        - sql_request: the sql request string
         - params_names: names of sql request parameters. These names can be
             used later, when calling the method. Does not have to match
             db columns names.
-        - sql_request: the sql request string
+        - record_name: either a namedtuple class, or a name of a new namedtuple
+            class to create.
+        - col_titles: should be specified if 'record_name' argument is not
+            a name for a new namedtuple. In this case 'col_titles' should be
+            a list of field names.
         """
-        #self.record_name = record_name
-        #self.col_titles = col_titles
-        self.record_namedtuple = namedtuple(record_name, col_titles)
+        if col_titles is None:
+            assert isinstance(record_name, type)
+            self.record_namedtuple = record_name
+        else:
+            self.record_namedtuple = namedtuple(record_name, col_titles)
         self.params_names = params_names
         self.sql_request = sql_request
 
-    def __call__(self, conn, *args, **kwargs):
-        """Execute sql request, yield result records."""
+    @classmethod
+    def make(cls, record_namedtuple, filter_columns):
+        """Helper constructor.
+
+        Arguments:
+        - record_namedtuple: namedtuple type, which corresponds to a single
+            database table
+        - filter_columns: names of columns to filter records by
+        """
+        table_name = record_namedtuple.__name__
+        column_names = record_namedtuple._fields
+        for col in filter_columns:
+            assert col in column_names, (
+                f"filter column '{col}' is not present in list of all "
+                f"columns {column_names}")
+        sql_string = (
+            "SELECT " + ", ".join(n for n in column_names) + " FROM " + table_name)
+        if filter_columns:
+            sql_string += " WHERE " + " AND ".join(f"{n} = ?" for n in filter_columns)
+
+        return cls(sql_string, filter_columns, record_namedtuple)
 
     def _execute(self, conn, args, kwargs):
         # Execute sql request, yield result records
@@ -60,10 +88,17 @@ class SQLMethod:
 
         # and execute request
         cur = conn.cursor()
-        for raw in cur.execute(self.sql_request, req_params):
+        logger.debug("SQL request: %s ; params: %s", self.sql_request, req_params)
+        cur.execute(self.sql_request, req_params)  # some databases return data here,
+                                                   # others - number of affected records.
+        for raw in cur:
             yield self.record_namedtuple._make(raw)
 
     def all(self, conn, *args, **kwargs):
+        """Execute sql request, yield result records."""
+        yield from self._execute(conn, args, kwargs)
+
+    def list(self, conn, *args, **kwargs):
         """Execute sql request, return list of result records."""
         return list(self._execute(conn, args, kwargs))
 

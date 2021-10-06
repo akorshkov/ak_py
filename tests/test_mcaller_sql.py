@@ -5,7 +5,7 @@ import unittest
 import sqlite3
 
 from ak.hdoc import HCommand
-from ak.mtd_sql import SQLMethod
+from ak.mtd_sql import SqlMethod
 from ak.mcaller_sql import MCallerSql, method_sql
 
 
@@ -18,11 +18,11 @@ class TestMCallerSQL(unittest.TestCase):
     class MethodsCollection1(MCallerSql):
         """Collection of sql requests wrappers."""
 
-        _MTD_SQL_GET_ACCOUNT = SQLMethod(
+        _MTD_SQL_GET_ACCOUNT = SqlMethod(
+            "SELECT id, name FROM accounts WHERE id = ?;",
+            ['account_id',],
             'accounts',
             ['account_id', 'name'],
-            ['account_id',],
-            "SELECT id, name FROM accounts WHERE id = ?;",
         )
 
         @method_sql
@@ -34,11 +34,11 @@ class TestMCallerSQL(unittest.TestCase):
     class MethodsCollection2(MCallerSql):
         """Another collection of sql requests wrappers."""
 
-        _MTD_SQL_GET_DOC = SQLMethod(
+        _MTD_SQL_GET_DOC = SqlMethod(
+            "SELECT id, description FROM documents WHERE id = ?;",
+            ['document_id',],
             'document',
             ['doc_id', 'descr'],
-            ['document_id',],
-            "SELECT id, description FROM documents WHERE id = ?;",
         )
 
         @method_sql('docs_component')
