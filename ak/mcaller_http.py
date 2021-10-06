@@ -40,7 +40,7 @@ def method_http(auth_type, component=None):
 
 
 class MCallerHttp(MCaller):
-    """Base class for "http method collers".
+    """Base class for "http method callers".
 
     Base for classes, whose methods are python wrappers of http calls.
 
