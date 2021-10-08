@@ -62,7 +62,7 @@ class RequestAdapter:
         """pre-process http request"""
         pass
 
-    def process_response(self, return_value, is_error):
+    def process_response(self, return_value):
         """process value returned by http request"""
         # pylint: disable=unused-argument
         return return_value
@@ -120,7 +120,7 @@ class _HttpConnImpl:
         To be used by the owner connection object. (owner just keeps list of
         adapters and calls this method with these adapters)
 
-        Descriptions of other arguments are same as in _HttpConnBase.__call__()
+        Descriptions of other arguments are same as in _HttpConnBase.get()
         """
 
         # 1. use adapters to pre-process arguments
@@ -178,19 +178,18 @@ class _HttpConnImpl:
         # actual call
         try:
             response = self.opener.open(request)
-            is_error = False
         except urllib.error.HTTPError as err:
-            if not raw_response:
-                raise
-            response = err
-            is_error = True
+            with err:
+                err.data = err.read()
+            self._log_response(err, url)
+            raise
 
         with response:
             response.data = response.read()
 
         self._log_response(response, url)
 
-        if not raw_response and not is_error:
+        if not raw_response:
             ret_val = response.data.decode('utf-8')
             if ret_val:
                 ret_val = json.loads(ret_val)
@@ -199,7 +198,7 @@ class _HttpConnImpl:
 
         # process return value
         for adapter in adapters[::-1]:
-            ret_val = adapter.process_response(ret_val, is_error)
+            ret_val = adapter.process_response(ret_val)
 
         return ret_val
 
