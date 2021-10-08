@@ -121,7 +121,8 @@ class TestSQLMethod(unittest.TestCase):
         # all the information required to create SqlMethod is available here:
         record_type = namedtuple('users', ['id', 'name', 'account_id'])
 
-        get_users = SqlMethod.make(record_type, ['name', 'account_id'])
+        get_users = SqlMethod.make(
+            record_type, ['name', 'account_id'], 'qmark')
 
         users = get_users.list(db, "James", 1)
         self.assertEqual(1, len(users))

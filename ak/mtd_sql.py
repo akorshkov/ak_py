@@ -5,6 +5,7 @@ requests. It's a simple wrapper for manually prepared sql requests.
 """
 
 from collections import namedtuple
+import contextlib
 import logging
 
 
@@ -19,6 +20,11 @@ class SqlMethod:
         'params_names',
         'sql_request',
     )
+
+    _PARAMSTYLES = {
+        'qmark': "?",
+        'format': "%s",
+    }
 
     def __init__(self, sql_request, params_names, record_name, col_titles=None):
         """Create SqlMethod object.
@@ -43,13 +49,16 @@ class SqlMethod:
         self.sql_request = sql_request
 
     @classmethod
-    def make(cls, record_namedtuple, filter_columns):
+    def make(cls, record_namedtuple, filter_columns, paramstyle='format'):
         """Helper constructor.
 
         Arguments:
         - record_namedtuple: namedtuple type, which corresponds to a single
             database table
         - filter_columns: names of columns to filter records by
+        - paramstyle: parameters style to be used in generated sql request.
+            There exists five different styles (see pep-0249), but only two
+            of them are supported: "qmark" and "format".
         """
         table_name = record_namedtuple.__name__
         column_names = record_namedtuple._fields
@@ -60,7 +69,14 @@ class SqlMethod:
         sql_string = (
             "SELECT " + ", ".join(n for n in column_names) + " FROM " + table_name)
         if filter_columns:
-            sql_string += " WHERE " + " AND ".join(f"{n} = ?" for n in filter_columns)
+            param_placeholder = cls._PARAMSTYLES.get(paramstyle, None)
+            if param_placeholder is None:
+                raise NotImplementedError(
+                    f"paramstyle '{paramstyle}' is not supported. "
+                    f"Supported paramstyles: {list(cls._PARAMSTYLES.keys())}.")
+            sql_string += (
+                " WHERE " +
+                " AND ".join(f"{n} = {param_placeholder}" for n in filter_columns))
 
         return cls(sql_string, filter_columns, record_namedtuple)
 
@@ -87,12 +103,11 @@ class SqlMethod:
             req_params.append(kwargs[arg_name])
 
         # and execute request
-        cur = conn.cursor()
         logger.debug("SQL request: %s ; params: %s", self.sql_request, req_params)
-        cur.execute(self.sql_request, req_params)  # some databases return data here,
-                                                   # others - number of affected records.
-        for raw in cur:
-            yield self.record_namedtuple._make(raw)
+        with contextlib.closing(conn.cursor()) as cur:
+            cur.execute(self.sql_request, req_params)
+            for raw in cur:
+                yield self.record_namedtuple._make(raw)
 
     def all(self, conn, *args, **kwargs):
         """Execute sql request, yield result records."""
