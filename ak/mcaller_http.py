@@ -23,7 +23,24 @@ class MCallerMetaHttpMethod:
 
 
 def method_http(auth_type, component=None):
-    """decorator to mark method as a 'wrapper' around http method."""
+    """decorator to mark method of MCallerHttp as a 'wrapper' around http request.
+
+    Arguments:
+    - auth_type: expected auth type of the http connection (*)
+    - component: name of the external component (**)
+
+    Notes (*)(**):
+      The MCallerHttp object owns a connection (HttpConn). This connection
+    may be authorized (f.e. the requests sent through it will have basic
+    authorization with credentials of mr. Root).
+      Decorated method should get the connetion object using self.get_conn().
+    and use it as is (w/o changing authorization).
+      The connection returned by self.get_conn() depends on the method's component.
+    Depending on 'component' some prefix may be added to request path.
+      If auth type of connetion does not match method's 'auth_type' a warning
+    will be issued, (but it is still possible to call methods with 'incorrect'
+    authorization - f.e. for test purposes).
+    """
 
     if callable(auth_type) and component is None:
         # decorator was used w/o parameters. auth_type is actually a

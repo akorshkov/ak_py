@@ -18,7 +18,11 @@ class MCallerMetaSqlMethod:
 
 
 def method_sql(component=None):
-    """decorator to mark method as a 'wrapper' around sql request."""
+    """decorator to mark method as a 'wrapper' around sql request.
+
+    Arguments:
+    - component: deprecatied. Name of component which owns the database.
+    """
 
     if callable(component):
         # decorator was used w/o parameters. The argument is actually a
