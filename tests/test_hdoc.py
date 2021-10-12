@@ -1,6 +1,7 @@
 """Test hdoc module."""
 
 import unittest
+from collections import namedtuple
 
 from ak.hdoc import HCommand, HDocItemFunc, BoundMethodNotes, h_doc
 
@@ -78,7 +79,9 @@ class TestHDocItemCls(unittest.TestCase):
         class TClass:
             """base class summary"""
 
-            SOME_CLASS_ATTR = {1:1, 2:2}  # should not break hdocs
+            # such class attributes should not break hdocs
+            SOME_CLASS_ATTR = {1:1, 2:2}
+            SOME_TYPE = namedtuple('user', ['id', 'bloodtype'])
 
             def __init__(self, x):
                 self.x = x
@@ -282,6 +285,10 @@ class TestMethodNotes(unittest.TestCase):
         class TClass:
             """Class with 'method-notes' functionality."""
 
+            # such class attributes should not break hdocs
+            SOME_CLASS_ATTR = {1:1, 2:2}
+            SOME_TYPE = namedtuple('user', ['id', 'bloodtype'])
+
             def __init__(self):
                 self.allow_method = True
                 self.note_short = "note_short_allowed"
@@ -359,3 +366,74 @@ class TestMethodNotes(unittest.TestCase):
             'the_method', help_text,
             "'the_method' is not available in the 'tst_obj' instance, "
             "so it should be notreported in h-doc by default")
+
+
+class TestHDocsHidden(unittest.TestCase):
+    """Test that methods with 'hidden' h-docs are not present in class help."""
+
+    def test_some_hidden_hdocs(self):
+        """Test that methods with 'hidden' h-docs are not present in class help."""
+
+        @h_doc(explicit_only=True)
+        class TClass:
+            """Class with several methods having different types of h_docs"""
+
+            @h_doc
+            def method_1(self):
+                """Usual method with explicit h_doc."""
+                pass
+
+            def method_2(self):
+                """Method with doc string, but w/o explicit h_doc decorator."""
+                pass
+
+            @h_doc(hidden=True)
+            def method_3(self):
+                """Mwthod with explicit h_doc, but the doc is hidden."""
+                pass
+
+        # for tests prepare version of 'h' which does not print but return
+        # help text
+        h = HCommand()._make_help_text
+
+        # 1. analyze h-doc of the class
+        help_text = h(TClass)
+
+        self.assertIn("TClass", help_text, "class name must be present")
+        self.assertIn(
+            "method_1", help_text,
+            "method with explicit h_doc should be present in class help")
+        self.assertNotIn(
+            "method_2", help_text,
+            "h_doc for class was created with 'explicit_only' option. "
+            "method_2 has no explicit h_doc, so it is not mentiond in "
+            "help text")
+        self.assertNotIn(
+            "method_3", help_text,
+            "method_3 has explicit h_doc, but it is 'hidden' -  so it is "
+            "not mentiond in help text")
+
+        # 2. analyze h_doc's of individual methods
+        self.assertIn("method_1", h(TClass.method_1))
+        self.assertEqual("", h(TClass.method_2))
+        self.assertIn(
+            "method_3", h(TClass.method_3),
+            "h_doc of method_3 is hidden, so this method is not mentioned "
+            "in class help text. But it is available for explicitely "
+            "specified object")
+
+        # 3. analyze h-doc of object
+        obj = TClass()
+        help_text = h(obj)
+        self.assertIn(
+            "method_1", help_text,
+            "method with explicit h_doc should be present in obj help")
+        self.assertNotIn(
+            "method_2", help_text,
+            "h_doc for class was created with 'explicit_only' option. "
+            "method_2 has no explicit h_doc, so it is not mentiond in "
+            "help text")
+        self.assertNotIn(
+            "method_3", help_text,
+            "method_3 has explicit h_doc, but it is 'hidden' -  so it is "
+            "not mentiond in help text")

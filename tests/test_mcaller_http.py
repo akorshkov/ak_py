@@ -154,11 +154,24 @@ class TestMCallerHttp(unittest.TestCase):
         self.assertIn('call_it', hdoc_class, "method from MethodsCollection1")
         self.assertIn('call_v3', hdoc_class, "method from MethodsCollection3")
         self.assertIn('call_v4', hdoc_class, "method from MethodsCollection3")
+        self.assertNotIn('call_it_r', hdoc_class)
+        self.assertNotIn('call_v3_r', hdoc_class)
+        self.assertNotIn('call_v4_r', hdoc_class)
+
+        # verify that service methods are not included into help text
+        for service_method in ['get_conn', 'get_mcaller_meta']:
+            self.assertTrue(hasattr(MyCompHttpCaller, service_method))
+            self.assertNotIn(service_method, hdoc_class)
 
         # verify help generated for individual methods in class
         self.assertIn('call_it', h(MyCompHttpCaller.call_it))
         self.assertIn('call_v3', h(MyCompHttpCaller.call_v3))
         self.assertIn('call_v4', h(MyCompHttpCaller.call_v4))
+
+        # verify help generated even for 'hidden' methods in class
+        self.assertIn('call_it', h(MyCompHttpCaller.call_it_r))
+        self.assertIn('call_v3', h(MyCompHttpCaller.call_v3_r))
+        self.assertIn('call_v4', h(MyCompHttpCaller.call_v4_r))
 
         # verify help generated for an object of class
         x = MyCompHttpCaller("https://some.address.org")
@@ -172,3 +185,11 @@ class TestMCallerHttp(unittest.TestCase):
             "unavailable in the object. Method requires http connection for"
             "component 'componentB', but the object has only connection "
             "to componentA")
+
+        self.assertNotIn('call_it_r', hdoc_obj)
+        self.assertNotIn('call_v3_r', hdoc_obj)
+
+        # verify that service methods are not included into help text
+        for service_method in ['get_conn', 'get_mcaller_meta']:
+            self.assertTrue(hasattr(x, service_method))
+            self.assertNotIn(service_method, hdoc_obj)

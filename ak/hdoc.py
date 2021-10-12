@@ -339,6 +339,7 @@ class HDocItemFunc(HDocItem):
     """Data for h-doc of a function or a method of class."""
     __slots__ = (
         'name',
+        'hidden',  # do not include this method in class help text
         'arg_names',  # [arg_name, ]
         'short_descr',  # first line of doc string
         'body_lines',  # body of doc string w/o first line and lines with tags
@@ -346,7 +347,7 @@ class HDocItemFunc(HDocItem):
         'tags',  # list of all tags
     )
 
-    def __init__(self, func, func_name, doc_string):
+    def __init__(self, func, func_name, doc_string, hidden=False):
         """HDocItemFunc - 'h' metadata about a single function/method.
 
         Arguments:
@@ -355,6 +356,7 @@ class HDocItemFunc(HDocItem):
         - doc_string: doc string specified for this function.
         """
         self.name = func_name
+        self.hidden = hidden
 
         # inspect function signature
         f_signature = inspect.signature(func)
@@ -425,14 +427,21 @@ class HDocItemCls(HDocItem):
 
     __slots__ = (
         'name',
+        'hidden',  # reserved, used in HDocItemFunc only
         'h_items_by_name',
         'h_items_by_tag',  # {tag: [h_items having this main_tag]}
         'short_descr',  # short description from doc_string
         'body_doc',  # body of the doc string
     )
 
-    def __init__(self, obj_class):
+    def __init__(self, obj_class, explicit_only=False):
+        """Create h-doc for a class.
+
+        If 'explicit_only' is false, h-docs will be automatically
+        generated for methods defind in the class.
+        """
         self.name = obj_class.__name__
+        self.hidden = False
 
         ds = _ParsedDocStr(getattr(obj_class, '__doc__', ""))
         self.short_descr = ds.short_descr
@@ -456,7 +465,7 @@ class HDocItemCls(HDocItem):
                 self.h_items_by_name[name] = h_item
 
         # process h-items of methods defined in current class
-        for h_item in self._create_hitems_for_methods(obj_class):
+        for h_item in self._generate_hitems_for_methods(obj_class, explicit_only):
             if 'no_hdoc' not in h_item.tags:
                 self.h_items_by_name[h_item.name] = h_item
 
@@ -467,7 +476,7 @@ class HDocItemCls(HDocItem):
             h_items.sort(key=lambda x: x.name)
 
     @staticmethod
-    def _create_hitems_for_methods(obj_class):
+    def _generate_hitems_for_methods(obj_class, explicit_only):
         # create h_items for methods of obj_class
 
         assert hasattr(obj_class, '__dict__'), (
@@ -501,6 +510,8 @@ class HDocItemCls(HDocItem):
                     # by current attr_name
                     h_item.name = attr_name
                 h_items_by_name[h_item.name] = h_item
+                continue
+            if explicit_only:
                 continue
             if attr_name.startswith('_'):
                 continue
@@ -546,14 +557,20 @@ class HDocItemCls(HDocItem):
         # generate descriptions of methods
         for tag, h_items in self.h_items_by_tag.items():
             ct = palette.get_color('tags')
-            yield f"#{ct(tag)}"
+            tag_line_reported = False
             for h_item in h_items:
+                if h_item.hidden:
+                    continue
                 # in case we generate h-doc not for a class but for an
                 # object of class, the methods are actually bound methods and
                 # additional information (bm_notes) may be available.
                 bm_notes = self._get_bound_method_notes(obj, h_item, palette)
                 if not bm_notes.is_available and not report_na_methods:
                     continue
+
+                if not tag_line_reported:
+                    yield f"#{ct(tag)}"
+                    tag_line_reported = True
 
                 for method_help_line in h_item._gen_help_oneline(
                     obj, _filt, palette, dets_level, bm_notes):
@@ -575,25 +592,50 @@ class HDocItemCls(HDocItem):
 
         if obj_self:
             # if we get here the 'obj' is an object of class
-            bound_method = getattr(obj, h_item.name, None)
-            assert bound_method is not None, (
+            attr = getattr(obj, h_item.name, None)
+            assert attr is not None, (
                 f"Object '{obj}' of type '{type(obj)}' has no attr '{h_item.name}'"
             )
 
-            return obj_self._get_hdoc_method_notes(bound_method, palette)
+            if callable(attr) and hasattr(attr, '__self__'):
+                # attr is bound method. BoundMethodNotes can be created for it.
+                return obj_self._get_hdoc_method_notes(attr, palette)
 
         return BoundMethodNotes(True, "", "")
 
 
-def h_doc(obj):
+def h_doc(obj=None, *, explicit_only=False, hidden=False):
     """Decorator which creates h_doc data for a class or function.
 
     If is not necessary to use this decorator for each method of a class,
     it's enough to decorate class itself.
-    """
-    if isinstance(obj, type):
-        obj._h_doc = HDocItemCls(obj)
-    else:
-        obj._h_doc = HDocItemFunc(obj, obj.__name__, obj.__doc__)
 
-    return obj
+    Arguments:
+    - explicit_only: do not automatically create h-docs for methods defined in
+    class. Applicable only when decorating classes.
+    - hidden: mark h-doc generated for a method as 'hidden' - information about
+    this method will not be included into help text generated for a class or
+    object of class. Applicable only when decorating functions/methods.
+    """
+    if obj is not None:
+        # decorator was used w/o parameters. The obj is actually an object
+        # to be decorated
+        dec = h_doc(explicit_only=explicit_only, hidden=hidden)
+        return dec(obj)
+
+    def decorator(xobj):
+        if isinstance(xobj, type):
+            assert hidden is False, (
+                f"'hidden' parameter is not applicable for decorating "
+                f"object of type {type(xobj)}.")
+            xobj._h_doc = HDocItemCls(xobj, explicit_only)
+        else:
+            assert explicit_only is False, (
+                f"'explicit_only' parameter is not applicable for decorating "
+                f"object of type {type(xobj)}.")
+            xobj._h_doc = HDocItemFunc(
+                xobj, xobj.__name__, xobj.__doc__, hidden)
+
+        return xobj
+
+    return decorator

@@ -82,6 +82,7 @@ class _Meta_MethodsCaller(type):
                 orig_method_body, mcaller_meta,
                 obj_pprint_method_name, pprinter_obj)
 
+            decorated_method = h_doc(decorated_method)
             new_methods[name] = decorated_method
 
             raw_val_method_name = name + "_r"
@@ -89,7 +90,7 @@ class _Meta_MethodsCaller(type):
                 f"Class '{classname}' has method '{name}' marked as 'wrapper' "
                 f"(it has '_mcaller_meta' attribute), so '{raw_val_method_name}' "
                 f"must not be explicitely declared")
-            new_methods[raw_val_method_name] = orig_method_body
+            new_methods[raw_val_method_name] = h_doc(orig_method_body, hidden=True)
 
         classdict.update(new_methods)
         classdict['_MCALLERS_METAS'] = mcallers_metas
@@ -130,7 +131,7 @@ class _Meta_MethodsCaller(type):
         created_class = super().__new__(meta, classname, supers, classdict)
 
         # do not require to use @h_doc decorator explicitely
-        created_class = h_doc(created_class)
+        created_class = h_doc(created_class, explicit_only=True)
 
         return created_class
 
@@ -283,8 +284,8 @@ class MCaller(metaclass=_Meta_MethodsCaller):
             n for n in method_meta.components if n not in available_components]
 
         if missing_components:
-            return BoundMethodNotes(True, "", None)
-        else:
             return BoundMethodNotes(
                 False, "<n/a>",
                 f"object has no access to components {missing_components}")
+        else:
+            return BoundMethodNotes(True, "", None)
