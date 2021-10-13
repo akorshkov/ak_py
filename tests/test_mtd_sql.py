@@ -184,3 +184,61 @@ class TestSQLMethod(unittest.TestCase):
 
         with self.assertRaises(ValueError) as err:
             get_accounts_ids.one(db, 10, 20, 30, 40, argx=40)
+
+
+class TestRecordsMMap(unittest.TestCase):
+    """Test SqlMethod.records_mmap method.
+
+    This is a helper which classifies records by specified attributes:
+    records -> {key1: {key2: ... {keyN: record}...}}
+    """
+
+    def test_rrecord_map_maker(self):
+        """Test normal successful scenario."""
+        ttype = namedtuple('document', ['vault_id', 'doc_id', 'name', 'size'])
+        records = [
+            ttype(10, 1, 'secret doc 10 1', 17),
+            ttype(20, 1, 'secret doc 20 1', 17),
+            ttype(10, 3, 'secret doc 10 3', 42),
+            ttype(10, 4, 'secret doc 10 1', 17),
+        ]
+
+        # analyze the result mmap default behavior (unique=True)
+        recs_map = SqlMethod.records_mmap(records, 'vault_id', 'doc_id')
+        self.assertEqual({
+            10: {
+                1: records[0],
+                3: records[2],
+                4: records[3],
+            },
+            20: {
+                1: records[1],
+            }
+        }, recs_map)
+
+        # analyze the result mmap default behavior (unique=True)
+        recs_map = SqlMethod.records_mmap(records, 'vault_id', 'doc_id', unique=False)
+        self.assertEqual({
+            10: {
+                1: [records[0], ],
+                3: [records[2], ],
+                4: [records[3], ],
+            },
+            20: {
+                1: [records[1], ],
+            }
+        }, recs_map)
+
+        # try sort out by not unique key
+        with self.assertRaises(AssertionError) as err:
+            SqlMethod.records_mmap(records, 'doc_id')
+
+        self.assertIn("duplicate records", str(err.exception))
+
+        # sort out by not unique key (with explicit unique=False argument)
+        recs_map = SqlMethod.records_mmap(records, 'doc_id', unique=False)
+
+        self.assertEqual(recs_map.keys(), {1, 3, 4})
+        self.assertEqual(2, len(recs_map[1]))
+        self.assertEqual(1, len(recs_map[3]))
+        self.assertEqual(1, len(recs_map[4]))

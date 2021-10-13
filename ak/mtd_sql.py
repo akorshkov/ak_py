@@ -137,3 +137,32 @@ class SqlMethod:
             raise ValueError(f"{len(all_records)} records selected")
 
         return all_records[0] if all_records else None
+
+    @staticmethod
+    def records_mmap(records, *key_names, unique=True):
+        """records -> {key1: {key2: ... {keyN: record}...}}
+
+        If unique argument is not true:
+        records -> {key1: {key2: ... {keyN: [record, ]}...}}
+        """
+        ret_val = {}
+        last_key_id = len(key_names) - 1
+
+        for record in records:
+            cur_dict = ret_val
+            for i, attr_name in enumerate(key_names):
+                val = getattr(record, attr_name)
+                if i == last_key_id:
+                    if unique:
+                        # leaf element is a single record
+                        assert val not in cur_dict, (
+                            f"duplicate records {record} and {cur_dict[val]} found. "
+                            f"(key attributes: {key_names}")
+                        cur_dict[val] = record
+                    else:
+                        # leaf element is a list
+                        cur_dict.setdefault(val, []).append(record)
+                else:
+                    cur_dict = cur_dict.setdefault(val, {})
+
+        return ret_val
