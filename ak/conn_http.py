@@ -474,11 +474,17 @@ class TokenAuthConn(_HttpConnBase):
 class RequestAdapterAddPathPrefix(RequestAdapter):
     """Request adapter which adds specified prefix to request path."""
 
+    __slots__ = 'prefix'
+
     def __init__(self, prefix):
         self.prefix = prefix
 
     def process_req_args(self, req_args):
-        req_args.path = self.prefix + req_args.path
+        suffix_path = req_args.path
+        if suffix_path and suffix_path.startswith('/') and self.prefix.endswith('/'):
+            suffix_path = suffix_path[1:]
+
+        req_args.path = self.prefix + suffix_path
 
     def mk_descr(self):
         return f"with path prefix '{self.prefix}'"
