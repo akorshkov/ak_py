@@ -63,20 +63,52 @@ class MCallerHttp(MCaller):
 
     Derived class should look like:
     class MyCaller(MCallerHttp):
-        def __init__(self, ...):
-            self.http_conn = ...  # required for get_conn() method to work
-            # required for get_conn() if components are specied in
-            # method_http decorators.
-            self.http_prefixes = {
-                'componentA': "/path/prefix/for/componentA",
-                ...
-            }
+        _HTTP_PREFIX_MAP = {
+            'componentA': "/path/prefix/for/componentA",
+        }
 
         @method_http('bauth', 'componentA')
         def get_example(self):
             conn = self.get_conn()
             return conn("path/for/this/method")
     """
+    _HTTP_PREFIX_MAP = {}  # {component: http_prefix}
+
+    __slots__ = 'http_conn', '_mc_conns_by_prefix'
+
+    def __init__(self, address):
+        """Create MCallerHttp object.
+
+        Arguments:
+        - address: http address or the conn_http.HttpConn object
+        """
+        if isinstance(address, conn_http.HttpConn):
+            self.http_conn = address
+        else:
+            self.http_conn = conn_http.HttpConn(address)
+
+        self._mc_conns_by_prefix = {}
+
+    def clone(self, http_conn_adapters=None):
+        """Create a new MCallerHttp with a same method but modified connection.
+
+        F.e. we have a method caller which sends unauthorized http requests,
+        and we want to create a new caller, which would send requests with
+        basic authorization using John's credentials.
+
+        Argument:
+        - http_conn_adapters: list of conn_http.RequestAdapter objects (or
+        a single such object)
+        """
+        if http_conn_adapters is None:
+            http_conn_adapters = []
+        elif isinstance(http_conn_adapters, (list, tuple)):
+            # it's a single adapter
+            http_conn_adapters = [http_conn_adapters]
+
+        cloned_http_conn = conn_http.HttpConn(
+            self.http_conn, adapters=http_conn_adapters)
+        return type(self)(cloned_http_conn)
 
     def get_conn(self):
         """returns HttpConn to be used in currnt http wrapper method.
@@ -91,25 +123,13 @@ class MCallerHttp(MCaller):
             "Method 'get_conn' can only be called from HttpConn wrappers"
         )
 
-        if not hasattr(self, 'http_conn'):
-            raise NotImplementedError(
-                f"obj of class {type(self)} has a method decorated by "
-                f"'method_http' but it does not have "
-                f"'http_conn' attribute. "
-            )
         base_conn = self.http_conn
 
         if method_meta.component is not None:
-            if not hasattr(self, 'http_prefixes'):
-                raise NotImplementedError(
-                    f"obj of class {type(self)} has a method decorated by "
-                    f"'method_http' with specified component name "
-                    f"'{method_meta.component}', but it does not have "
-                    f"'http_prefixes' attribute. "
-                )
-            prefix = self.http_prefixes[method_meta.component]
-            if getattr(self, '_mc_conns_by_prefix', None) is None:
-                setattr(self, '_mc_conns_by_prefix', {})
+            assert method_meta.component in self._HTTP_PREFIX_MAP, (
+                f"http prefix for component {method_meta.component} is not "
+                f"configured in class {type(self)}: {self._HTTP_PREFIX_MAP}")
+            prefix = self._HTTP_PREFIX_MAP[method_meta.component]
             conns_by_prefix = self._mc_conns_by_prefix
             if prefix in conns_by_prefix:
                 conn = conns_by_prefix[prefix]
@@ -154,7 +174,7 @@ class MCallerHttp(MCaller):
         component_ok = True
         component_problem_descr = ""
         if method_meta.component is not None:
-            if method_meta.component not in getattr(self, 'http_prefixes', []):
+            if method_meta.component not in self._HTTP_PREFIX_MAP:
                 component_ok = False
                 component_problem_descr = (
                     f"object has no http connection to component "

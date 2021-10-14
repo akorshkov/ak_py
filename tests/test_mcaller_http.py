@@ -2,7 +2,9 @@
 
 import unittest
 
-from ak.conn_http import HttpConn
+import base64
+
+from ak.conn_http import HttpConn, BAuthConn
 from ak.hdoc import HCommand
 from ak.mcaller_http import MCallerHttp, method_http
 
@@ -69,8 +71,7 @@ class TestMCallerHttp(unittest.TestCase):
 
         class MyHttpCaller(self.MethodsCollection1, self.MethodsCollection2):
             """Combines two mix-ins into an actual method caller """
-            def __init__(self, address):
-                self.http_conn = HttpConn(address)
+            pass
 
         # 1. create an actual caller
         my_caller = MyHttpCaller("http://dummy.com:8080")
@@ -102,11 +103,7 @@ class TestMCallerHttp(unittest.TestCase):
 
         class MyCompHttpCaller(self.MethodsCollection1, self.MethodsCollection3):
             """Http methods caller with support of components."""
-            def __init__(self, address):
-                self.http_conn = HttpConn(address)
-                # need to define this map for call_v3 method to work
-                # (component is specified in it's metadata)
-                self.http_prefixes = {
+            _HTTP_PREFIX_MAP = {
                     'componentA': '/cmpA/prefix',
                 }
 
@@ -137,15 +134,34 @@ class TestMCallerHttp(unittest.TestCase):
         self.assertIn(
             "dummy.com:8080/cmpA/prefix/my/test/another_path", req.full_url)
 
+        # make sure cloned caller works as well. The cloned caller
+        # will use authorized connection
+        cloned_caller = my_caller.clone(
+            BAuthConn.Adapter('my_name', 'std_password'))
+
+        intercepted_requests = []
+        with mock_http(intercepted_requests):
+            cloned_caller.call_it(25, 42)
+
+        self.assertEqual(1, len(intercepted_requests))
+        req = intercepted_requests[0]
+
+        self.assertIn('Authorization', req.headers)
+        auth_header = req.headers['Authorization']
+        self.assertTrue(
+            auth_header.startswith(b'Basic '),
+            f"auth header is: {auth_header}")
+        creds_str = base64.b64decode(auth_header[6:]).decode()
+        self.assertIn('my_name', creds_str)
+        self.assertIn('std_password', creds_str)
+
     def test_http_mcsaller_hdoc(self):
         """Check 'h' command with MCallerHttp class and objects"""
         class MyCompHttpCaller(self.MethodsCollection1, self.MethodsCollection3):
             """Test class to test 'h' command."""
-            def __init__(self, address):
-                self.http_conn = HttpConn(address)
-                self.http_prefixes = {
-                    'componentA': '/cmpA/prefix',
-                }
+            _HTTP_PREFIX_MAP = {
+                'componentA': '/cmpA/prefix',
+            }
 
         h = HCommand()._make_help_text
 
