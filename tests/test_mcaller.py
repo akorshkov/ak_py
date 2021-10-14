@@ -57,6 +57,15 @@ class TestMCallerClass(unittest.TestCase):
                 """is not decorated, so should behave as usual method"""
                 return {"arg": arg, "val": self.val}
 
+            @method_attrs('componentA', pprint=None)
+            def method_5(self, arg):
+                """Method with pprint set to None explicitely.
+
+                It will not return pprintable obj; '_r' version of the method
+                will not be created.
+                """
+                return {"arg": arg, "val": self.val}
+
             def indirect_get_meta(self):
                 """Test indirect calls of self.get_mcaller_meta.
 
@@ -68,7 +77,6 @@ class TestMCallerClass(unittest.TestCase):
                 return mtd_meta
 
         # 0. prepare an object for test
-
         tst_obj = MyMethodCaller(42)
 
         # 1. check behavior of method_1
@@ -129,5 +137,16 @@ class TestMCallerClass(unittest.TestCase):
         else:
             self.assertTrue(False, (
                 "direct call of get_mcaller_meta must fail because "
-                "no the data it should return is not present in any "
+                "the data it should return is not present in any "
                 "method in the current call stack"))
+
+        # 5. method with pprint=None
+        self.assertTrue(hasattr(tst_obj, 'method_5'))
+        self.assertFalse(hasattr(tst_obj, 'method_5_r'))
+
+        result = tst_obj.method_5(17)
+        self.assertTrue(
+            isinstance(result, dict),
+            "method is exected to return result as is, not pprintable object")
+
+        self.assertEqual({'arg': 17, 'val': 42}, result)

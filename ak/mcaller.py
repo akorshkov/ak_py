@@ -78,19 +78,25 @@ class _Meta_MethodsCaller(type):
             pprinter_obj = getattr(
                 mcaller_meta, 'pprinter', MCallerMetaGeneral._DEFAULT_PPRINTER)
 
-            decorated_method = meta._make_wrapped_caller_method(
-                orig_method_body, mcaller_meta,
-                obj_pprint_method_name, pprinter_obj)
+            if pprinter_obj is None:
+                # do not create a new method, which returns pprintable result
+                new_methods[name] = h_doc(orig_method_body)
+            else:
+                # replace the method
+                decorated_method = meta._make_wrapped_caller_method(
+                    orig_method_body, mcaller_meta,
+                    obj_pprint_method_name, pprinter_obj)
 
-            decorated_method = h_doc(decorated_method)
-            new_methods[name] = decorated_method
+                decorated_method = h_doc(decorated_method)
+                new_methods[name] = decorated_method
 
-            raw_val_method_name = name + "_r"
-            assert raw_val_method_name not in classdict, (
-                f"Class '{classname}' has method '{name}' marked as 'wrapper' "
-                f"(it has '_mcaller_meta' attribute), so '{raw_val_method_name}' "
-                f"must not be explicitely declared")
-            new_methods[raw_val_method_name] = h_doc(orig_method_body, hidden=True)
+                raw_val_method_name = name + "_r"
+                assert raw_val_method_name not in classdict, (
+                    f"Class '{classname}' has method '{name}' marked as 'wrapper' "
+                    f"(it has '_mcaller_meta' attribute), so "
+                    f"'{raw_val_method_name}' must not be explicitely declared")
+                new_methods[raw_val_method_name] = h_doc(
+                    orig_method_body, hidden=True)
 
         classdict.update(new_methods)
         classdict['_MCALLERS_METAS'] = mcallers_metas
