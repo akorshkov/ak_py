@@ -182,6 +182,22 @@ class TestColoredTextProperties(unittest.TestCase):
         t += part_2
         self.assertTrue(t == expected)
 
+    def test_join(self):
+        """Test ColoredText.join method."""
+
+        sep = ColorFmt('GREEN')('=')
+
+        empty = sep.join([])
+        self.assertEqual("", empty.no_color())
+
+        parts = [
+            ColorFmt('RED')('red'),
+            "white",
+        ]
+
+        joined = sep.join(parts)
+        self.assertEqual("red=white", joined.no_color())
+
     def test_formatting(self):
         """Test string formatting of ColoredText objects"""
 

@@ -131,6 +131,22 @@ class ColoredText:
         result += other
         return result
 
+    def join(self, iterable):
+        """Similar to str.join method.
+
+        Elements of the iterable may be either strings or ColoredText objects.
+        """
+        result = ColoredText()
+        is_first = True
+        for chunk in iterable:
+            if is_first:
+                is_first = False
+            else:
+                result += self
+            result += chunk
+
+        return result
+
     def __format__(self, format_spec):
         """Support formatted printing.
 
