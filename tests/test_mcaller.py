@@ -3,13 +3,22 @@
 import unittest
 
 from ak.mcaller import method_attrs, MCaller
+from ak.ppobj import PrettyPrinterBase
+
+
+class _DummyPPrinter(PrettyPrinterBase):
+    # dummy PrettyPrinter for tests - to be not default PrettyPrinter
+    # is the only purpose of it
+    def gen_pplines(self, _obj_to_print):
+        """Generate lines of pretty text."""
+        yield "dummy pprint string"
 
 
 class TestMCallerClass(unittest.TestCase):
     """Test creation and basic properties of MCaller derived classes."""
     def test_simple_wrapper_class(self):
 
-        dummy_pprinter = lambda _: "dummy pprint string"
+        dummy_pprinter = _DummyPPrinter()
 
         class MyMethodCaller(MCaller):
             def __init__(self, val):
@@ -65,6 +74,16 @@ class TestMCallerClass(unittest.TestCase):
                 will not be created.
                 """
                 return {"arg": arg, "val": self.val}
+
+            @method_attrs(auth="x6x")
+            def method_6(self, arg):
+                """Method with custome _pprint, which is a generator."""
+                return None
+
+            def _method_6_pprint(self, result_obj):
+                """should provide custom pretty-printing for 'method_6'"""
+                yield "line1"
+                yield "line2"
 
             def indirect_get_meta(self):
                 """Test indirect calls of self.get_mcaller_meta.
@@ -150,3 +169,9 @@ class TestMCallerClass(unittest.TestCase):
             "method is exected to return result as is, not pprintable object")
 
         self.assertEqual({'arg': 17, 'val': 42}, result)
+
+        # 6. method with generator pprint
+        result = tst_obj.method_6(17)
+
+        repr_str = result._get_repr_str()
+        self.assertEqual("line1\nline2", repr_str)

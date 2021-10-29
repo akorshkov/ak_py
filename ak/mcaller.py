@@ -16,7 +16,7 @@ console:
 
 from functools import wraps
 import inspect
-from ak.ppobj import PrettyPrinter
+from ak.ppobj import PrettyPrinter, PrettyPrinterBase
 from ak.hdoc import h_doc, BoundMethodNotes
 
 
@@ -159,13 +159,30 @@ class _Meta_MethodsCaller(type):
 
             # decorate and return the result
             if hasattr(self, obj_pprint_method_name):
-                pprinter = getattr(self, obj_pprint_method_name)
+                pprinter = _PPrinterOnMehod(getattr(self, obj_pprint_method_name))
             else:
                 pprinter = pprinter_obj
 
             return PPrintableResult(result_obj, pprinter)
 
         return decorated_method
+
+
+class _PPrinterOnMehod(PrettyPrinterBase):
+    # PrettyPrinter interface for object's _pprint method
+    #
+    # The _pprint method may be either a usual method or generator,
+    # which generates lines of pretty text.
+
+    def __init__(self, pp_method):
+        self.pp_method = pp_method
+
+    def gen_pplines(self, obj_to_print):
+        """Generate lines of pretty text."""
+        if inspect.isgeneratorfunction(self.pp_method):
+            yield from self.pp_method(obj_to_print)
+        else:
+            yield self.pp_method(obj_to_print)
 
 
 class PPrintableResult:
@@ -185,7 +202,8 @@ class PPrintableResult:
         # method does not return the string, but prints it to preserve
         # colored formatting (python console sanitise result of repr before
         # printing it, so that colored strings are not printed properly)
-        print(self._get_repr_str())
+        for line in self._pprinter.gen_pplines(self.r):
+            print(line)
         return ""
 
     def __str__(self):
@@ -193,7 +211,7 @@ class PPrintableResult:
 
     def _get_repr_str(self):
         # is a separate method mostly for testing purposes
-        return self._pprinter(self.r)
+        return self._pprinter.get_pptext(self.r)
 
 
 class MCallerMetaGeneral:

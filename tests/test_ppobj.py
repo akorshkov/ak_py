@@ -10,7 +10,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_simple_usage(self):
         """Test processing of good json-looking object"""
-        pp = PrettyPrinter()
+        pp = PrettyPrinter().get_pptext
 
         # check that some text produced w/o errors
         s = pp({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]})
@@ -20,7 +20,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_printing_notjson(self):
         """Test that PrettyPrinter can handle not-json objects."""
-        pp = PrettyPrinter()
+        pp = PrettyPrinter().get_pptext
 
         s = pp(42)
         self.assertIn("42", s)
@@ -36,7 +36,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_complex_object(self):
         """Test printing 'complex' object where keys have different types."""
-        pp = PrettyPrinter()
+        pp = PrettyPrinter().get_pptext
 
         s = pp({
             "d": {1: 23, "a": 17, "c": [1, 20, 2]},

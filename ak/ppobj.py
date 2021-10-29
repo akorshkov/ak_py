@@ -3,7 +3,20 @@
 from ak.color import ColorFmt
 
 
-class PrettyPrinter:
+class PrettyPrinterBase:
+    """Interface of PrettyPrinter object."""
+
+    def gen_pplines(self, obj_to_print):
+        """Generate lines of pretty text. To be implemented in derived classes."""
+        _ = obj_to_print
+        raise NotImplementedError
+
+    def get_pptext(self, obj_to_print):
+        """obj_to_print -> pretty string."""
+        return "\n".join(self.gen_pplines(obj_to_print))
+
+
+class PrettyPrinter(PrettyPrinterBase):
     """Print json-like objects with color highliting."""
 
     # dafault colors
@@ -34,10 +47,23 @@ class PrettyPrinter:
         self._color_number = ColorFmt.make(color_number, use_colors)
         self._color_keyword = ColorFmt.make(color_keyword, use_colors)
 
-    def __call__(self, obj_to_print):
-        """Make a pretty string representation of json-like python object."""
-        return "".join(
-            chunk for chunk in self._gen_pp_str_for_obj(obj_to_print, offset=0))
+#    def __call__(self, obj_to_print):
+#        """Make a pretty string representation of json-like python object."""
+#        return "".join()
+
+    def gen_pplines(self, obj_to_print):
+
+        line_chunks = []
+
+        for chunk in self._gen_pp_str_for_obj(obj_to_print, offset=0):
+            if chunk == "\n":
+                yield "".join(line_chunks)
+                line_chunks = []
+            else:
+                line_chunks.append(chunk)
+
+        if line_chunks:
+            yield "".join(line_chunks)
 
     def _gen_pp_str_for_obj(self, obj_to_print, offset=0):
         # generate parts for colored text result
@@ -63,18 +89,20 @@ class PrettyPrinter:
 
             # print object in multiple lines
             yield "{"
-            prefix = "\n" + " " * (offset + 2)
+            prefix = " " * (offset + 2)
             is_first = True
             for key in sorted_keys:
                 if is_first:
                     is_first = False
                 else:
                     yield ","
+                yield "\n"
                 yield prefix
                 yield str(self._colorp_dict_key(key))
                 yield ": "
                 yield from self._gen_pp_str_for_obj(obj_to_print[key], offset+2)
-            yield "\n" + " " * offset + "}"
+            yield "\n"
+            yield " " * offset + "}"
         elif isinstance(obj_to_print, list):
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print values in one line
@@ -89,7 +117,7 @@ class PrettyPrinter:
 
             # print object in multiple lines
             else:
-                prefix = "\n" + " " * (offset + 2)
+                prefix = " " * (offset + 2)
                 yield "["
                 is_first = True
                 for item in obj_to_print:
@@ -97,9 +125,11 @@ class PrettyPrinter:
                         is_first = False
                     else:
                         yield ","
+                    yield "\n"
                     yield prefix
                     yield from self._gen_pp_str_for_obj(item, offset+2)
-                yield "\n" + " " * offset + "]"
+                yield "\n"
+                yield " " * offset + "]"
         else:
             yield str(obj_to_print)
 
