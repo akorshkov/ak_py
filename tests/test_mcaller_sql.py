@@ -22,7 +22,6 @@ class TestMCallerSQL(unittest.TestCase):
             "SELECT id, name FROM accounts WHERE id = ?;",
             ['account_id',],
             'accounts',
-            ['account_id', 'name'],
         )
 
         @method_sql

@@ -54,11 +54,13 @@ class TestSQLMethod(unittest.TestCase):
             "SELECT id, name, status FROM accounts WHERE id = ?",
             ['account_id'],
             'account_record',
-            ['id', 'name', 'status'],
         )
 
         # existing record: 3 ways to call the method should produce same data
         result = account_by_id.one(db, 1)
+        self.assertEqual(
+            ['id', 'name', 'status'], account_by_id.fields,
+            ".fileds should contain actual fields names after first call")
         self.assertEqual(1, result.id)
         self.assertEqual("MI6", result.name)
 
@@ -90,7 +92,6 @@ class TestSQLMethod(unittest.TestCase):
             "SELECT id, name FROM users WHERE account_id = ?",
             ['account_id'],
             'account_record',
-            ['id', 'name'],
         )
 
         # test 'no records found' situation
@@ -112,23 +113,6 @@ class TestSQLMethod(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             get_users_by_account.one_or_none(db, 1)
-
-    def test_simplified_method_creation(self):
-        """Test simplified constructor of SqlMethod."""
-
-        db = self._make_sample_db_users()
-
-        # all the information required to create SqlMethod is available here:
-        record_type = namedtuple('users', ['id', 'name', 'account_id'])
-
-        get_users = SqlMethod.make(
-            record_type, ['name', 'account_id'], 'qmark')
-
-        users = get_users.list(db, "James", 1)
-        self.assertEqual(1, len(users))
-
-        users = get_users.list(db, "James", 2)
-        self.assertEqual(0, len(users))
 
     def test_arguments_processing(self):
         """Test test arguments and keyword arguments processing."""
@@ -152,8 +136,7 @@ class TestSQLMethod(unittest.TestCase):
             "SELECT id FROM accounts "
             "WHERE prop1 = ? AND prop2 = ? AND prop3 = ? AND prop4 = ?",
             ['arg1', 'arg2', 'arg3', 'arg4'],  # names of filter arguments
-            'accounts',
-            ['id'],  # names of values to select
+            'account',
         )
 
         # try different combinations of list arguments and kwargs

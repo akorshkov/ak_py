@@ -16,72 +16,38 @@ class SqlMethod:
     """Python wrapper of sql request."""
 
     __slots__ = (
-        'record_namedtuple',
-        'params_names',
         'sql_request',
+        'params_names',
+        'record_name',
+        'fields',
+        'rec_type',
     )
 
-    _PARAMSTYLES = {
-        'qmark': "?",
-        'format': "%s",
-    }
-
-    def __init__(self, sql_request, params_names, record_name, col_titles=None):
+    def __init__(self, sql_request, params_names=None, record_name='record'):
         """Create SqlMethod object.
 
         Arguments:
         - sql_request: the sql request string
-        - params_names: names of sql request parameters. These names can be
+        - params_names: list of names of sql request parameters. These names can be
             used later, when calling the method. Does not have to match
             db columns names.
-        - record_name: either a namedtuple class, or a name of a new namedtuple
-            class to create.
-        - col_titles: should be specified if 'record_name' argument is not
-            a name for a new namedtuple. In this case 'col_titles' should be
-            a list of field names.
+        - record_name: optional name of a namedtuple type of records returned by
+            sql request.
         """
-        if col_titles is None:
-            assert isinstance(record_name, type)
-            self.record_namedtuple = record_name
-        else:
-            self.record_namedtuple = namedtuple(record_name, col_titles)
-        self.params_names = params_names
         self.sql_request = sql_request
-
-    @classmethod
-    def make(cls, record_namedtuple, filter_columns, paramstyle='format'):
-        """Helper constructor.
-
-        Arguments:
-        - record_namedtuple: namedtuple type, which corresponds to a single
-            database table
-        - filter_columns: names of columns to filter records by
-        - paramstyle: parameters style to be used in generated sql request.
-            There exists five different styles (see pep-0249), but only two
-            of them are supported: "qmark" and "format".
-        """
-        table_name = record_namedtuple.__name__
-        column_names = record_namedtuple._fields
-        for col in filter_columns:
-            assert col in column_names, (
-                f"filter column '{col}' is not present in list of all "
-                f"columns {column_names}")
-        sql_string = (
-            "SELECT " + ", ".join(n for n in column_names) + " FROM " + table_name)
-        if filter_columns:
-            param_placeholder = cls._PARAMSTYLES.get(paramstyle, None)
-            if param_placeholder is None:
-                raise NotImplementedError(
-                    f"paramstyle '{paramstyle}' is not supported. "
-                    f"Supported paramstyles: {list(cls._PARAMSTYLES.keys())}.")
-            sql_string += (
-                " WHERE " +
-                " AND ".join(f"{n} = {param_placeholder}" for n in filter_columns))
-
-        return cls(sql_string, filter_columns, record_namedtuple)
+        self.params_names = params_names
+        self.record_name = record_name
+        # named of the fileds of records returned by sql request. These names can
+        # only be created after first sql request is performed.
+        self.fields = None
+        # type of the returned values. Usually it's an automatically generated
+        # namedtuple (if it is possible to create a namedtuple from the field
+        # names)
+        self.rec_type = None
 
     def _execute(self, conn, args, kwargs):
         # Execute sql request, yield result records
+        # rsult records are either tuples or namedtuples
 
         # prepare list of arguments for request
         if len(self.params_names) != len(args) + len(kwargs):
@@ -106,8 +72,26 @@ class SqlMethod:
         logger.debug("SQL request: %s ; params: %s", self.sql_request, req_params)
         with contextlib.closing(conn.cursor()) as cur:
             cur.execute(self.sql_request, req_params)
-            for raw in cur:
-                yield self.record_namedtuple._make(raw)
+
+            if self.fields is None:
+                # this is the first time actual request is performed, now we can
+                # find out names of returned fields
+                self._init_record_type(cur)
+
+            if self.rec_type is None:
+                for row in cur:
+                    yield row
+            else:
+                for row in cur:
+                    yield self.rec_type._make(row)
+
+    def _init_record_type(self, cur):
+        # fill self.fields and self.rec_type during the first sql request
+        self.fields = [x[0] for x in cur.description]
+        try:
+            self.rec_type = namedtuple(self.record_name, self.fields)
+        except ValueError as err:
+            logger.debug("can't create namedtuple for sql results: %s", str(err))
 
     def all(self, conn, *args, **kwargs):
         """Execute sql request, yield result records."""
