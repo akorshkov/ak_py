@@ -157,7 +157,7 @@ class MCallerHttp(MCaller):
 
         if not hasattr(self, 'http_conn'):
             return BoundMethodNotes(
-                False, '<n/a>', "object has no 'http_conn' attribute")
+                False, self._NA_COLOR('<n/a>'), "object has no 'http_conn' attribute")
 
         auth_descr = ""
         if isinstance(method_meta.auth_type, (list, tuple)):
@@ -184,7 +184,7 @@ class MCallerHttp(MCaller):
         note_short = ""
         note_line = None
         if not method_available:
-            note_short = "<n/a"
+            note_short = self._NA_COLOR("<n/a>")
             note_line = "; ".join(
                 s for s in [auth_descr, component_problem_descr] if s)
 

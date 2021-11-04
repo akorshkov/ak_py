@@ -263,7 +263,10 @@ class _HttpConnBase:
             parent_conn = conn_data
         elif isinstance(conn_data, str):
             # conn_data is an address
-            parent_conn = _HttpConnImpl(conn_data)
+            address = conn_data
+            if address.endswith('/'):
+                address = address[:-1]
+            parent_conn = _HttpConnImpl(address)
         elif isinstance(conn_data, (list, tuple)):
             # conn_data is a list of arguments for connection
             parent_conn = _HttpConnImpl(*conn_data)

@@ -23,7 +23,7 @@ class SqlMethod:
         'rec_type',
     )
 
-    def __init__(self, sql_request, params_names=None, record_name='record'):
+    def __init__(self, sql_request, params_names=None, record_name=None):
         """Create SqlMethod object.
 
         Arguments:
@@ -35,8 +35,8 @@ class SqlMethod:
             sql request.
         """
         self.sql_request = sql_request
-        self.params_names = params_names
-        self.record_name = record_name
+        self.params_names = params_names if params_names is not None else []
+        self.record_name = record_name if record_name is not None else 'record'
         # named of the fileds of records returned by sql request. These names can
         # only be created after first sql request is performed.
         self.fields = None

@@ -16,6 +16,7 @@ console.
 
 import inspect
 from ak.ppobj import PPObj
+from ak.color import ColorFmt
 from ak.hdoc import h_doc, BoundMethodNotes
 
 
@@ -166,6 +167,7 @@ class MCaller(metaclass=_Meta_MethodsCaller):
     implements functionality, which makes creation of http wrappers easier.
     Other such classes exist for wrappers of other types.
     """
+    _NA_COLOR = ColorFmt('RED')  # temporary. Color from palette will be used.
 
     def _get_hdoc_method_notes(self, bound_method, palette) -> BoundMethodNotes:
         # generic implementation of the method wich returns BoundMethodNotes
@@ -206,7 +208,7 @@ class MCaller(metaclass=_Meta_MethodsCaller):
 
         if missing_components:
             return BoundMethodNotes(
-                False, "<n/a>",
+                False, self._NA_COLOR("<n/a>"),
                 f"object has no access to components {missing_components}")
         else:
             return BoundMethodNotes(True, "", None)

@@ -41,6 +41,7 @@ def start_interactive_console(locals_for_console=None, banner=None, exitmsg=None
             f"Following commands from 'ak' package are available:\n"
             f"ll                 <- list local variables\n"
             f"h(obj)             <- help command\n"
+            f"hh(obj)            <- help command - more detailed help\n"
             f"pp(obj)            <- pretty printer for json-like python objects\n"
         )
 
@@ -49,6 +50,9 @@ def start_interactive_console(locals_for_console=None, banner=None, exitmsg=None
 
     if 'h' not in locals_for_console:
         locals_for_console['h'] = hdoc.HCommand()
+
+    if 'hh' not in locals_for_console:
+        locals_for_console['hh'] = hdoc.HCommand(hdoc.HCommand._LEVEL_HH)
 
     if 'll' not in locals_for_console:
         locals_for_console['ll'] = hdoc.LLImpl(locals_for_console)
