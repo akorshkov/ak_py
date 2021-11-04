@@ -10,13 +10,23 @@ from . import hdoc
 
 
 class _PPrintCommand:
-    """Generic pretty print of json-like python object."""
+    """Pretty-print console command.
+
+    If object to print is pretty-printable (instance of ppobj.PPObj),
+    the object generates own description. For other objects generic
+    PrettyPrinter is used.
+    """
 
     def __init__(self):
         self._pprinter = ppobj.PrettyPrinter()
 
     def __call__(self, obj_to_print):
-        print(self._pprinter(obj_to_print))
+        if isinstance(obj_to_print, ppobj.PPObj):
+            for line in obj_to_print.gen_pplines():
+                print(line)
+        else:
+            for line in self._pprinter.gen_pplines(obj_to_print):
+                print(line)
 
     def _get_ll_descr(self):
         # object description for 'll' command

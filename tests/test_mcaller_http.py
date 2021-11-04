@@ -184,11 +184,6 @@ class TestMCallerHttp(unittest.TestCase):
         self.assertIn('call_v3', h(MyCompHttpCaller.call_v3))
         self.assertIn('call_v4', h(MyCompHttpCaller.call_v4))
 
-        # verify help generated even for 'hidden' methods in class
-        self.assertIn('call_it', h(MyCompHttpCaller.call_it_r))
-        self.assertIn('call_v3', h(MyCompHttpCaller.call_v3_r))
-        self.assertIn('call_v4', h(MyCompHttpCaller.call_v4_r))
-
         # verify help generated for an object of class
         x = MyCompHttpCaller("https://some.address.org")
         hdoc_obj = h(x)
