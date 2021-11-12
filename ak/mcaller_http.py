@@ -15,19 +15,21 @@ class MCallerMetaHttpMethod:
     # methods decorated with this decorator
     _MAKE_BM_NOTES_METHOD = '_make_bm_notes_http'
 
-    __slots__ = 'auth_type', 'component'
+    __slots__ = 'auth_type', 'components'
 
-    def __init__(self, auth_type, component=None):
+    def __init__(self, auth_type, components=None):
         self.auth_type = auth_type
-        self.component = component
+        self.components = components
+        if isinstance(self.components, str):
+            self.components = [self.components]
 
 
-def method_http(auth_type, component=None):
+def method_http(auth_type, components=None):
     """decorator to mark method of MCallerHttp as a 'wrapper' around http request.
 
     Arguments:
     - auth_type: expected auth type of the http connection (*)
-    - component: name of the external component (**)
+    - components: names of the external components (**)
 
     Notes (*)(**):
       The MCallerHttp object owns a connection (HttpConn). This connection
@@ -35,14 +37,16 @@ def method_http(auth_type, component=None):
     authorization with credentials of mr. Root).
       Decorated method should get the connetion object using self.get_conn().
     and use it as is (w/o changing authorization).
-      The connection returned by self.get_conn() depends on the method's component.
-    Depending on 'component' some prefix may be added to request path.
+      The connection returned by self.get_conn() depends on the method's components.
+    MCallerHttp will check if it can provide connection to one of the components
+    expected by the method. Depending on chosen component some prefix may be added
+    to request path.
       If auth type of connetion does not match method's 'auth_type' a warning
     will be issued, (but it is still possible to call methods with 'incorrect'
     authorization - f.e. for test purposes).
     """
 
-    if callable(auth_type) and component is None:
+    if callable(auth_type) and components is None:
         # decorator was used w/o parameters. auth_type is actually a
         # method to decorate
         method = auth_type
@@ -50,7 +54,7 @@ def method_http(auth_type, component=None):
         return dec(method)
 
     def decorator(method):
-        method._mcaller_meta = MCallerMetaHttpMethod(auth_type, component)
+        method._mcaller_meta = MCallerMetaHttpMethod(auth_type, components)
         return method
 
     return decorator
@@ -70,7 +74,7 @@ class MCallerHttp(MCaller):
         @method_http('bauth', 'componentA')
         def get_example(self):
             conn = self.get_conn()
-            return conn("path/for/this/method")
+            return conn.post("path/for/this/method", data=some_data)
     """
     _HTTP_PREFIX_MAP = {}  # {component: http_prefix}
 
@@ -125,11 +129,18 @@ class MCallerHttp(MCaller):
 
         base_conn = self.http_conn
 
-        if method_meta.component is not None:
-            assert method_meta.component in self._HTTP_PREFIX_MAP, (
-                f"http prefix for component {method_meta.component} is not "
-                f"configured in class {type(self)}: {self._HTTP_PREFIX_MAP}")
-            prefix = self._HTTP_PREFIX_MAP[method_meta.component]
+        if method_meta.components is not None:
+            matching_components = [
+                c for c in method_meta.components if c in self._HTTP_PREFIX_MAP]
+            assert len(matching_components) == 1, (
+                f"http method expects connection to one of the following "
+                f"components: {method_meta.components}. "
+                f"Class {type(self)} has configured http prefixes for "
+                f"components : {self._HTTP_PREFIX_MAP}."
+                f"Expected to have exactly one match; actual matching "
+                f"componets: {matching_components}")
+            component = matching_components[0]
+            prefix = self._HTTP_PREFIX_MAP[component]
             conns_by_prefix = self._mc_conns_by_prefix
             if prefix in conns_by_prefix:
                 conn = conns_by_prefix[prefix]
@@ -150,7 +161,7 @@ class MCallerHttp(MCaller):
         # decorated with 'method_http')
         assert hasattr(bound_method, '_mcaller_meta')
         method_meta = bound_method._mcaller_meta
-        for attr in ['auth_type', 'component']:
+        for attr in ['auth_type', 'components']:
             # '_make_bm_notes_http' must have been specified in method_meta,
             # so method_meta must have these attributes
             assert hasattr(method_meta, attr)
@@ -173,12 +184,18 @@ class MCallerHttp(MCaller):
 
         component_ok = True
         component_problem_descr = ""
-        if method_meta.component is not None:
-            if method_meta.component not in self._HTTP_PREFIX_MAP:
+        if method_meta.components is not None:
+            matching_components = [
+                c for c in method_meta.components if c in self._HTTP_PREFIX_MAP]
+            if not(matching_components):
                 component_ok = False
                 component_problem_descr = (
-                    f"object has no http connection to component "
-                    f"'{method_meta.component}'")
+                    f"object has no http connection to any of components "
+                    f"'{method_meta.components}'")
+            elif len(matching_components) > 1:
+                component_ok = False
+                component_problem_descr = (
+                    f"ambiguous components {matching_components}")
 
         method_available = auth_ok and component_ok
         note_short = ""

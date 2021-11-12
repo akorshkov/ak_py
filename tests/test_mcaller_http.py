@@ -104,8 +104,8 @@ class TestMCallerHttp(unittest.TestCase):
         class MyCompHttpCaller(self.MethodsCollection1, self.MethodsCollection3):
             """Http methods caller with support of components."""
             _HTTP_PREFIX_MAP = {
-                    'componentA': '/cmpA/prefix',
-                }
+                'componentA': '/cmpA/prefix',
+            }
 
         # 1. create an actual caller
         my_caller = MyCompHttpCaller("http://dummy.com:8080")
@@ -204,3 +204,94 @@ class TestMCallerHttp(unittest.TestCase):
         for service_method in ['get_conn', 'get_mcaller_meta']:
             self.assertTrue(hasattr(x, service_method))
             self.assertNotIn(service_method, hdoc_obj)
+
+
+class TestMCallerHttpMultipleComponents(unittest.TestCase):
+    """Test http mcaller method which can call different components."""
+
+    class MethodsCollection(MCallerHttp):
+        """Collection of several http wrappers."""
+
+        @method_http("bauth", ["my_server", "my_server_frontend"])
+        def call_it(self, arg):
+            """Simulate situation, that 'my_server' component provides some,
+            api method, but it is available via frontend api gateway also.
+            """
+            conn = self.get_conn()
+            return conn.post(
+                "/my/call/path",
+                data={"arg": arg},
+            )
+
+    def test_success_calls_different_frontends(self):
+        """Test successfull scenario of http call."""
+        class MyHttpCaller(self.MethodsCollection):
+            """Ready Http Caller."""
+            _HTTP_PREFIX_MAP = {
+                "my_server": "/prefix/my/server",
+                "another_componets": "/other/prefix",
+            }
+
+        # 1. create an actual caller
+        my_caller = MyHttpCaller("http://dummy.com:8080")
+
+        # 2. make request
+        intercepted_requests = []
+        with mock_http(intercepted_requests):
+            my_caller.call_it(4242)
+
+        self.assertEqual(1, len(intercepted_requests))
+        req = intercepted_requests[0]
+
+        self.assertIn(
+            "dummy.com:8080/prefix/my/server", req.full_url,
+            "_HTTP_PREFIX_MAP['my_server'] must present in path")
+
+    def test_components_conflict(self):
+        """Test conflict situation."""
+        class MyHttpCaller(self.MethodsCollection):
+            """Ready Http Caller."""
+            _HTTP_PREFIX_MAP = {
+                "my_server": "/prefix/my/server",
+                "my_server_frontend": "/api/",
+            }
+
+        # 1. create an actual caller
+        my_caller = MyHttpCaller("http://dummy.com:8080")
+
+        # 2. try to make request
+        #
+        # Method needs to call either "my_server" or "my_server_frontend"
+        # component, the MyHttpCaller has both - can't make a request
+        # because can't decide which http prefix to use.
+        with self.assertRaises(AssertionError) as exc:
+            my_caller.call_it(42)
+
+        err_msg = str(exc.exception)
+        self.assertIn("http method expects connection", err_msg)
+        self.assertIn("my_server", err_msg)
+        self.assertIn("my_server_frontend", err_msg)
+
+    def test_no_matching_component(self):
+        """Request fails because http prefix is not configured for component."""
+        class MyHttpCaller(self.MethodsCollection):
+            """Ready Http Caller."""
+            _HTTP_PREFIX_MAP = {
+                "some_component": "/prefix/my/server",
+                "another_one": "/api/",
+            }
+
+        # 1. create an actual caller
+        my_caller = MyHttpCaller("http://dummy.com:8080")
+
+        # 2. try to make request
+        #
+        # Method needs to call either "my_server" or "my_server_frontend"
+        # component, the MyHttpCaller has none of it.
+        with self.assertRaises(AssertionError) as exc:
+            my_caller.call_it(42)
+
+        err_msg = str(exc.exception)
+        self.assertIn("http method expects connection", err_msg)
+        self.assertIn("my_server", err_msg)
+        self.assertIn("my_server_frontend", err_msg)
