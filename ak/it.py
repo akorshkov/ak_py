@@ -33,11 +33,16 @@ class _PPrintCommand:
         return "Console tools", "Command which pretty prints objects"
 
 
-def start_interactive_console(locals_for_console=None, banner=None, exitmsg=None):
+def start_interactive_console(
+        locals_for_console=None, locals_descr=None, banner=None, exitmsg=None):
     """Start interactive console, make 'h' and 'll' commands available in it."""
     if banner is None:
-        banner = (
-            f"Python {sys.version} on {sys.platform}\n"
+        banner = f"Python {sys.version} on {sys.platform}\n"
+        if locals_descr:
+            banner += "Locals:\n"
+            for local_name, local_descr in locals_descr:
+                banner += f"{local_name:19}<- {local_descr}\n"
+        banner += (
             f"Following commands from 'ak' package are available:\n"
             f"ll                 <- list local variables\n"
             f"h(obj)             <- help command\n"

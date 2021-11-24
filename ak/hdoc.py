@@ -64,39 +64,48 @@ class LLImpl:
         # generate lines (string values) which make a summary of
         # variables in self.locals_dict
 
-        items_by_category = {}  # {category_name, [(name, descr), ]}
-        misc_items = []  # [name, ]
+        # each category has list of items with description and list of items w/o description
+        items_by_category = {}  # {category_name: ([(name, descr), ], [name, ])}
+
+        cat_sort_weights = {}
 
         for name, value in self.locals_dict.items():
-            category, descr = self._get_explicit_value_descr(value)
-            if descr is not None and category is not None:
-                items_by_category.setdefault(category, []).append((name, descr))
+            cat_sort_weight, category, descr = self._get_explicit_value_descr(value)
+            assert category is not None
+
+            # sorting rules of categories are not very strict. Guessed weight may change
+            # from item to item, so update it after each item
+            new_weight = min(cat_sort_weight,
+                             cat_sort_weights.get(category, cat_sort_weight))
+            cat_sort_weights[category] = new_weight
+
+            if descr is not None:
+                items_by_category.setdefault(category, ([], []))[0].append((name, descr))
             else:
                 if not name.startswith('_'):
-                    misc_items.append(name)
+                    items_by_category.setdefault(category, ([], []))[1].append(name)
 
         cat_is_first = True
-        for category_name in sorted(items_by_category.keys()):
+        sorted_categories = sorted(
+            items_by_category.keys(), key=lambda cat: (cat_sort_weights[cat], cat))
+        for category_name in sorted_categories:
             if cat_is_first:
                 cat_is_first = False
             else:
                 yield ""
             yield str(self._color_category(category_name)) + ":"
-            items = items_by_category[category_name]
-            items.sort(key=lambda kv: kv[0])
-            max_name_len = max(len(item[0]) for item in items)
-            name_col_len = min(max_name_len, 20) + 1
-            for name, descr in items:
-                c_name = self._color_name(name)
-                yield f"  {c_name:{name_col_len}}: {descr}"
-
-        if misc_items:
-            if not cat_is_first:
-                yield ""
-            yield str(self._color_category("Misc")) + ":"
-            misc_items.sort()
-            yield "  " + ", ".join(
-                str(self._color_name(name)) for name in misc_items)
+            items, items_wo_descr = items_by_category[category_name]
+            if items:
+                items.sort(key=lambda kv: kv[0])
+                max_name_len = max(len(item[0]) for item in items)
+                name_col_len = min(max_name_len, 20) + 1
+                for name, descr in items:
+                    c_name = self._color_name(name)
+                    yield f"  {c_name:{name_col_len}}: {descr}"
+            if items_wo_descr:
+                no_color = ColorFmt.get_nocolor_fmt()
+                yield "  " + str(no_color(", ").join(
+                    self._color_name(name) for name in items_wo_descr))
 
     def _get_explicit_value_descr(self, value):
         # detect if data for 'll' report is present in the object and return it.
@@ -105,23 +114,29 @@ class LLImpl:
         # value._get_ll_cls_descr(). There are two different methods because
         # it may be necessary to report some class and object of this class
         # with different descriptions.
+        #
+        # returns (cat_sort_weight, category, descr)
+        # cat_sort_weight is used to organize categories in the printed report
+        cat_sort_weight = 50
         category, descr = None, None
-        if hasattr(value, '_get_ll_descr'):
-            try:
-                category, descr = value._get_ll_descr()
-                return category, descr
-            except:
-                pass
-        if hasattr(value, '_get_ll_cls_descr'):
-            try:
+        if inspect.isclass(value):
+            if hasattr(value, '_get_ll_cls_descr'):
                 category, descr = value._get_ll_cls_descr()
-                return category, descr
-            except:
-                pass
-
-        return None, None
+                cat_sort_weight = 20
+            else:
+                category = value.__name__
+                cat_sort_weight = 80
+        else:
+            if hasattr(value, '_get_ll_descr'):
+                category, descr = value._get_ll_descr()
+                cat_sort_weight = 20
+            else:
+                category = type(value).__name__
+                cat_sort_weight = 80
+        return cat_sort_weight, category, descr
 
     def _get_ll_descr(self):
+        # ll-information about 'll' command itself
         return "Console tools", "Command which produced this summary"
 
 
