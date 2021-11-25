@@ -64,7 +64,8 @@ class LLImpl:
         # generate lines (string values) which make a summary of
         # variables in self.locals_dict
 
-        # each category has list of items with description and list of items w/o description
+        # each category has list of items with description and list of
+        # items w/o description
         items_by_category = {}  # {category_name: ([(name, descr), ], [name, ])}
 
         cat_sort_weights = {}
@@ -73,14 +74,15 @@ class LLImpl:
             cat_sort_weight, category, descr = self._get_explicit_value_descr(value)
             assert category is not None
 
-            # sorting rules of categories are not very strict. Guessed weight may change
-            # from item to item, so update it after each item
+            # sorting rules of categories are not very strict. Guessed weight
+            # may change from item to item, so update it after each item
             new_weight = min(cat_sort_weight,
                              cat_sort_weights.get(category, cat_sort_weight))
             cat_sort_weights[category] = new_weight
 
             if descr is not None:
-                items_by_category.setdefault(category, ([], []))[0].append((name, descr))
+                items_by_category.setdefault(
+                    category, ([], []))[0].append((name, descr))
             else:
                 if not name.startswith('_'):
                     items_by_category.setdefault(category, ([], []))[1].append(name)
@@ -155,6 +157,7 @@ class HCommand:
 
     def __init__(self, dets_level=_LEVEL_H):
         self.palette = Palette({
+            'attr': ColorFmt('YELLOW'),
             'func_name': ColorFmt("BLUE"),
             'tags':  ColorFmt("GREEN"),
             'warning': ColorFmt('RED'),
@@ -539,16 +542,17 @@ class HDocItemCls(HDocItem):
         for h_item in h_items_by_name.values():
             yield h_item
 
-    def _gen_help_oneline(self, _obj, _filt, palette, _dets_level,
+    def _gen_help_oneline(self, obj, _filt, palette, _dets_level,
                           _bm_notes=None):
-        # generate one-line class description
+        # generate one-line class or object description
         assert _bm_notes is None, (
             "'_bm_notes' are applicable for bound methods, but this mehod "
             "generates h-doc for class or object of class")
 
         cls_name = palette.get_color('class_name')(self.name)
+        obj_indicator = "" if inspect.isclass(obj) else "Object of "
 
-        yield f"{cls_name}  {self.short_descr}"
+        yield f"{obj_indicator}{cls_name}  {self.short_descr}"
 
     def _gen_help_text(self, obj, _filt, palette, dets_level, _bm_notes=None):
         # generate detailed class (or object) description
@@ -562,6 +566,30 @@ class HDocItemCls(HDocItem):
             "generates h-doc for class or object of class")
 
         yield from self._gen_help_oneline(obj, _filt, palette, dets_level)
+
+        # generate description of attributes
+        if hasattr(obj, '_HDOC_ATTRS'):
+            is_class = inspect.isclass(obj)
+            attrs_hdocs = []
+            color_attr = palette.get_color('attr')
+            color_warning = palette.get_color('warning')
+            for attr_name, attr_descr in obj._HDOC_ATTRS:
+                include_attr = True
+                attr_is_available = True
+                if not is_class:
+                    if getattr(obj, attr_name, None) is None:
+                        include_attr = dets_level >= HCommand._LEVEL_HH
+                        attr_is_available = False
+                if include_attr:
+                    if not attr_is_available:
+                        attr_descr = str(color_warning("<n/a>")) + " " + attr_descr
+                    attrs_hdocs.append((attr_name, attr_descr))
+            if attrs_hdocs:
+                yield "Attributes:"
+                max_name_len = max(len(attr_name) for attr_name, _ in attrs_hdocs)
+                max_name_len = max(max_name_len, 5)
+                for attr_name, attr_descr in attrs_hdocs:
+                    yield f"  {color_attr(attr_name):{max_name_len}} - {attr_descr}"
 
         # check if report methods defined in class, but n/a in the obj.
         # F.e. the method requires some authorization not provided

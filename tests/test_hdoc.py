@@ -143,12 +143,14 @@ class TestHDocItemCls(unittest.TestCase):
         # 1.1 analyze h-doc generated for object of base class
         base_obj = TClass(42)
         obj_help_text = h(base_obj)
+        expected_text = "Object of " + help_text
 
         self.assertEqual(
-            help_text, obj_help_text,
+            expected_text, obj_help_text,
             "default implementation of h-doc does not use information "
-            "from object, only from class. So helps generated for object "
-            "and for class expected to be the same")
+            "from object, only from class. So help generated for object "
+            "is same as help generated for class (with indication that "
+            "this is actually an object)")
 
         # 2. analyze h-doc for derived class
         help_text = h(TDerived)
@@ -174,7 +176,7 @@ class TestHDocItemCls(unittest.TestCase):
         derived_obj = TDerived(42)
         obj_help_text = h(derived_obj)
 
-        self.assertEqual(help_text, obj_help_text)
+        self.assertEqual("Object of " + help_text, obj_help_text)
 
         # 3. analyze hdocs of methods in base class
         help_text = h(TClass.method_1)
@@ -437,3 +439,63 @@ class TestHDocsHidden(unittest.TestCase):
             "method_3", help_text,
             "method_3 has explicit h_doc, but it is 'hidden' -  so it is "
             "not mentiond in help text")
+
+
+class TestHDocAttributes(unittest.TestCase):
+    """Test reporting attributes by hdoc."""
+
+    def test_hdoc_attributes(self):
+        """Test reporting attributes by hdoc."""
+        @h_doc
+        class TClass:
+            """Class with several attributes to be reported by h_doc."""
+
+            _HDOC_ATTRS = [
+                ('c1_conn', 'connection to component 1'),
+                ('sql_conn', 'connection to sql database'),
+            ]
+
+            @h_doc
+            def method_1(self):
+                """Usual method with explicit h_doc."""
+                pass
+
+        h = HCommand()._make_help_text
+        hh = HCommand(HCommand._LEVEL_HH)._make_help_text
+
+        # 1. analyze h-doc of the class
+        help_text = h(TClass)
+        self.assertNotIn('Object of', help_text)
+        self.assertIn('c1_conn', help_text)
+        self.assertIn('connection to component 1', help_text)
+        self.assertIn('sql_conn', help_text)
+        self.assertIn('connection to sql database', help_text)
+        self.assertNotIn('<n/a>', help_text)
+
+        help_text = hh(TClass)
+        self.assertNotIn('Object of', help_text)
+        self.assertIn('c1_conn', help_text)
+        self.assertIn('connection to component 1', help_text)
+        self.assertIn('sql_conn', help_text)
+        self.assertIn('connection to sql database', help_text)
+        self.assertNotIn('<n/a>', help_text)
+
+        # 2. analize h-doc of the object
+        obj = TClass()
+        obj.sql_conn = 42  # c1_conn renains None => be reported by hh only
+
+        help_text = h(obj)
+        self.assertIn('Object of', help_text)
+        self.assertNotIn('c1_conn', help_text)
+        self.assertNotIn('connection to component 1', help_text)
+        self.assertIn('sql_conn', help_text)
+        self.assertIn('connection to sql database', help_text)
+        self.assertNotIn('<n/a>', help_text)
+
+        help_text = hh(obj)
+        self.assertIn('Object of', help_text)
+        self.assertIn('c1_conn', help_text)
+        self.assertIn('connection to component 1', help_text)
+        self.assertIn('sql_conn', help_text)
+        self.assertIn('connection to sql database', help_text)
+        self.assertIn('<n/a>', help_text)
