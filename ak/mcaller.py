@@ -15,9 +15,14 @@ console.
 """
 
 import inspect
+import logging
+from functools import wraps
 from ak.ppobj import PPObj
 from ak.color import ColorFmt
 from ak.hdoc import h_doc, BoundMethodNotes
+
+
+logger = logging.getLogger(__name__)
 
 
 class _Meta_MethodsCaller(type):
@@ -32,7 +37,7 @@ class _Meta_MethodsCaller(type):
     def __new__(meta, classname, supers, classdict):
         new_methods = {}
 
-        # '_MCALLERS_METAS' of this class will contain '_MCALLERS_METAS' from
+        # '_MCALLERS_METAS' of this class will include '_MCALLERS_METAS' from
         # parent classes, let's collect them
         assert '_MCALLERS_METAS' not in classdict, (
             f"Error processing '{classname}' calss:"
@@ -52,7 +57,9 @@ class _Meta_MethodsCaller(type):
 
             mcallers_metas[name] = mcaller_meta
             orig_method_body = value
-            new_methods[name] = h_doc(orig_method_body)
+            decorated_method_body = meta._decorate_mcaller_method(
+                name, orig_method_body)
+            new_methods[name] = h_doc(decorated_method_body)
 
         classdict.update(new_methods)
         classdict['_MCALLERS_METAS'] = mcallers_metas
@@ -96,6 +103,19 @@ class _Meta_MethodsCaller(type):
         created_class = h_doc(created_class, explicit_only=True)
 
         return created_class
+
+    @classmethod
+    def _decorate_mcaller_method(cls, method_name, orig_method_body):
+        # mcaller methods automatically log calls. Implement this
+
+        @wraps(orig_method_body)
+        def decorated_method_body(*args, **kwargs):
+            logger.info(f"++ {method_name}()")
+            result = orig_method_body(*args, **kwargs)
+            logger.info(f"-- {method_name}()")
+            return result
+
+        return decorated_method_body
 
 
 class PPMehod(PPObj):
