@@ -102,8 +102,10 @@ class TestMCallerSQL(unittest.TestCase):
         my_sql_caller = MySqlCallerSingleConn(db)
 
         users = my_sql_caller.get_users()
+
         # repr(users)
         # print(users)
+        _ = users.get_pptext()  # make sure pretty repr generated w/o errore
 
         self.assertTrue(isinstance(users, PPTable))
         self.assertEqual(4, len(users._columns), "all 4 columns are visible")
@@ -133,7 +135,10 @@ class TestMCallerSQL(unittest.TestCase):
         my_sql_caller = MySqlCallerSingleConn(db)
 
         users = my_sql_caller.get_users()
+
         # repr(users)
+        # print(users)
+        _ = users.get_pptext()  # make sure pretty repr generated w/o errore
 
         self.assertTrue(isinstance(users, PPTable))
         self.assertEqual(

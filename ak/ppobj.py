@@ -343,7 +343,7 @@ class PPTable(PPObj):
                     f"because it's not unique. It refers to fields in positions "
                     f"{field_poss}. List of record fields: {self.field_names}")
 
-                field_id = self._field_pos_by_name[field_name]
+                field_id = self._field_pos_by_name[field_name][0]
 
             col = self._Column(field_name, min_width, max_width)
             if col.max_width > 0:
