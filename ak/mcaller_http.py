@@ -187,7 +187,7 @@ class MCallerHttp(MCaller):
         if method_meta.components is not None:
             matching_components = [
                 c for c in method_meta.components if c in self._HTTP_PREFIX_MAP]
-            if not(matching_components):
+            if not matching_components:
                 component_ok = False
                 component_problem_descr = (
                     f"object has no http connection to any of components "

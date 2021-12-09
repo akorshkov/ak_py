@@ -103,6 +103,7 @@ class TestMCallerSQL(unittest.TestCase):
 
         users = my_sql_caller.get_users()
         # repr(users)
+        # print(users)
 
         self.assertTrue(isinstance(users, PPTable))
         self.assertEqual(4, len(users._columns), "all 4 columns are visible")

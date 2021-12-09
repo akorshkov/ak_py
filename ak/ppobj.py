@@ -5,7 +5,8 @@ Classes provided by this module:
 - PPTable - pretty-printable 2-D tables
 """
 
-from ak.color import ColorFmt
+from typing import Iterator
+from ak.color import ColorFmt, ColoredText
 
 #########################
 # generic pretty-printing
@@ -14,12 +15,12 @@ from ak.color import ColorFmt
 class _PrettyPrinterBase:
     # Interface of PrettyPrinter object
 
-    def gen_pplines(self, obj_to_print):
+    def gen_pplines(self, obj_to_print) -> Iterator[str]:
         """Generate lines of pretty text. To be implemented in derived classes."""
         _ = obj_to_print
         raise NotImplementedError
 
-    def get_pptext(self, obj_to_print):
+    def get_pptext(self, obj_to_print) -> str:
         """obj_to_print -> pretty string."""
         return "\n".join(self.gen_pplines(obj_to_print))
 
@@ -55,7 +56,8 @@ class PrettyPrinter(_PrettyPrinterBase):
         self._color_number = ColorFmt.make(color_number, use_colors)
         self._color_keyword = ColorFmt.make(color_keyword, use_colors)
 
-    def gen_pplines(self, obj_to_print):
+    def gen_pplines(self, obj_to_print) -> Iterator[str]:
+        """Generate lines of colored text - pretty representation of the object."""
 
         line_chunks = []
 
@@ -69,7 +71,7 @@ class PrettyPrinter(_PrettyPrinterBase):
         if line_chunks:
             yield "".join(line_chunks)
 
-    def _gen_pp_str_for_obj(self, obj_to_print, offset=0):
+    def _gen_pp_str_for_obj(self, obj_to_print, offset=0) -> Iterator[str]:
         # generate parts for colored text result
         if self._value_is_simple(obj_to_print):
             yield str(self._colorp_simple_value(obj_to_print))
@@ -201,9 +203,9 @@ class PPObj:
     a raw data, but PPobj.
     """
 
-    def gen_pplines(self):
+    def gen_pplines(self) -> Iterator[str]:
         """Generate lines of PPObj representation."""
-        yield None
+        yield ""
         raise NotImplementedError
 
     def get_pptext(self):
@@ -228,14 +230,18 @@ class PPObj:
 # pretty-printing json-like objects
 
 class PPJson(PPObj):
-    """Pretty-printable object for python json-like structures."""
+    """Pretty-printable object for python json-like structures.
+
+    repr of this object prints colored json.
+    """
 
     _PPRINTER = PrettyPrinter()
 
     def __init__(self, obj_to_print):
         self.r = obj_to_print
 
-    def gen_pplines(self):
+    def gen_pplines(self) -> Iterator[str]:
+        """Generate lines of colored text - repr of the self.r object."""
         yield from self._PPRINTER.gen_pplines(self.r)
 
 
@@ -268,9 +274,9 @@ class PPTable(PPObj):
 
         Arguments:
         - name: name of the table
+        - field_names: names of fields of records. Should correspond to records.
         - records: list of records (record is a tuple of values, corresponding
           to a row of the table)
-        - field_names: names of fields of records. Should correspond to records.
         - columns: optional list of visible columns and their properties
 
         """
@@ -344,7 +350,8 @@ class PPTable(PPObj):
                 self._columns.append(col)
                 self._cols_map.append(field_id)
 
-    def gen_pplines(self):
+    def gen_pplines(self) -> Iterator[str]:
+        """Generate colored lines - text representation of the table."""
         table_printer  = _TablePrinter(
             self.name, self._columns, self._cols_map,
             self.r, max_rows=20)
@@ -413,13 +420,20 @@ class _TablePrinter:
         if self.indicate_skipped_rows:
             self.height += 1
 
-    def gen_screen_lines(self):
+    def gen_screen_lines(self) -> Iterator[str]:
         """Generate lines to be printed.
 
         Screen length of each line is exactly self.width. (len of
         some of generated lines may be greater because of not printable
         color sequences)
         """
+        for ctext in self._gen_screen_colored_text():
+            yield str(ctext)
+
+    def _gen_screen_colored_text(self) -> Iterator[ColoredText]:
+        # implementation of gen_screen_lines(), but yields ColoredText
+        # instead of strings.
+
         if not self.col_widths:
             return  # hmm, table is absolutely empty, no columns at all!
 
