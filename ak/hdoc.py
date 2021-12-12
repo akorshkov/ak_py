@@ -105,8 +105,8 @@ class LLImpl:
                     c_name = self._color_name(name)
                     yield f"  {c_name:{name_col_len}}: {descr}"
             if items_wo_descr:
-                no_color = ColorFmt.get_nocolor_fmt()
-                yield "  " + str(no_color(", ").join(
+                no_effects = ColorFmt.get_plaintext_fmt()
+                yield "  " + str(no_effects(", ").join(
                     self._color_name(name) for name in items_wo_descr))
 
     def _get_explicit_value_descr(self, value):

@@ -502,7 +502,7 @@ class _TablePrinter:
             fmt = self._COLOR_KEYWORD
             align_left = False
         else:
-            fmt = ColorFmt.get_nocolor_fmt()
+            fmt = ColorFmt.get_plaintext_fmt()
             align_left = True
 
         plain_text = str(value)
@@ -515,7 +515,7 @@ class _TablePrinter:
             text = fmt(plain_text[:visible_text_len])
             text += self._COLOR_WARN('.'*dots_len)
         elif filler_len:
-            filler = ColorFmt.get_nocolor_fmt()(" "*filler_len)
+            filler = ColorFmt.get_plaintext_fmt()(" "*filler_len)
             if align_left:
                 text = fmt(plain_text) + filler
             else:

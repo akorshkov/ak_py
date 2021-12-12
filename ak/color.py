@@ -27,11 +27,13 @@ Example of usage:
     f"{t: ^100}"
 
     # produce string with same text but no color escape sequences
-    t_no_color = t.no_color()
+    t_plain_text = t.plain_text()
 
     # print color examples table: each cell have different color/effects
     print(make_examples('text'))
 """
+
+from collections import namedtuple
 
 
 #########################
@@ -40,32 +42,18 @@ Example of usage:
 class ColoredText:
     """Colored text. Consists of several mono-colored parts."""
 
-    class _ColoredChunk:
-        # Chunk of ColoredText which has same color.
-        __slots__ = 'c_prefix', 'text', 'c_suffix'
-        def __init__(self, prefix, text, suffix):
-            self.c_prefix = prefix
-            self.text = text
-            self.c_suffix = suffix
-
-        def _equal(self, other):
-            return (
-                self.c_prefix == other.c_prefix
-                and self.text == other.text
-                and self.c_suffix == other.c_suffix)
-
-        def _clone(self):
-            return type(self)(self.c_prefix, self.text, self.c_suffix)
+    _ColoredChunk = namedtuple(
+        '_ColoredChunk', ['c_prefix', 'text', 'c_suffix'])
 
     def __init__(self, *parts):
         """Construct colored text.
 
         Each arguments may be:
             - a simple string
-            - other ColoredText object
+            - another ColoredText object
         """
         self.scrlen = 0
-        self.parts = []  # list of _ColoredChunk
+        self.chunks = []  # list of _ColoredChunk
         for part in parts:
             self += part
 
@@ -76,7 +64,7 @@ class ColoredText:
 
     def __str__(self):
         # produce colored text
-        return "".join(f"{p.c_prefix}{p.text}{p.c_suffix}" for p in self.parts)
+        return "".join(f"{p.c_prefix}{p.text}{p.c_suffix}" for p in self.chunks)
 
     def __len__(self):
         return self.scrlen
@@ -90,36 +78,34 @@ class ColoredText:
             return True
 
         if isinstance(other, ColoredText):
-            if len(self.parts) != len(other.parts):
+            if len(self.chunks) != len(other.chunks):
                 return False
-            return all(p0._equal(p1) for p0, p1 in zip(self.parts, other.parts))
+            return all(p0 == p1 for p0, p1 in zip(self.chunks, other.chunks))
 
         if isinstance(other, str):
-            if len(self.parts) != 1:
-                return not self.parts and not other
+            if len(self.chunks) != 1:
+                return not self.chunks and not other
 
-            p = self.parts[0]
+            p = self.chunks[0]
             return p.c_prefix == "" and p.text == other and p.c_suffix == ""
 
         return NotImplemented
 
-    def no_color(self):
-        """produce not-colored text"""
-        return "".join(part.text for part in self.parts)
+    def plain_text(self) -> str:
+        """produce simple str w/o color sequences."""
+        return "".join(part.text for part in self.chunks)
 
     def __iadd__(self, other):
         """add some text (colored or usual) to self"""
-        if isinstance(other, (list, tuple)):
+        if isinstance(other, self._ColoredChunk):
+            self._append_colored_chunk(other)
+        elif isinstance(other, (list, tuple)):
             for part in other:
                 self += part
-        elif hasattr(other, 'c_prefix'):
-            self._append_colored_chunk(other)
-        elif hasattr(other, 'parts') and hasattr(other, 'scrlen'):
+        elif hasattr(other, 'chunks') and hasattr(other, 'scrlen'):
             # looks like this is another ColoredText object
-            try_merge = True
-            for part in other.parts:
-                self._append_colored_chunk(part, try_merge)
-                try_merge = False
+            for part in other.chunks:
+                self._append_colored_chunk(part)
         else:
             self._append_colored_chunk(self._ColoredChunk("", str(other), ""))
 
@@ -208,13 +194,114 @@ class ColoredText:
             suffix_width = filler_width - prefix_width
             return filler_ch*prefix_width + str(self) + filler_ch*suffix_width
 
-    def _append_colored_chunk(self, part, try_merge=True):
+    def __getitem__(self, index) -> 'ColoredText':
+        """Returns a slice of colored text.
+
+        Examples:
+        text[n]      - returns ColoredText with a single visible character.
+                       raises exception if the index is out or range
+        text[n:m]    - returns ColoredText with m - n printable characters or
+                       an empty ColoredText if n >= n
+                       Both n and m may be negative - behavior is the same as
+                       when slicing a string or list.
+        text[::2]    - not supported, exception will be raised.
+        """
+        if isinstance(index, int):
+            orig_index_value = index
+            if index < 0:
+                index = self.scrlen + index
+            chunk_id, chunk_pos = self._get_chunk_pos(index)
+            if chunk_id is None:
+                raise IndexError(f"Index {orig_index_value} is out of range")
+            cur_chunk = self.chunks[chunk_id]
+            return ColoredText(
+                self._copy_chunk(cur_chunk, cur_chunk.text[chunk_pos]))
+
+        if not isinstance(index, slice):
+            raise ValueError(
+                f"Unexpected index value {index} of type {type(index)}. "
+                f"Expected int or slice.")
+
+        if index.step is not None:
+            raise ValueError(
+                "step is not supported by indexes of ColoredText")
+
+        start_pos = index.start
+        end_pos = index.stop
+
+        if start_pos is None:
+            start_pos = 0
+        elif start_pos < 0:
+            start_pos = max(0, self.scrlen + start_pos)
+
+        if end_pos is None:
+            end_pos = self.scrlen
+        elif end_pos < 0:
+            end_pos = max(0, self.scrlen + end_pos)
+
+        remain_len = end_pos - start_pos
+        if remain_len <= 0:
+            return ColoredText()
+
+        # normal scenario: return actual colored substring
+        chunk_id, chunk_pos = self._get_chunk_pos(start_pos)
+        if chunk_id is None:
+            return ColoredText()  # start_pos is out of range
+
+        cur_chunk = self.chunks[chunk_id]
+        cur_chunk = self._copy_chunk(cur_chunk, cur_chunk.text[chunk_pos:])
+
+        new_chunks = []
+        while remain_len > 0:
+            if remain_len <= len(cur_chunk.text):
+                new_chunks.append(
+                    self._copy_chunk(cur_chunk, cur_chunk.text[:remain_len]))
+                remain_len = 0
+                break
+            new_chunks.append(cur_chunk)
+            remain_len -= len(cur_chunk.text)
+            chunk_id += 1
+            if chunk_id < len(self.chunks):
+                cur_chunk = self.chunks[chunk_id]
+            else:
+                break  # index.stop position was out of range, but it's ok
+
+        return ColoredText(*new_chunks)
+
+    def _get_chunk_pos(self, position):
+        # position of visible character -> (chunk_id, char_pos_in_chunk)
+        # (None, None) is returned if position is out of range
+        if position < 0:
+            return None, None
+        for chunk_id, chunk in enumerate(self.chunks):
+            if position < len(chunk.text):
+                return chunk_id, position
+            position -= len(chunk.text)
+        return None, None  # position >= total length
+
+    def _append_colored_chunk(self, chunk):
         # append _ColoredChunk to self
-        if try_merge and self.parts and part.c_prefix == self.parts[-1].c_prefix:
-            self.parts[-1].text += part.text
+        if not chunk.text:
+            # It is safe to skip chunks with empty text.
+            # It is expected that when we start printing new colored chunk
+            # terminal is in default state. In this case printing c_prefix
+            # followed by c_suffix has no visible effect and leaves terminal
+            # in the same (default) state.
+            return
+        if self.chunks and chunk.c_prefix == self.chunks[-1].c_prefix:
+            # merge with previous chunk
+            prev_chunk = self.chunks[-1]
+            self.chunks[-1] = self._copy_chunk(
+                prev_chunk, prev_chunk.text + chunk.text)
         else:
-            self.parts.append(part._clone())
-        self.scrlen += len(part.text)
+            self.chunks.append(chunk)
+        self.scrlen += len(chunk.text)
+
+    @classmethod
+    def _copy_chunk(cls, orig_chunk, new_text):
+        # make a new _ColoredChunk with specified text and format sequences
+        # same as in orig_chunk
+        return cls._ColoredChunk(orig_chunk.c_prefix, new_text, orig_chunk.c_suffix)
 
 
 class Palette:
@@ -226,12 +313,12 @@ class Palette:
 
     def get_color(self, syntax_name):
         """syntax_name -> ColorFmt"""
-        no_color = ColorFmt.get_nocolor_fmt()
+        no_effects_fmt = ColorFmt.get_plaintext_fmt()
 
         if not self.use_colors:
-            return no_color
+            return no_effects_fmt
 
-        return self.colors.get(syntax_name, no_color)
+        return self.colors.get(syntax_name, no_effects_fmt)
 
 
 class ColorSequences:
@@ -344,7 +431,7 @@ class ColorFmt:
             ColorFmt object is returned (it produces text w/o any effects)
         """
         if not use_colors:
-            return cls.get_nocolor_fmt()
+            return cls.get_plaintext_fmt()
         elif isinstance(color_obj, cls):
             return color_obj
         elif isinstance(color_obj, str):
@@ -356,12 +443,12 @@ class ColorFmt:
             )
             return cls(color_obj[0], **color_obj[1])
         elif color_obj is None:
-            return cls.get_nocolor_fmt()
+            return cls.get_plaintext_fmt()
 
         raise ValueError(f"Invalid arg {color_obj} for ColorFmt")
 
     @classmethod
-    def get_nocolor_fmt(cls):
+    def get_plaintext_fmt(cls):
         """Get dummy ColorFmt object (it produces text w/o any effects)."""
         if cls._NO_COLOR is None:
             cls._NO_COLOR = cls(None)
