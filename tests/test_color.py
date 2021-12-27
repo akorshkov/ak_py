@@ -342,6 +342,23 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual(empty_text, empty_text[10:1])
         self.assertEqual(empty_text, empty_text[1:-1])
 
+    def test_strip_colors(self):
+        """test method which removes color sequences from string."""
+
+        color_text = ColorFmt('GREEN')('Green') + ColorFmt('RED')('Red')
+
+        plain_str = 'GreenRed'
+        colored_str = str(color_text)
+
+        self.assertNotEqual(
+            plain_str, colored_str,
+            f"'{plain_str}' should not be equal to '{colored_str}' because "
+            f"of color sequences")
+        self.assertTrue(len(colored_str) > len(plain_str))
+
+        stripped_colored_str = ColoredText.strip_colors(colored_str)
+        self.assertEqual(plain_str, stripped_colored_str)
+
 
 class TestColorFmtBytes(unittest.TestCase):
     """Test using ColorFmt to process bytes."""

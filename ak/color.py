@@ -33,6 +33,7 @@ Example of usage:
     print(make_examples('text'))
 """
 
+import re
 from collections import namedtuple
 
 
@@ -44,6 +45,8 @@ class ColoredText:
 
     _ColoredChunk = namedtuple(
         '_ColoredChunk', ['c_prefix', 'text', 'c_suffix'])
+
+    _SEQ_RE = None  # to be initialized on demand. Re matching any color sequence
 
     def __init__(self, *parts):
         """Construct colored text.
@@ -302,6 +305,14 @@ class ColoredText:
         # make a new _ColoredChunk with specified text and format sequences
         # same as in orig_chunk
         return cls._ColoredChunk(orig_chunk.c_prefix, new_text, orig_chunk.c_suffix)
+
+    @classmethod
+    def strip_colors(cls, text: str) -> str:
+        """Colorer-formatted string -> same string w/o coloring."""
+        if cls._SEQ_RE is None:
+            cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
+
+        return re.sub(cls._SEQ_RE, "", text)
 
 
 class Palette:
