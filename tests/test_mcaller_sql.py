@@ -8,6 +8,8 @@ from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
 from ak.ppobj import PPTable
 
+from .test_ppobj import verify_table_format
+
 
 class TestMCallerSQL(unittest.TestCase):
     """Test functionality of MCallerSql classes.
@@ -108,8 +110,14 @@ class TestMCallerSQL(unittest.TestCase):
         _ = users.get_pptext()  # make sure pretty repr generated w/o errore
 
         self.assertTrue(isinstance(users, PPTable))
-        self.assertEqual(4, len(users._columns), "all 4 columns are visible")
-        self.assertEqual(['u_id', 'name', 'id', 'name'], users.field_names)
+        self.assertEqual(4, len(users._ppt_fmt.columns), "all 4 columns are visible")
+        fields_names = [f.name for f in users._ppt_fmt.fields]
+        self.assertEqual(
+            ['u_id', 'name', 'id', 'name_1'],
+            fields_names,
+            "Names of values returned by SELECT, '_1' suffix is added to make "
+            "the names unique"
+        )
         self.assertEqual(2, len(users.r), "there are 2 users in the database")
 
     def test_sql_select_with_custom_fields(self):
@@ -122,7 +130,7 @@ class TestMCallerSQL(unittest.TestCase):
                 "JOIN accounts ON users.account_id = accounts.id;",
                 [],
                 "users_dets",  # this is name of the table / record
-                columns=['id', 'u_id'],
+                fmt="u_id, id:10, name_1:15;*",
             )
 
             @method_sql
@@ -136,33 +144,11 @@ class TestMCallerSQL(unittest.TestCase):
 
         users = my_sql_caller.get_users()
 
-        # repr(users)
-        # print(users)
-        _ = users.get_pptext()  # make sure pretty repr generated w/o errore
-
-        self.assertTrue(isinstance(users, PPTable))
-        self.assertEqual(
-            2, len(users._columns), "only 'id' and 'u_id' columns are visible")
-        self.assertEqual(['u_id', 'name', 'id', 'name'], users.field_names)
-        self.assertEqual(2, len(users.r), "there are 2 users in the database")
-
-    def test_ambiguous_filed_name(self):
-        """Can't create SqlMethodT because of ambiguous field name."""
-
-        # this method is 'bad', but it will only be possible to detect it
-        # during the first run
-        bad_method = SqlMethodT(
-            "SELECT users.id AS u_id, users.name, accounts.* FROM users "
-            "JOIN accounts ON users.account_id = accounts.id;",
-            [],
-            "users_dets",  # this is name of the table / record
-            columns=['id', 'u_id', 'name'],
+        #print(users)
+        # make sure that fmt specified in _MTD_SQL_GET_USERS constructor was
+        # applied to the result table: only columns specified in fmt are printed
+        verify_table_format(
+            self, users,
+            n_body_lines=2,
+            cols_names=['u_id', 'id', 'name_1'],
         )
-
-        db = self._make_sample_db_accts()
-
-        with self.assertRaises(AssertionError) as err:
-            bad_method.list(db)
-
-        err_msg = str(err.exception)
-        self.assertIn("field name 'name' can't be used", err_msg)

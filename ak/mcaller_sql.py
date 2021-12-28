@@ -3,7 +3,7 @@
 from ak.hdoc import BoundMethodNotes
 from ak.mcaller import MCaller
 from ak.mtd_sql import SqlMethod
-from ak.ppobj import PPTable
+from ak.ppobj import PPTable, PPTableFieldType, PPTableField, PPTableFormat
 
 
 class MCallerMetaSqlMethod:
@@ -44,7 +44,7 @@ class SqlMethodT:
     """SqlMethod which returns PPrintable PPTable object."""
 
     def __init__(
-            self, sql_request, params_names=None, record_name=None, columns=None):
+            self, sql_request, params_names=None, record_name=None, fmt=None):
         """Create SqlMethodT - sql method which returns pretty-printable PPTable.
 
         SqlMethodT executes SqlMethod and presents results as PPTable.
@@ -58,15 +58,10 @@ class SqlMethodT:
           only if sql_request is not SqlMethod. Check doc of SqlMethod constructor.
 
         By default result table has all the columns corresponding to sql records.
-        PPTable-format-related arguments:
-        - columns: list of visible columns. Each element is ither string field_name
-          or integer field_pos, or a tuple of
-          - filed_name_or_pos (string or int)
-          - max_width  (optional)
-          - min_windth  (optional)
-
-        Note, that there may be duplicates in field names, those field names
-        can't be used in 'columns' arguments.
+        Format of the result table may be modified with following args.
+        PPTableFormat-related arguments:
+        - fmt: optional string, which specifies table columns, their widths,
+          record limits, etc. See ppobj.PPTableFormat doc for more details.
         """
         if isinstance(sql_request, SqlMethod):
             assert params_names is None
@@ -76,10 +71,8 @@ class SqlMethodT:
             self.sql_request = SqlMethod(sql_request, params_names, record_name)
 
         self.name = None
-        self.field_names = None
-
-        self._columns_init = columns
-        self._columns_map = None  # visible column number -> record field
+        self.fmt = fmt
+        self.ppt_format = None  # to be initialized later
 
     def list(self, conn, *args, **kwargs):
         """Execute sql request, return PPTable with results."""
@@ -108,23 +101,72 @@ class SqlMethodT:
 
     def _mk_datatable(self, records):
         # records -> PPTable
-        self._finish_init()
-        return PPTable(self.name, self.field_names, records, self._columns_init)
+        if self.ppt_format is None:
+            self._finish_init()
+
+        return PPTable(
+            records,
+            fmt_obj=self.ppt_format,
+        )
 
     def _finish_init(self):
         # finish init self, if not done yet
         #
         # it's posible to finich init only after first request executed
         # (only then names of selected fields are available)
-        if self.field_names is not None:
-            return
 
         self.name = self.sql_request.record_name
-        self.field_names = self.sql_request.fields
+
+        dflt_field_type = PPTableFieldType()
+
+        fields = []
+        for pos, name in enumerate(
+            self._make_unique_names_list(self.sql_request.fields)
+        ):
+            fields.append(
+                PPTableField(
+                    name,
+                    pos,
+                    dflt_field_type,
+                    dflt_field_type.min_width,
+                    dflt_field_type.max_width,
+                ))
+        self.ppt_format = PPTableFormat(self.fmt, fields=fields)
+
+    @staticmethod
+    def _make_unique_names_list(names_list):
+        # rename elements to make them unique:
+        #
+        # ['id', 'name', 'id', 'name'] -> ['id', 'name', 'id_1', 'name_1']
+
+        names_set = set(names_list)
+        if len(names_list) == len(names_set):
+            # all names are unique already
+            return names_list
+
+        result = []
+        counters = {}
+        for name in names_list:
+            if name in counters:
+                n = counters[name] + 1
+                while True:
+                    fixed_name = f"{name}_{n}"
+                    if fixed_name not in names_set:
+                        break
+                    n += 1
+                counters[name] = n
+                names_set.add(fixed_name)
+                result.append(fixed_name)
+            else:
+                counters[name] = 0
+                result.append(name)
+
+        return result
 
 
 class MCallerSql(MCaller):
     """Base class for "sql method callers"."""
+
     def __init__(self, db_conn,
                  db_connector=None, connector_args=None, connector_kwargs=None):
         """Create sql methods caller.
