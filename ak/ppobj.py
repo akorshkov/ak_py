@@ -6,7 +6,7 @@ Classes provided by this module:
 """
 
 from typing import Iterator
-from ak.color import ColorFmt, ColoredText
+from ak.color import ColorFmt, ColoredText, Palette
 
 #########################
 # generic pretty-printing
@@ -88,7 +88,7 @@ class PrettyPrinter(_PrettyPrinterBase):
                 ]
                 # note, next line calculates length of text as printed on screen
                 scr_len = sum(len(chunk) for chunk in chunks) + 2 * len(chunks)
-                oneline_fmt = offset + scr_len < 200  # !!!!! not exactly correct
+                oneline_fmt = offset + scr_len < 200  # not exactly correct, ok
                 if oneline_fmt:
                     yield "{" + ", ".join(str(c) for c in chunks) + "}"
                     return
@@ -248,279 +248,562 @@ class PPJson(PPObj):
 #########################
 # PPTable
 
+class PPTableFieldType:
+    """Describe specific field in table records.
+
+    Actual column of of PPTable corresponds to a records field, (f.e. some
+    column displays 'name' of records), the way information is displayed
+    depends on PPTableFieldType associated with this field.
+    """
+
+    def __init__(self, min_width=1, max_width=999):
+        self.min_width = min_width
+        self.max_width = max_width
+
+    def get_cell_text_len(self, value):
+        """Calculate length of text representation of the value."""
+        # caluculate text length w/o constructing ColoredText object for the cell
+        return len(str(value))
+
+    def make_cell_text(self, value, width, palette) -> ColoredText:
+        """value -> ColoredText having exactly specified width.
+
+        Implementation for general field type: value printed almost as is.
+        """
+        if isinstance(value, (int, float)):
+            syntax_name = "NUMBER"
+            align_left = False
+        elif value in (True, False, None):
+            syntax_name = "KEYWORD"
+            align_left = False
+        else:
+            syntax_name = None
+            align_left = True
+        fmt = palette.get_color(syntax_name)
+        text = fmt(str(value))
+
+        return self._fit_to_width(text, width, align_left, palette)
+
+    @staticmethod
+    def _fit_to_width(text, width, align_left, palette) -> ColoredText:
+        # add spaces or truncate the text so that resulting screen length of
+        # ColoredText is exactly 'width' characters.
+        assert width >= 0
+        filler_len = width - len(text)
+        if filler_len == 0:
+            return text  # lucky, the text has exactly necessary length
+        if filler_len > 0:
+            filler = palette.get_color(None)(' '*filler_len)
+            if align_left:
+                return text + filler
+            return filler + text
+        # text is longer than necessary. It will be truncated.
+        # "some long text" -> "some lo..."
+        dots_len = min(3, width)
+        visible_text_len = width - dots_len
+        return text[:visible_text_len] + palette.get_color("WARN")('.'*dots_len)
+
+
+class PPTableField:
+    """Describes possible source of data for a column of PPTable.
+
+    F.e. user wants to display an additional column in table. He specifies
+    that new column should display 'status' of the object. In this case 'status'
+    corresponds to PPTableField object, which specifies position of corresponding
+    value in the actual record and PPTableFieldType.
+
+    Table can have several (or none) actual columns corresponding to the same field.
+
+    Several (or none) fields may correspond to the same value in data record.
+    F.e. two fields may correspond the same numeric value of status, but these
+    fields have different PPTableFieldType, so the columns corresponding to these
+    fields may display the status differently: either a simple number or
+    a name from corresponding enum.
+    """
+
+    def __init__(self, name, rec_attr_pos, field_type,
+                 min_width=None, max_width=None):
+
+        assert rec_attr_pos is not None
+
+        self.name = name
+        self.field_type = field_type
+        self.rec_attr_pos = rec_attr_pos
+        self.min_width = min_width if min_width is not None else field_type.min_width
+        self.max_width = max_width if max_width is not None else field_type.max_width
+
+
+class PPTableColumn:
+    """Column of a PPTable."""
+
+    def __init__(self, name, field_type, rec_attr_pos, min_width, max_width):
+        self.name = name
+        self.field_type = field_type
+        self.rec_attr_pos = rec_attr_pos  # position of the field in record
+        self.min_width = min_width
+        self.max_width = max_width
+        self.width = None  # actual width of the column, will be calculated later
+
+    def clone(self):
+        """Clone self. (except for 'width' attribute)"""
+        return PPTableColumn(
+            self.name,
+            self.field_type,
+            self.rec_attr_pos,
+            self.min_width,
+            self.max_width,
+        )
+
+    @classmethod
+    def from_fmt_str(cls, col_fmt, fields_by_name):
+        """Create PPTableColumn object from format string."""
+        # col_fmt example: "id:10-25(15)"
+        # "field_name:min_w-max_w(cur_w)"
+        # cur_w part is ignored - Allow it to be present to make it
+        # possible to set new fmt string in a format it was reported.
+
+        # 1.1. find field name
+        chunks = col_fmt.split(":")
+        if len(chunks) > 2:
+            raise ValueError(f"Invalid column format: '{col_fmt}'")
+        elif len(chunks) == 2:
+            # fmt looks like "name:5-15"
+            field_name, width_fmt = chunks
+        else:
+            # fmt is just a field name
+            field_name = col_fmt
+            width_fmt = ""
+
+        if field_name not in fields_by_name:
+            raise ValueError(
+                f"Unknown field '{field_name}' specified. "
+                f"Available fields: {fields_by_name.keys()}.")
+        field = fields_by_name[field_name]
+
+        # 1.2. ignore the optional current actual width
+        br_pos = width_fmt.find('(')
+        if br_pos >= 0:
+            width_fmt = width_fmt[:br_pos]
+
+        # 1.3. parse width limits
+        # It may be either a number or range
+        if not width_fmt:
+            min_width = field.min_width
+            max_width = field.max_width
+        else:
+            chunks = width_fmt.split('-')
+            if len(chunks) > 2:
+                raise ValueError(f"Invalid width range: '{width_fmt}'")
+            widths = []
+            for w in chunks:
+                try:
+                    widths.append(int(w))
+                except ValueError as err:
+                    raise ValueError(
+                        f"Invalid width '{w}' specified for field {field_name}"
+                    ) from err
+            if len(widths) > 1:
+                min_width, max_width = widths
+            else:
+                min_width = widths[0]
+                max_width = min_width
+
+        return PPTableColumn(
+            field.name,
+            field.field_type,
+            field.rec_attr_pos,
+            min_width,
+            max_width,
+        )
+
+    def to_fmt_str(self):
+        """Create fmt string - human readable and editable descr of self."""
+        fmt_str = self.name
+
+        if self.min_width == self.max_width:
+            fmt_str += f":{self.min_width}"
+        else:
+            fmt_str += f":{self.min_width}-{self.max_width}"
+            if self.width is not None:
+                fmt_str += f"({self.width})"
+
+        return fmt_str
+
+
+class PPTableFormat:
+    """Contains information about PPTable format: visible columns, etc."""
+    def __init__(self, fmt, *, fields=None, other=None):
+        """Constructor of PPTableFormat.
+
+        Arguments:
+        - fmt: string, which describes format of the table (*)
+        - fields: list of PPTableField's. Required if 'other' is not specified.
+        - other: other PPTableFormat object to get details from
+
+        (*) New PPTableFormat is created according to 'fmt' description
+        either 'from scratch' (if 'fields' arg specified) or from existing
+        'other' PPTableFormat object.
+
+        'fmt' string consists of 3 parts separated by ';'. These parts are
+        1. visible columns description
+        2. record limits description
+        3. total table width (not implemented)
+
+        Special values for each part are:
+        "" - keep format as in 'other' or create default
+        "*" - "show all"
+
+        1. visible columns description describes columns of the table. Example:
+
+            "field_1:7, field_2:5-20" - two columns, width of first is fixed, width
+              of the second must be in range [5-20].
+
+        2. record limits example:
+
+            "10-15" - if number of records is more that 26, only 10 first and
+              15 last records will be displayed.
+        """
+        if other is not None:
+            assert fields is None, "both 'fields' and 'other' args specified"
+            assert other.columns is not None
+            assert other.fields is not None
+            self.fields = other.fields
+            self.fields_by_name = other.fields_by_name
+        else:
+            assert fields is not None, (
+                "either 'fields' or 'other' arg must be specified")
+            self.fields = fields
+            self.fields_by_name = {}  # {field_name: (field, rec_attr_pos)}
+
+            for f in self.fields:
+                if f.name in self.fields_by_name:
+                    raise ValueError(
+                        f"Duplicate field name '{f.name}': {self.fields}")
+                self.fields_by_name[f.name] = f
+
+        self.columns = None
+        self.n_first = None
+        self.n_last = None
+        self.ns_are_default = True
+        self._init_self_with_fmt(fmt, other)
+        assert self.columns is not None
+
+    def __repr__(self):
+        # it's important that repr contains fmt string, which can be used
+        # to construct new format objects
+        return self._get_fmt_str()
+
+    def __str__(self):
+        return self._get_fmt_str()
+
+    def _init_self_with_fmt(self, fmt, other):
+        # final step of construction, to be called from constructor only
+
+        fmt_s_cols, fmt_s_recs, fmt_s_twidths = self._fmt_str_split(fmt)
+
+        # part 1: format of visible columns
+        self._set_fmt_cols(fmt_s_cols, other)
+
+        # part 2: format of visible rows
+        try:
+            self._set_fmt_vis_recs(fmt_s_recs, other)
+        except ValueError as err:
+            raise ValueError(
+                f"Invalid specification of numbers of visible lines: "
+                f"'{fmt_s_recs}'. Expected 'n_first:n_last' or '*' or empty str."
+            ) from err
+
+        # part 3: total width of the table
+        # not implemented yet
+        _ = fmt_s_twidths
+
+    def _get_fmt_str(self):
+        # create the 'fmt' string which describes self.
+
+        parts = []
+        # 1. format of visible columns
+        parts.append(",".join(c.to_fmt_str() for c in self.columns))
+
+        # 2. numbers of visible lines
+        if self.ns_are_default:
+            parts.append("")
+        elif self.n_first is None or self.n_last is None:
+            parts.append("*")
+        else:
+            parts.append(f"{self.n_first}:{self.n_last}")
+
+        # 3. format max table width
+        # not implemented
+
+        while parts and parts[-1] == "":
+            parts.pop()
+
+        return ";".join(parts)
+
+    def _set_fmt_cols(self, fmt_s_cols, other):
+        # apply part 1 (visible columns) of 'fmt' to self.
+        if fmt_s_cols == "":
+            if other is not None:
+                # clone columns form the other
+                self.columns = [c.clone() for c in other.columns]
+                return
+            else:
+                fmt_s_cols = "*"
+
+        if fmt_s_cols == "*":
+            # default: show all columns
+            self.columns = [
+                PPTableColumn(
+                    f.name, f.field_type, f.rec_attr_pos, f.min_width, f.max_width,
+                ) for f in self.fields]
+            return
+
+        self.columns = [
+            PPTableColumn.from_fmt_str(part.strip(), self.fields_by_name)
+            for part in fmt_s_cols.split(",")
+        ]
+
+    def _set_fmt_vis_recs(self, fmt_s_recs, other):
+        # apply part 2 (records limits) of 'fmt' to self.
+        if fmt_s_recs == "":
+            if other is not None:
+                self.n_first = other.n_first
+                self.n_last = other.n_last
+                self.ns_are_default = other.ns_are_default
+            else:
+                self.n_first = 20
+                self.n_last = 10
+                self.ns_are_default = True
+        elif fmt_s_recs == "*":
+            self.n_first = None
+            self.n_last = None
+            self.ns_are_default = False
+        else:
+            # "20:10" - show 20 first recs and 15 last recs
+            parts = [x.strip() for x in fmt_s_recs.split(':')]
+            if len(parts) != 2:
+                raise ValueError(f"{len(parts)} parts")
+            self.n_first, self.n_last = [int(x) for x in parts]
+            self.ns_are_default = False
+
+    @staticmethod
+    def _fmt_str_split(fmt_str):
+        # constructor helper: split 'fmt' string into parts
+        if fmt_str is None:
+            fmt_str = ";;"
+        parts = fmt_str.split(';')
+        if len(parts) > 3:
+            raise ValueError(f"Invalid fmt string '{fmt_str}'")
+
+        while len(parts) < 3:
+            parts.append("")  # "" format means "no need to change anything"
+
+        return parts
+
+
 class PPTable(PPObj):
     """2-D table.
 
-    Provides pretty-printing and simple manipulation operations to 2-D table
+    Provides pretty-printing and simple manipulation on 2-D table
     of data (such as results of sql query).
     """
-    class _Column:
-        def __init__(self, name, min_width, max_width):
-            self.name = name
-            self.min_width = min_width
-            self.max_width = max_width
 
-        def __str__(self):
-            return f"<col {self.name} {self.min_width}-{self.max_width}>"
+    class _ServiceCells(PPTableFieldType):
+        # used to format columns name cells, etc.
+        def make_title_text(self, value, width, palette) -> ColoredText:
+            """Is used to format columns names cells and table title"""
+            assert isinstance(value, str), f"{value} is {type(value)}"
+            fmt = palette.get_color("NAME")
+            return self._fit_to_width(fmt(value), width, True, palette)
 
-        def __repr__(self):
-            return self.__str__()
+        def make_summary_text(self, summary, width, palette) -> ColoredText:
+            """Is used to format table summary"""
+            assert isinstance(summary, (str, ColoredText))
+            if not isinstance(summary, ColoredText):
+                fmt = palette.get_color(None)
+                summary = fmt(summary)
+            return self._fit_to_width(summary, width, True, palette)
 
-    _DFLT_MIN_W = 3
-    _DFLT_MAX_W = 50
+    def __init__(
+            self, records, *,
+            header=None,
+            footer=None,
 
-    def __init__(self, name, field_names, records, columns=None):
+            fmt_obj=None,
+            fmt=None,
+    ):
         """PPTable constructor.
 
         Arguments:
-        - name: name of the table
-        - field_names: names of fields of records. Should correspond to records.
         - records: list of records (record is a tuple of values, corresponding
           to a row of the table)
-        - columns: optional list of visible columns and their properties
-
+        - header: (optional), str or ColoredText. Description of the table, will
+            be prited as header. Special values:
+            - None (default) - description will be created automatically
+            - "" - description will not be created and printed
+        - footer: (optional), str or ColoredText. Table footer. Special values:
+            - None (default) - footer will be created automatically
+            - "" - footer will not be created and printed.
+        - fmt_obj: either PPTableFormat object or list of PPTableField's.
+        - fmt: (optional) string which describes visible columns. If not specified,
+          all columns will be displayed. See PPTableFormat for more details.
         """
-        self.name = name
-        self.r = records  # pretty-printable object stores raw data in .r
-        self.field_names = field_names
+        self.records = records
+        self.r = records
 
-        self._field_pos_by_name = {}  # {field_name: [record_pos, ]}.
-        for i, n in enumerate(self.field_names):
-            self._field_pos_by_name.setdefault(n, []).append(i)
+        if isinstance(fmt_obj, PPTableFormat):
+            ppt_fmt = PPTableFormat(fmt, other=fmt_obj)
+        else:
+            ppt_fmt = PPTableFormat(fmt, fields=fmt_obj)
+        self._ppt_fmt = ppt_fmt
 
-        self._columns = []
-        self._cols_map = []
+        if header is None:
+            header = "some table"
+        self._header = header
 
-        self.set_columns(columns)
+        if footer is None:
+            footer = f"Total {len(self.records)} records"
+        self._footer = footer
 
-    def set_columns(self, columns=None):
-        """Set visible columns.
+        self.palette = Palette({
+            'TBL_BORDER': ColorFmt('GREEN'),
+            'NAME': ColorFmt('GREEN', bold=True),
+            'NUMBER': ColorFmt('YELLOW'),
+            'KEYWORD': ColorFmt('BLUE', bold=True),
+            'WARN': ColorFmt('RED'),
+        })
 
-        Arguments:
-        - columns: optional list of visible columns. Each item is either:
-            - field_id (either name or integer position in record)
-            - (field_id, width)
-            - (field_id, min_width, max_width)
+    def set_fmt(self, fmt):
+        """Specify fmt - a string which describes format of the table.
+
+        Method returns self - so that in python console the modified table be
+        printed out immediately.
         """
-        n_fields = len(self.field_names)
-        if columns is None:
-            # make all columns visible
-            self._columns = [
-                self._Column(n, self._DFLT_MIN_W, self._DFLT_MAX_W)
-                for n in self.field_names]
-            self._cols_map = list(range(n_fields))
-            return
+        self._ppt_fmt = PPTableFormat(fmt, other=self._ppt_fmt)
+        return self
 
-        for col_attrs in columns:
-            if not isinstance(col_attrs, (list, tuple)):
-                col_attrs = [col_attrs, ]
-            assert len(col_attrs) <= 3 and len(col_attrs) > 0
-            field_id = col_attrs[0]
-            if len(col_attrs) == 1:
-                max_width, min_width = self._DFLT_MAX_W, self._DFLT_MIN_W
-            elif len(col_attrs) == 2:
-                max_width = col_attrs[1]
-                min_width = self._DFLT_MIN_W
-            else:
-                max_width = col_attrs[1]
-                min_width = col_attrs[2]
+    def _get_fmt(self):
+        # getter of 'fmt' property.
+        # returns PPTableFormat object
+        # repr of this object contains fmt string which can be used to apply
+        # new format
+        return self._ppt_fmt
 
-            if isinstance(field_id, int):
-                col_pos = field_id
-                assert col_pos >= 0 and field_id < len(n_fields), (
-                    f"table column {col_attrs} refers field position {col_pos} "
-                    f"- it must be in range [0, {n_fields}]. List of of record "
-                    f"fields : {self.field_names}")
-                field_name = self.field_names[col_pos]
-            else:
-                field_name = field_id
-                assert field_id in self._field_pos_by_name, (
-                    f"unknown field name {field_name}. Names of fields "
-                    f"of records: {self.field_names}")
-                field_poss = self._field_pos_by_name[field_name]
-                assert len(field_poss) == 1, (
-                    f"field name '{field_name}' can't be used in column definition "
-                    f"because it's not unique. It refers to fields in positions "
-                    f"{field_poss}. List of record fields: {self.field_names}")
-
-                field_id = self._field_pos_by_name[field_name][0]
-
-            col = self._Column(field_name, min_width, max_width)
-            if col.max_width > 0:
-                self._columns.append(col)
-                self._cols_map.append(field_id)
+    fmt = property(_get_fmt, set_fmt)
 
     def gen_pplines(self) -> Iterator[str]:
-        """Generate colored lines - text representation of the table."""
-        table_printer  = _TablePrinter(
-            self.name, self._columns, self._cols_map,
-            self.r, max_rows=20)
-        yield from table_printer.gen_screen_lines()
+        # implementation of PrettyPrinter functionality
+        for line in self._gen_ppcolored_text():
+            yield str(line)
 
+    def _gen_ppcolored_text(self) -> Iterator[ColoredText]:
+        # generate ColoredText objects - lines of the printed table
 
-class _TablePrinter:
-    # Generate text representation of DataTable
+        columns = self._ppt_fmt.columns
 
-    _COLOR_BORDER = ColorFmt('GREEN')
-    _COLOR_NAME = ColorFmt('GREEN', bold=True)
-    _COLOR_NUMBER = ColorFmt('YELLOW')
-    _COLOR_KEYWORD = ColorFmt('BLUE', bold=True)
-    _COLOR_WARN = ColorFmt('RED')
-
-    def __init__(self, name, columns, columns_map, records, max_rows=-1):
-        self.name = name
-        self.columns = columns
-        self.columns_map = columns_map
-        self.records = records
-
-        if max_rows == -1 or max_rows > len(self.records):
-            self.num_first_visible_rows = len(self.records)
-            self.indicate_skipped_rows = False  #  "..." in place of skipped records
-            self.num_last_visible_rows = 0
-        elif max_rows >= 3:
-            self.num_first_visible_rows = max_rows - 2
-            self.indicate_skipped_rows = True
-            self.num_last_visible_rows = 1
-        elif max_rows == 2:
-            self.num_first_visible_rows = 1
-            self.indicate_skipped_rows = True
-            self.num_last_visible_rows = 0
-        elif max_rows == 1:
-            self.num_first_visible_rows = 0
-            self.indicate_skipped_rows = True
-            self.num_last_visible_rows = 0
+        n_first = self._ppt_fmt.n_first
+        n_last = self._ppt_fmt.n_last
+        if (n_first is not None
+            and n_last is not None
+            and len(self.records) > n_first + n_last + 1
+           ):
+            n_skipped = len(self.records) - n_first - n_last
         else:
-            self.num_first_visible_rows = 0
-            self.indicate_skipped_rows = False
-            self.num_last_visible_rows = 0
+            # show all records
+            n_first = len(self.records)
+            n_last = 0
+            n_skipped = 0
 
-        self.col_widths = [
-            min(col_fmt.max_width, max(col_fmt.min_width, len(col_fmt.name)))
-            for col_fmt in self.columns]
+        assert n_first >= 0 and n_last >= 0 and n_skipped >= 0
+        head_recs = self.records[:n_first] if n_first else []
+        foot_recs = self.records[-n_last:] if n_last else []
 
-        # analyze visible rows to calculate columns widths
-        first_rows = self.records[:self.num_first_visible_rows]
-        if self.num_last_visible_rows == 0:
-            last_rows = []
-        else:
-            last_rows = self.records[-self.num_last_visible_rows:]
+        # calculate actual widths of table columns
+        # process only columns w/o specified width
+        for col in columns:
+            if col.min_width == col.max_width:
+                col.width = col.min_width
+            else:
+                col.width = min(
+                    col.max_width, max(col.min_width, len(col.name)))
 
-        for row_set in [first_rows, last_rows]:
-            for row in row_set:
-                assert len(self.col_widths) == len(self.columns)
-                for i, pos in enumerate(self.columns_map):
-                    value = row[pos]
-                    str_len = len(str(value))
-                    if str_len > self.col_widths[i]:
-                        self.col_widths[i] = min(
-                            str_len, self.columns[i].max_width)
+        cols = [col for col in columns if col.min_width != col.max_width]
+        desired_widths = [len(col.name) for col in cols]
+        for recs in (head_recs, foot_recs):
+            for rec in recs:
+                for i, col in enumerate(cols):
+                    value = rec[col.rec_attr_pos]
+                    desired_widths[i] = max(
+                        desired_widths[i], col.field_type.get_cell_text_len(value))
 
-        self.width = sum(w for w in self.col_widths) + len(self.col_widths) + 1
-        self.height = self.num_first_visible_rows + self.num_last_visible_rows
-        if self.indicate_skipped_rows:
-            self.height += 1
+        for desired_width, col in zip(desired_widths, cols):
+            col.width = min(
+                col.max_width, max(col.min_width, desired_width))
 
-    def gen_screen_lines(self) -> Iterator[str]:
-        """Generate lines to be printed.
+        table_width = sum(col.width for col in columns) + len(columns) + 1
 
-        Screen length of each line is exactly self.width. (len of
-        some of generated lines may be greater because of not printable
-        color sequences)
-        """
-        for ctext in self._gen_screen_colored_text():
-            yield str(ctext)
-
-    def _gen_screen_colored_text(self) -> Iterator[ColoredText]:
-        # implementation of gen_screen_lines(), but yields ColoredText
-        # instead of strings.
-
-        if not self.col_widths:
-            return  # hmm, table is absolutely empty, no columns at all!
-
-        sep = self._COLOR_BORDER('|')
+        border_color = self.palette.get_color("TBL_BORDER")
+        sep = border_color('|')
+        service_cells_formatter = self._ServiceCells()
 
         # 1. make first border line
-        border_line = self._COLOR_BORDER(
-            "".join("+" + "-"*width for width in self.col_widths) + "+"
-        )
+        border_line = border_color(
+            "".join("+" + "-"*col.width for col in columns) + '+')
         yield border_line
 
-        # 2. table name
-        line = sep + self._make_cell_text(
-            self.name, self.width - 2, True) + sep
-        yield line
+        # 2. table title
+        if self._header:
+            line = sep + service_cells_formatter.make_title_text(
+                self._header,
+                table_width - 2,
+                self.palette) + sep
+            yield line
 
         # 3. column names
         line = sep + sep.join(
-            self._make_cell_text(col.name, width, is_header=True)
-            for col, width in zip(self.columns, self.col_widths)
+            service_cells_formatter.make_title_text(
+                col.name, col.width, self.palette)
+            for col in columns
         ) + sep
         yield line
 
-        # 4. one more border line
+        # 4. one more border_line
         yield border_line
 
         # 5. first visible records
-        for row in self.records[:self.num_first_visible_rows]:
-            line = sep + sep.join(
-                self._make_cell_text(row[pos], width)
-                for pos, width in zip(self.columns_map, self.col_widths)
+        for rec in head_recs:
+            yield self._make_table_line(rec, columns, sep, self.palette)
+
+        # 6. indicator of skipped lines
+        if n_skipped:
+            line = sep + service_cells_formatter.make_summary_text(
+                self.palette.get_color("WARN")("... ") +
+                self.palette.get_color(None)(f"{n_skipped} records skipped"),
+                table_width - 2,
+                self.palette,
             ) + sep
             yield line
 
-        # 6. indicator of skipped lines
-        if self.indicate_skipped_rows:
-            yield sep + self._make_cell_text(
-                "...", self.width - 2, is_warn=True) + sep
-
-        # 7. last visible lines
-        if self.num_last_visible_rows != 0:
-            for row in self.records[-self.num_last_visible_rows:]:
-                line = sep + sep.join(
-                    self._make_cell_text(row[pos], width)
-                    for pos, width in zip(self.columns_map, self.col_widths)
-                ) + sep
-                yield line
+        # 7. last visible records
+        for rec in foot_recs:
+            yield self._make_table_line(rec, columns, sep, self.palette)
 
         # 8. final border line
         yield border_line
 
-        # 9. total line
-        yield self._make_cell_text(f"Total {len(self.records)} records.", self.width)
+        # 9. summary line
+        if self._footer:
+            yield service_cells_formatter.make_summary_text(
+                self._footer,
+                table_width,
+                self.palette)
 
-    def _make_cell_text(self, value, width, is_header=False, is_warn=False):
-        if is_header:
-            fmt = self._COLOR_NAME
-            align_left = True
-        elif is_warn:
-            fmt = self._COLOR_WARN
-            align_left = True
-        elif isinstance(value, (int, float)):
-            fmt = self._COLOR_NUMBER
-            align_left = False
-        elif value in (True, False, None):
-            fmt = self._COLOR_KEYWORD
-            align_left = False
-        else:
-            fmt = ColorFmt.get_plaintext_fmt()
-            align_left = True
-
-        plain_text = str(value)
-
-        filler_len = width - len(plain_text)
-        if filler_len < 0:
-            filler_len = 0
-            dots_len = min(3, width)
-            visible_text_len = max(width - 3, 0)
-            text = fmt(plain_text[:visible_text_len])
-            text += self._COLOR_WARN('.'*dots_len)
-        elif filler_len:
-            filler = ColorFmt.get_plaintext_fmt()(" "*filler_len)
-            if align_left:
-                text = fmt(plain_text) + filler
-            else:
-                text = filler + fmt(plain_text)
-        else:
-            text = fmt(plain_text)
-
-        return text
+    def _make_table_line(self, record, columns, sep, palette):
+        # create ColoredText - representaion of a single record in table
+        line = sep + sep.join(
+            col.field_type.make_cell_text(
+                record[col.rec_attr_pos],  # value
+                col.width, palette)
+            for col in columns
+        ) + sep
+        return line
