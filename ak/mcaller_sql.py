@@ -3,7 +3,7 @@
 from ak.hdoc import BoundMethodNotes
 from ak.mcaller import MCaller
 from ak.mtd_sql import SqlMethod
-from ak.ppobj import PPTable, PPTableFieldType, PPTableField, PPTableFormat
+from ak.ppobj import PPTable, PPTableFormat
 
 
 class MCallerMetaSqlMethod:
@@ -44,7 +44,8 @@ class SqlMethodT:
     """SqlMethod which returns PPrintable PPTable object."""
 
     def __init__(
-            self, sql_request, params_names=None, record_name=None, fmt=None):
+            self, sql_request, params_names=None, record_name=None, *,
+            header=None, footer=None, fmt=None, field_types=None):
         """Create SqlMethodT - sql method which returns pretty-printable PPTable.
 
         SqlMethodT executes SqlMethod and presents results as PPTable.
@@ -58,10 +59,12 @@ class SqlMethodT:
           only if sql_request is not SqlMethod. Check doc of SqlMethod constructor.
 
         By default result table has all the columns corresponding to sql records.
-        Format of the result table may be modified with following args.
+        Format of the result table may be modified with following args:
         PPTableFormat-related arguments:
-        - fmt: optional string, which specifies table columns, their widths,
-          record limits, etc. See ppobj.PPTableFormat doc for more details.
+        - header, footer: optional custom header and footer of the table.
+          Check doc of al.ppobj.PPTable for more details
+        - fmt, field_types: optional table format specifications.
+          Check ak.ppobj.PPTableFormat for more details
         """
         if isinstance(sql_request, SqlMethod):
             assert params_names is None
@@ -70,9 +73,19 @@ class SqlMethodT:
         else:
             self.sql_request = SqlMethod(sql_request, params_names, record_name)
 
-        self.name = None
-        self.fmt = fmt
-        self.ppt_format = None  # to be initialized later
+        self.field_names = None  # list of names of attributes of selected records.
+                                 # names are unique, available only after the
+                                 # first request is done
+
+        # stored arguments for PPTableFormat constructor
+        self._ppt_fmt = fmt
+        self._ppt_field_types = field_types
+        self._ppt_format = None  # to be initialized later
+
+        # stored arguments for result PPTables constructors
+        self._record_name = None
+        self._ppt_header = header
+        self._ppt_footer = footer
 
     def list(self, conn, *args, **kwargs):
         """Execute sql request, return PPTable with results."""
@@ -101,12 +114,14 @@ class SqlMethodT:
 
     def _mk_datatable(self, records):
         # records -> PPTable
-        if self.ppt_format is None:
+        if self._ppt_format is None:
             self._finish_init()
 
         return PPTable(
             records,
-            fmt_obj=self.ppt_format,
+            header=self._ppt_header,
+            footer=self._ppt_footer,
+            fmt_obj=self._ppt_format,
         )
 
     def _finish_init(self):
@@ -115,23 +130,15 @@ class SqlMethodT:
         # it's posible to finich init only after first request executed
         # (only then names of selected fields are available)
 
-        self.name = self.sql_request.record_name
+        self._record_name = self.sql_request.record_name
+        self.field_names = self._make_unique_names_list(self.sql_request.fields)
+        if self._ppt_header is None:
+            # construct default header
+            self._ppt_header = f"{self._record_name} table"
 
-        dflt_field_type = PPTableFieldType()
-
-        fields = []
-        for pos, name in enumerate(
-            self._make_unique_names_list(self.sql_request.fields)
-        ):
-            fields.append(
-                PPTableField(
-                    name,
-                    pos,
-                    dflt_field_type,
-                    dflt_field_type.min_width,
-                    dflt_field_type.max_width,
-                ))
-        self.ppt_format = PPTableFormat(self.fmt, fields=fields)
+        self._ppt_format = PPTableFormat(
+            self._ppt_fmt, fields=self.field_names,
+            field_types=self._ppt_field_types)
 
     @staticmethod
     def _make_unique_names_list(names_list):

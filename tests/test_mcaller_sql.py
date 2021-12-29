@@ -6,7 +6,7 @@ import sqlite3
 
 from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
-from ak.ppobj import PPTable
+from ak.ppobj import PPTableFieldType, PPTable
 
 from .test_ppobj import verify_table_format
 
@@ -107,22 +107,32 @@ class TestMCallerSQL(unittest.TestCase):
 
         # repr(users)
         # print(users)
-        _ = users.get_pptext()  # make sure pretty repr generated w/o errore
+        _ = users.get_pptext()  # make sure pretty repr generated w/o errors
 
-        self.assertTrue(isinstance(users, PPTable))
-        self.assertEqual(4, len(users._ppt_fmt.columns), "all 4 columns are visible")
-        fields_names = [f.name for f in users._ppt_fmt.fields]
-        self.assertEqual(
-            ['u_id', 'name', 'id', 'name_1'],
-            fields_names,
-            "Names of values returned by SELECT, '_1' suffix is added to make "
-            "the names unique"
+        verify_table_format(
+            self, users,
+            n_body_lines=2,
+            cols_names=['u_id', 'name', 'id', 'name_1'],
+            contains_text=[
+                "users_dets",  # record name should be present in default header
+            ]
         )
-        self.assertEqual(2, len(users.r), "there are 2 users in the database")
 
-    def test_sql_select_with_custom_fields(self):
-        """Test behavior SqlMethodT with request with joins."""
+    def test_sql_select_with_custom_format(self):
+        """Test behavior SqlMethodT with not-default format."""
 
+        # 0. prepare custom field type
+        class CustomFieldType(PPTableFieldType):
+            """Produce some text, which is not just str(value)"""
+            def make_desired_text(self, value, palette):
+                """adds some text to a value """
+                fmt = palette.get_color("NUMBER")
+                text = fmt(str(value) + " custom descr")
+                return text, True  # align_left
+
+        custom_field_type = CustomFieldType()
+
+        # 0.1 prepare the method caller
         class MySqlCallerSingleConn(self.MethodsCollection1):
             """Methods of this class wrap sql requests."""
             _MTD_SQL_GET_USERS = SqlMethodT(
@@ -130,7 +140,10 @@ class TestMCallerSQL(unittest.TestCase):
                 "JOIN accounts ON users.account_id = accounts.id;",
                 [],
                 "users_dets",  # this is name of the table / record
+                header="CustHeader",
+                # footer="Cust footer", - not implemented
                 fmt="u_id, id:10, name_1:15;*",
+                field_types={'u_id': custom_field_type},
             )
 
             @method_sql
@@ -144,11 +157,16 @@ class TestMCallerSQL(unittest.TestCase):
 
         users = my_sql_caller.get_users()
 
-        #print(users)
+        # print(users)
         # make sure that fmt specified in _MTD_SQL_GET_USERS constructor was
         # applied to the result table: only columns specified in fmt are printed
         verify_table_format(
             self, users,
             n_body_lines=2,
             cols_names=['u_id', 'id', 'name_1'],
+            contains_text=[
+                "CustHeader",  # explicitely specified custom header
+                " custom descr",  # text added by custom_field_type to visible
+                                  # column 'u_id'
+            ]
         )

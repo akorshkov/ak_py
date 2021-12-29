@@ -1,6 +1,7 @@
 """Test PrettyPrinter """
 
 import unittest
+from collections import namedtuple
 
 from ak.color import ColoredText
 from ak.ppobj import PrettyPrinter
@@ -60,7 +61,8 @@ def verify_table_format(
         testcase, table,
         cols_names=None,
         n_body_lines=None,
-        cols_widths=None):
+        cols_widths=None,
+        contains_text=None):
     """Verify that table is printed out correctly.
 
     Printed table looks like:
@@ -114,6 +116,14 @@ def verify_table_format(
             cols_widths, actual_col_widths,
             f"unexpected column widths in table:\n{table}")
 
+    # 4. verify contains specified text
+    if contains_text is not None:
+        if not isinstance(contains_text, (list, tuple)):
+            contains_text = [contains_text, ]
+        for t in contains_text:
+            testcase.assertIn(
+                t, ttext, f"table doesn't contain text '{t}':\n{table}")
+
     # verify all lines has same length
     for i, line in enumerate(text_lines):
         testcase.assertEqual(
@@ -128,7 +138,6 @@ class TestPPTable(unittest.TestCase):
     def test_simple_table(self):
         """Test formatting of a simple table."""
         # 0. prepare the table for experiments
-        dflt_field_type = PPTableFieldType()
 
         records = [
             (1, 10, "Linus"),
@@ -136,15 +145,8 @@ class TestPPTable(unittest.TestCase):
             (3, 17, "Jerry"),
             (4, 7, "Elizer"),
         ]
-        fields = [
-            PPTableField(
-                field_name,
-                pos,
-                dflt_field_type,
-            ) for pos, field_name in enumerate(['id', 'level', 'name'])
-        ]
 
-        table = PPTable(records, fmt_obj=fields)
+        table = PPTable(records, fields=['id', 'level', 'name'])
 
         # 1. check how the table looks
         # print(table)
@@ -272,4 +274,118 @@ class TestPPTable(unittest.TestCase):
                 5,  # defined by length of name
                 6,  # equal to longest value 'Arnold'
             ],
+        )
+
+    def test_construct_with_explicit_fields(self):
+        """Test creation of PPTable with manually created fields."""
+        # prepare the table for experiments
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        # even though each record tuple has 3 elements, our table will have only
+        # 2 available fiedls
+        dflt_field_type = PPTableFieldType()
+        fields = [
+            PPTableField(
+                field_name,
+                pos,
+                dflt_field_type,
+            ) for pos, field_name in [
+                (0, 'id'),
+                (2, 'name'),
+            ]
+        ]
+
+        table = PPTable(records, fields=fields)
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'name'],
+            n_body_lines=4, # all 4 records expected to be visible
+            cols_widths=[2, 6],
+        )
+
+    def test_construct_by_sample_record(self):
+        """Test PPTable constructed by sample record."""
+        # prepare the table for experiments
+        RecType = namedtuple('RecType', ['id', 'level', 'name'])
+
+        records = [
+            RecType(1, 10, "Linus"),
+            RecType(2, 10, "Arnold"),
+            RecType(3, 17, "Jerry"),
+            RecType(4, 7, "Elizer"),
+        ]
+
+        table = PPTable(records, sample=records[0])
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'level', 'name'],
+            n_body_lines=4, # all 4 records expected to be visible
+            cols_widths=[2, 5, 6],
+        )
+
+    def test_construct_with_custom_field_types(self):
+        """Test PPTable with custom field types."""
+
+        # 0. prepare custom field type
+        class CustomFieldType(PPTableFieldType):
+            """Produce some text, which is not just str(value)"""
+            def make_desired_text(self, value, palette):
+                """adds some text to a value """
+                fmt = palette.get_color("NUMBER")
+                text = fmt(str(value) + " custom descr")
+                return text, True  # align_left
+
+        custom_field_type = CustomFieldType()
+
+        # 0.1 prepare the table
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            field_types={'level': custom_field_type},
+        )
+
+        # check how table looks
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'level', 'name'],
+            n_body_lines=4, # all 4 records expected to be visible
+            cols_widths=[
+                2,
+                15,  # length of custom field "10 custom descr"
+                6,
+            ],
+            contains_text="custom descr",
+        )
+
+    def test_construct_with_header(self):
+        """Test PPTable with manually specified description (header)."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table = PPTable(
+            records,
+            header="My Table Description",
+            fields=['id', 'level', 'name'],
+            fmt="id:2, level:5, name:5",  # to make sure header would not fit
+        )
+
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'level', 'name'],
+            n_body_lines=4,  # all 4 records expected to be visible
+            contains_text="My Table",  # begining of the header must be present
         )

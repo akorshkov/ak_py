@@ -255,20 +255,29 @@ class PPTableFieldType:
     column displays 'name' of records), the way information is displayed
     depends on PPTableFieldType associated with this field.
     """
+    _DUMMY_PALETTE = Palette({})  # used in default get_cell_text_len
 
     def __init__(self, min_width=1, max_width=999):
         self.min_width = min_width
         self.max_width = max_width
 
     def get_cell_text_len(self, value):
-        """Calculate length of text representation of the value."""
-        # caluculate text length w/o constructing ColoredText object for the cell
-        return len(str(value))
+        """Calculate length of text representation of the value.
 
-    def make_cell_text(self, value, width, palette) -> ColoredText:
-        """value -> ColoredText having exactly specified width.
+        This implementation is general, but not efficient. Override in
+        derived classes to avoid construction of ColoredText objects - usually
+        it is not required to find out text length.
+        """
+        # caluculate text length w/o constructing ColoredText object for the cell
+        # return len(str(value))
+        text, _ = self.make_desired_text(value, self._DUMMY_PALETTE)
+        return len(ColoredText.strip_colors(str(text)))
+
+    def make_desired_text(self, value, palette) -> (ColoredText, bool):
+        """Returns desired text for a value and alignment.
 
         Implementation for general field type: value printed almost as is.
+        To be overiden in derived classes.
         """
         if isinstance(value, (int, float)):
             syntax_name = "NUMBER"
@@ -281,7 +290,11 @@ class PPTableFieldType:
             align_left = True
         fmt = palette.get_color(syntax_name)
         text = fmt(str(value))
+        return text, align_left
 
+    def make_cell_text(self, value, width, palette) -> ColoredText:
+        """value -> ColoredText having exactly specified width."""
+        text, align_left = self.make_desired_text(value, palette)
         return self._fit_to_width(text, width, align_left, palette)
 
     @staticmethod
@@ -302,6 +315,15 @@ class PPTableFieldType:
         dots_len = min(3, width)
         visible_text_len = width - dots_len
         return text[:visible_text_len] + palette.get_color("WARN")('.'*dots_len)
+
+
+class _PPTDefaultFieldType(PPTableFieldType):
+    # implements more efficient implementation of get_cell_text_len
+
+    def get_cell_text_len(self, value):
+        """Calculate length of text representation of the value."""
+        # caluculate text length w/o constructing ColoredText object for the cell
+        return len(str(value))
 
 
 class PPTableField:
@@ -432,17 +454,27 @@ class PPTableColumn:
 
 class PPTableFormat:
     """Contains information about PPTable format: visible columns, etc."""
-    def __init__(self, fmt, *, fields=None, other=None):
+
+    _DFLT_FIELD_TYPE = _PPTDefaultFieldType()
+
+    def __init__(self, fmt, *, other=None, fields=None, sample=None,
+                 field_types=None):
         """Constructor of PPTableFormat.
 
         Arguments:
         - fmt: string, which describes format of the table (*)
-        - fields: list of PPTableField's. Required if 'other' is not specified.
-        - other: other PPTableFormat object to get details from
+        - other: (optional) other PPTableFormat object to get details from
+        - fields: (optional) one of:
+            - list of names of fields (these names must correspond to the
+              order of attributes of actual records).
+            - list of PPTableField objects.
+        - sample: (optional) sample record to get information about fields from
+        - field_types: (optional) {field_name: PPTableFieldType}. Can be used
+          to specify types of newly constructed fields.
 
         (*) New PPTableFormat is created according to 'fmt' description
-        either 'from scratch' (if 'fields' arg specified) or from existing
-        'other' PPTableFormat object.
+        either 'from scratch' (if 'fields' or 'sample' arg specified) or from
+        existing 'other' PPTableFormat object.
 
         'fmt' string consists of 3 parts separated by ';'. These parts are
         1. visible columns description
@@ -463,23 +495,13 @@ class PPTableFormat:
             "10-15" - if number of records is more that 26, only 10 first and
               15 last records will be displayed.
         """
-        if other is not None:
-            assert fields is None, "both 'fields' and 'other' args specified"
-            assert other.columns is not None
-            assert other.fields is not None
-            self.fields = other.fields
-            self.fields_by_name = other.fields_by_name
-        else:
-            assert fields is not None, (
-                "either 'fields' or 'other' arg must be specified")
-            self.fields = fields
-            self.fields_by_name = {}  # {field_name: (field, rec_attr_pos)}
-
-            for f in self.fields:
-                if f.name in self.fields_by_name:
-                    raise ValueError(
-                        f"Duplicate field name '{f.name}': {self.fields}")
-                self.fields_by_name[f.name] = f
+        self.fields = self._make_fields_list(other, fields, sample, field_types)
+        self.fields_by_name = {}  # {field_name: (field, rec_attr_pos)}
+        for f in self.fields:
+            if f.name in self.fields_by_name:
+                raise ValueError(
+                    f"Duplicate field name '{f.name}': {self.fields}")
+            self.fields_by_name[f.name] = f
 
         self.columns = None
         self.n_first = None
@@ -495,6 +517,51 @@ class PPTableFormat:
 
     def __str__(self):
         return self._get_fmt_str()
+
+    @classmethod
+    def _make_fields_list(cls, other, fields, sample, field_types):
+        # first step of constructor: create list of fields from one
+        # of available sources
+        if other is not None:
+            # just get fields from the other
+            assert fields is None
+            assert sample is None
+            assert field_types is None
+            return other.fields
+
+        if fields is not None:
+            assert sample is None
+            assert isinstance(fields, (list, tuple))
+
+            if all(isinstance(f, PPTableField) for f in fields):
+                # fields is a ready list of PPTableField objects
+                assert field_types is None
+                return fields
+
+            # fields is a list of names of fields
+            assert all(isinstance(f, str) for f in fields)
+            fields_names = fields
+        else:
+            assert sample is not None
+            assert hasattr(sample, "_fields"), (
+                f"can't create fields list from sample record {sample} "
+                f"(type {str(type(sample))}). The sample is usually a "
+                f"namedtuple and should have a '_fields' attribute")
+            fields_names = sample._fields
+
+        # now fields_names is a list of names of fields, in the order as they
+        # are present in actual data record
+        assert isinstance(fields_names, (list, tuple))
+        if field_types is None:
+            field_types = {}
+
+        fields = [
+            PPTableField(
+                name, pos,
+                field_types.get(name, cls._DFLT_FIELD_TYPE)
+            ) for pos, name in enumerate(fields_names)]
+
+        return fields
 
     def _init_self_with_fmt(self, fmt, other):
         # final step of construction, to be called from constructor only
@@ -629,8 +696,11 @@ class PPTable(PPObj):
             header=None,
             footer=None,
 
-            fmt_obj=None,
             fmt=None,
+            fmt_obj=None,
+            fields=None,
+            sample=None,
+            field_types=None,
     ):
         """PPTable constructor.
 
@@ -644,18 +714,18 @@ class PPTable(PPObj):
         - footer: (optional), str or ColoredText. Table footer. Special values:
             - None (default) - footer will be created automatically
             - "" - footer will not be created and printed.
-        - fmt_obj: either PPTableFormat object or list of PPTableField's.
-        - fmt: (optional) string which describes visible columns. If not specified,
-          all columns will be displayed. See PPTableFormat for more details.
+
+        Arguments for PPTableFormat:
+        - fmt, fmt_obj, fields, fields, sample, field_types: correspond to
+          arguments of PPTableFormat constructor. Check doc of
+          ak.ppobj.PPTableFormat for more details.
         """
         self.records = records
         self.r = records
 
-        if isinstance(fmt_obj, PPTableFormat):
-            ppt_fmt = PPTableFormat(fmt, other=fmt_obj)
-        else:
-            ppt_fmt = PPTableFormat(fmt, fields=fmt_obj)
-        self._ppt_fmt = ppt_fmt
+        self._ppt_fmt = PPTableFormat(
+            fmt,
+            other=fmt_obj, fields=fields, sample=sample, field_types=field_types)
 
         if header is None:
             header = "some table"
