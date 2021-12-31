@@ -174,7 +174,7 @@ class SqlMethodT:
 class MCallerSql(MCaller):
     """Base class for "sql method callers"."""
 
-    def __init__(self, db_conn,
+    def __init__(self, db_conn=None, *,
                  db_connector=None, connector_args=None, connector_kwargs=None):
         """Create sql methods caller.
 
@@ -183,6 +183,14 @@ class MCallerSql(MCaller):
         - db_connector, connector_args, connector_kwargs: optional values, which
         can be used to re-create db_conn.
         """
+        if db_conn is not None:
+            assert db_connector is None, (
+                f"conflicting arguments 'db_conn' ({db_conn}) and "
+                f"db_connector' ({db_connector})")
+        else:
+            assert db_connector is not None, (
+                f"either 'db_conn' or 'db_connector' argument must be specified")
+
         if db_connector is None:
             assert connector_args is None and connector_kwargs is None
         else:

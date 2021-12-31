@@ -261,7 +261,7 @@ class PPTableFieldType:
         self.min_width = min_width
         self.max_width = max_width
 
-    def get_cell_text_len(self, value):
+    def get_cell_text_len(self, value, fmt_modifier):
         """Calculate length of text representation of the value.
 
         This implementation is general, but not efficient. Override in
@@ -270,10 +270,10 @@ class PPTableFieldType:
         """
         # caluculate text length w/o constructing ColoredText object for the cell
         # return len(str(value))
-        text, _ = self.make_desired_text(value, self._DUMMY_PALETTE)
+        text, _ = self.make_desired_text(value, fmt_modifier, self._DUMMY_PALETTE)
         return len(ColoredText.strip_colors(str(text)))
 
-    def make_desired_text(self, value, palette) -> (ColoredText, bool):
+    def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
         """Returns desired text for a value and alignment.
 
         Implementation for general field type: value printed almost as is.
@@ -292,10 +292,28 @@ class PPTableFieldType:
         text = fmt(str(value))
         return text, align_left
 
-    def make_cell_text(self, value, width, palette) -> ColoredText:
+    def make_cell_text(self, value, fmt_modifier, width, palette) -> ColoredText:
         """value -> ColoredText having exactly specified width."""
-        text, align_left = self.make_desired_text(value, palette)
+        text, align_left = self.make_desired_text(value, fmt_modifier, palette)
         return self._fit_to_width(text, width, align_left, palette)
+
+    def _verify_fmt_modifier(self, fmt_modifier):
+        # Raise exc if 'fmt_modifier' is not compatible with this field type.
+        ok, err_msg = self.is_fmt_modifier_ok(fmt_modifier)
+        if not ok:
+            raise ValueError(err_msg)
+
+    def is_fmt_modifier_ok(self, fmt_modifier) -> [bool, str]:
+        """Chek if fmt_modifier is correct.
+
+        To be overriden in derived classes. By default Field Types do not
+        accept any format modifiers.
+        """
+        if fmt_modifier is None:
+            return True, ""
+        return False, (
+            f"Field type {self} does not support format modifiers. "
+            f"(specified format modifier: '{fmt_modifier}')")
 
     @staticmethod
     def _fit_to_width(text, width, align_left, palette) -> ColoredText:
@@ -320,7 +338,7 @@ class PPTableFieldType:
 class _PPTDefaultFieldType(PPTableFieldType):
     # implements more efficient implementation of get_cell_text_len
 
-    def get_cell_text_len(self, value):
+    def get_cell_text_len(self, value, _fmt_modifier):
         """Calculate length of text representation of the value."""
         # caluculate text length w/o constructing ColoredText object for the cell
         return len(str(value))
@@ -358,9 +376,14 @@ class PPTableField:
 class PPTableColumn:
     """Column of a PPTable."""
 
-    def __init__(self, name, field_type, rec_attr_pos, min_width, max_width):
+    def __init__(self, name, field_type, fmt_modifier,
+                 rec_attr_pos, min_width, max_width):
         self.name = name
         self.field_type = field_type
+
+        self.field_type._verify_fmt_modifier(fmt_modifier)
+        self.fmt_modifier = fmt_modifier
+
         self.rec_attr_pos = rec_attr_pos  # position of the field in record
         self.min_width = min_width
         self.max_width = max_width
@@ -371,6 +394,7 @@ class PPTableColumn:
         return PPTableColumn(
             self.name,
             self.field_type,
+            self.fmt_modifier,
             self.rec_attr_pos,
             self.min_width,
             self.max_width,
@@ -379,8 +403,8 @@ class PPTableColumn:
     @classmethod
     def from_fmt_str(cls, col_fmt, fields_by_name):
         """Create PPTableColumn object from format string."""
-        # col_fmt example: "id:10-25(15)"
-        # "field_name:min_w-max_w(cur_w)"
+        # col_fmt examples: "id:10-25(15)", "user_uuid/short:25"
+        # "field_name/format_modifier:min_w-max_w(cur_w)"
         # cur_w part is ignored - Allow it to be present to make it
         # possible to set new fmt string in a format it was reported.
 
@@ -395,6 +419,13 @@ class PPTableColumn:
             # fmt is just a field name
             field_name = col_fmt
             width_fmt = ""
+
+        fmt_modifier = None
+        br_pos = field_name.find('/')
+        if br_pos >= 0:
+            # field name includes format modifier. Like this: "user_uuid/short"
+            fmt_modifier = field_name[br_pos+1:]
+            field_name = field_name[:br_pos]
 
         if field_name not in fields_by_name:
             raise ValueError(
@@ -433,6 +464,7 @@ class PPTableColumn:
         return PPTableColumn(
             field.name,
             field.field_type,
+            fmt_modifier,
             field.rec_attr_pos,
             min_width,
             max_width,
@@ -441,6 +473,8 @@ class PPTableColumn:
     def to_fmt_str(self):
         """Create fmt string - human readable and editable descr of self."""
         fmt_str = self.name
+        if self.fmt_modifier is not None:
+            fmt_str += f"/{self.fmt_modifier}"
 
         if self.min_width == self.max_width:
             fmt_str += f":{self.min_width}"
@@ -621,7 +655,8 @@ class PPTableFormat:
             # default: show all columns
             self.columns = [
                 PPTableColumn(
-                    f.name, f.field_type, f.rec_attr_pos, f.min_width, f.max_width,
+                    f.name, f.field_type, None,
+                    f.rec_attr_pos, f.min_width, f.max_width,
                 ) for f in self.fields]
             return
 
@@ -804,7 +839,8 @@ class PPTable(PPObj):
                 for i, col in enumerate(cols):
                     value = rec[col.rec_attr_pos]
                     desired_widths[i] = max(
-                        desired_widths[i], col.field_type.get_cell_text_len(value))
+                        desired_widths[i], col.field_type.get_cell_text_len(
+                            value, col.fmt_modifier))
 
         for desired_width, col in zip(desired_widths, cols):
             col.width = min(
@@ -873,6 +909,7 @@ class PPTable(PPObj):
         line = sep + sep.join(
             col.field_type.make_cell_text(
                 record[col.rec_attr_pos],  # value
+                col.fmt_modifier,
                 col.width, palette)
             for col in columns
         ) + sep

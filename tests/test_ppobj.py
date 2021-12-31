@@ -329,16 +329,40 @@ class TestPPTable(unittest.TestCase):
         )
 
     def test_construct_with_custom_field_types(self):
-        """Test PPTable with custom field types."""
+        """Test PPTable with custom field types.
+
+        This filed type supports modifiers.
+        """
 
         # 0. prepare custom field type
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_text(self, value, palette):
-                """adds some text to a value """
+            def make_desired_text(self, value, fmt_modifier, palette):
+                """Custom format value for a table column.
+
+                This one appends some text to a value.
+
+                By default 'custom descr" string is appended to teh value.
+                But if format modifier was specified for a table column
+                this modifier wil be appended.
+                """
                 fmt = palette.get_color("NUMBER")
-                text = fmt(str(value) + " custom descr")
+                if not fmt_modifier:
+                    text = fmt(str(value) + " custom descr")
+                else:
+                    text = fmt(str(value) + " " + fmt_modifier)
+
                 return text, True  # align_left
+
+            def is_fmt_modifier_ok(self, fmt_modifier):
+                """Verify 'fmt_modifier' is acceptable by this Field Type.
+
+                For test purposes one specific value of format modifier is
+                prohibited for this field type.
+                """
+                if fmt_modifier == 'jInXedText':
+                    return False, f"'{fmt_modifier}' is not acceptable"
+                return True, ""
 
         custom_field_type = CustomFieldType()
 
@@ -354,7 +378,7 @@ class TestPPTable(unittest.TestCase):
             field_types={'level': custom_field_type},
         )
 
-        # check how table looks
+        # 1. check how table looks
         verify_table_format(
             self, table,
             cols_names=['id', 'level', 'name'],
@@ -366,6 +390,28 @@ class TestPPTable(unittest.TestCase):
             ],
             contains_text="custom descr",
         )
+
+        # 2. specify format modifier for some columns
+        table.fmt = "id,level,name,level/cust_msg"
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'level', 'name', 'level'],
+            n_body_lines=4, # all 4 records expected to be visible
+            cols_widths=[
+                2,
+                15,  # length of custom field "10 custom descr"
+                6,
+                11,  # length of custom field "10 cust_msg"
+            ],
+            contains_text=["custom descr", "cust_msg"],
+        )
+
+        # 3. make sure prohibited format modifier is properly rejected
+        with self.assertRaises(ValueError) as exc:
+            table.fmt = "id,level,name,level/jInXedText"
+
+        err_msg = str(exc.exception)
+        self.assertIn("jInXedText", err_msg)
 
     def test_construct_with_header(self):
         """Test PPTable with manually specified description (header)."""

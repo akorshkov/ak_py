@@ -124,7 +124,7 @@ class TestMCallerSQL(unittest.TestCase):
         # 0. prepare custom field type
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_text(self, value, palette):
+            def make_desired_text(self, value, fmt_modifier, palette):
                 """adds some text to a value """
                 fmt = palette.get_color("NUMBER")
                 text = fmt(str(value) + " custom descr")
