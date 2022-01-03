@@ -936,12 +936,18 @@ class PPEnumFieldType(PPTableFieldType):
         """Create PPEnumFieldType.
 
         Arguments:
-        - enum_values: {enum_val: (enum_name, syntax_name)}
+        - enum_values: {enum_val: enum_name} or {enum_val: (enum_name, syntax_name)}
 
         Use PPEnumFieldType.MISSING value to specify description and syntax
         of 'unexpected' values.
         """
-        self.enum_values = enum_values
+        self.enum_values = {
+            enum_val: (
+                (enum_name, None) if not isinstance(enum_name, (list, tuple))
+                else enum_name
+            )
+            for enum_val, enum_name in enum_values.items()
+        }
         self.enum_missing_value = enum_values.get(self.MISSING, ("<???>", "ERR"))
 
         self.max_val_len = max(

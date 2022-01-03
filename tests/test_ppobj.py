@@ -451,7 +451,7 @@ class TestPPTable(unittest.TestCase):
 
         # 0. prepare enum field type
         statuses_enum = PPEnumFieldType({
-            10: ("Ok status", None),
+            10: "Ok status",
             999: ("Error status", "WARN"),
         })
 
