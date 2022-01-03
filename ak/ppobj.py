@@ -758,6 +758,10 @@ class PPTable(PPObj):
         self.records = records
         self.r = records
 
+        # try to use first record as a sample record to create a list of fields
+        if fmt_obj is None and fields is None and sample is None and records:
+            sample = records[0]
+
         self._ppt_fmt = PPTableFormat(
             fmt,
             other=fmt_obj, fields=fields, sample=sample, field_types=field_types)

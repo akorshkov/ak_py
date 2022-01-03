@@ -338,6 +338,11 @@ class TestPPTable(unittest.TestCase):
             cols_widths=[2, 5, 6],
         )
 
+        # in case records are not empty it's ok to skip 'sample' argument -
+        # the first record will be used as a sample
+        table1 = PPTable(records)
+        self.assertEqual(str(table), str(table1))
+
     def test_construct_with_custom_field_types(self):
         """Test PPTable with custom field types.
 
