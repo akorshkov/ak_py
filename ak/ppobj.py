@@ -914,3 +914,158 @@ class PPTable(PPObj):
             for col in columns
         ) + sep
         return line
+
+
+#########################
+# PPEnumFieldType
+
+class PPEnumFieldType(PPTableFieldType):
+    """PPTable Enum Field Type.
+
+    Generates values for PPTable cells, f.e.: "10 Active"
+    """
+    MISSING = object()
+
+    _FMT_MODIFIERS = {
+        'full': "show both value and name, (f.e. '10 Active')",
+        'val': "show only value of the enum, (f.e. '10')",
+        'name': "show only name of the enum value, (f.e. 'Active')",
+    }
+
+    def __init__(self, enum_values):
+        """Create PPEnumFieldType.
+
+        Arguments:
+        - enum_values: {enum_val: (enum_name, syntax_name)}
+
+        Use PPEnumFieldType.MISSING value to specify description and syntax
+        of 'unexpected' values.
+        """
+        self.enum_values = enum_values
+        self.enum_missing_value = enum_values.get(self.MISSING, ("<???>", "ERR"))
+
+        self.max_val_len = max(
+            (len(str(x)) for x in self.enum_values if x is not None),
+            default=1)
+
+        self._cache = {}  # {palette_id: {fmt_modifier: {enum_val: (text, align)}}}
+        self._cache_lengths = {
+            fmt_modifier: {}
+            for fmt_modifier in self._FMT_MODIFIERS
+        }  # {fmt_modifier: {enum_val: length}}
+        self._cache_lengths[None] = self._cache_lengths['full']
+        super().__init__()
+
+    def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
+        """Returns desired text for a value and alignment."""
+
+        # prepare and cache cell text for a enum value
+        # cache is prepared for all supported format modifiers
+        try:
+            by_fmt_cache = self._cache[id(palette)]
+        except KeyError:
+            by_fmt_cache = self._cache[id(palette)] = {
+                fmt_modifier: {}
+                for fmt_modifier in self._FMT_MODIFIERS
+            }
+            # None and 'full' format modifiers will refer to the same cached vals
+            by_fmt_cache[None] = by_fmt_cache['full']
+            self._cache[id(palette)] = by_fmt_cache
+
+        by_value_cache = by_fmt_cache.get(fmt_modifier, None)
+        if by_value_cache is None:
+            self._verify_fmt_modifier(fmt_modifier)
+
+        if value not in by_value_cache:
+            self._make_text_cache_for_val(value, palette, by_fmt_cache)
+
+        return by_value_cache[value]
+
+    def _make_text_cache_for_val(self, value, palette, by_fmt_cache):
+        # populate self._cache for value
+        # ('by_fmt_cache' is part of self._cache)
+        try:
+            name, syntax_name = self.enum_values[value]
+            val_len = self.max_val_len
+        except KeyError:
+            if value is None:
+                # special case: cell will not contain enum's value and name,
+                # but a single None
+                text_ang_alignment = super().make_desired_text(value, None, palette)
+                by_fmt_cache['val'][value] = text_ang_alignment
+                by_fmt_cache['name'][value] = text_ang_alignment
+                by_fmt_cache['full'][value] = text_ang_alignment
+                return
+            name, syntax_name = self.enum_missing_value
+            val_len = max(self.max_val_len, len(str(value)))
+
+        # 'val' format
+        val_text, align = super().make_desired_text(value, None, palette)
+        by_fmt_cache['val'][value] = (val_text, align)
+
+        # 'name' format
+        fmt = palette.get_color(syntax_name)
+        name_text = fmt(name)
+        by_fmt_cache['name'][value] = (name_text, align)
+
+        # 'full' format
+        prefix_pad = ""
+        pad_len = val_len - len(val_text)
+        if pad_len > 0:
+            # align 'value' portion of the text to right
+            prefix_pad = " " * pad_len
+        full_text = ColoredText(prefix_pad, val_text, " ", name_text)
+        by_fmt_cache['full'][value] = (full_text, True)
+
+    def get_cell_text_len(self, value, fmt_modifier):
+        """Calculate length of text representation of the value."""
+        by_val_lenghs = self._cache_lengths.get(fmt_modifier, None)
+        if by_val_lenghs is None:
+            self._verify_fmt_modifier(fmt_modifier)
+
+        if value not in by_val_lenghs:
+            self._make_len_cache_for_val(value)
+
+        return by_val_lenghs[value]
+
+    def _make_len_cache_for_val(self, value):
+        # populate self._cache_lengths for value
+        try:
+            name, _ = self.enum_values[value]
+            val_len = self.max_val_len
+        except KeyError:
+            if value is None:
+                # special case: cell will not contain enum's value and name,
+                # but a single None
+                text_len = len(str(None))
+                self._cache_lengths['val'][value] = text_len
+                self._cache_lengths['name'][value] = text_len
+                self._cache_lengths['full'][value] = text_len
+                return
+            name, _ = self.enum_missing_value
+            val_len = max(self.max_val_len, len(str(value)))
+
+        # 'val' format
+        self._cache_lengths['val'][value] = val_len
+
+        # 'name' format
+        name_len = len(str(name))
+        self._cache_lengths['name'][value] = name_len
+
+        # 'full' format
+        self._cache_lengths['full'][value] = val_len + 1 + name_len
+
+    def is_fmt_modifier_ok(self, fmt_modifier):
+        """Chek if fmt_modifier is correct."""
+        if fmt_modifier is None or fmt_modifier in self._FMT_MODIFIERS:
+            return True, ""
+
+        formats_descr = "\n".join(
+            f"'{fmt_name}': {fmt_descr}"
+            for fmt_name, fmt_descr in self._FMT_MODIFIERS.items())
+
+        return False, (
+            f"Format modifier '{fmt_modifier}' is not supported by "
+            f"{str(type(self))}. Supported format modifiers: \n"
+            f"{formats_descr}"
+        )

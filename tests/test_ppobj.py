@@ -5,7 +5,7 @@ from collections import namedtuple
 
 from ak.color import ColoredText
 from ak.ppobj import PrettyPrinter
-from ak.ppobj import PPTableFieldType, PPTableField, PPTable
+from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 
 #########################
 # Test json-like objects PrettyPrinter
@@ -62,7 +62,9 @@ def verify_table_format(
         cols_names=None,
         n_body_lines=None,
         cols_widths=None,
-        contains_text=None):
+        contains_text=None,
+        not_contains_text=None,
+):
     """Verify that table is printed out correctly.
 
     Printed table looks like:
@@ -123,6 +125,14 @@ def verify_table_format(
         for t in contains_text:
             testcase.assertIn(
                 t, ttext, f"table doesn't contain text '{t}':\n{table}")
+
+    # 5. verify does not contain specified text
+    if not_contains_text is not None:
+        if not isinstance(not_contains_text, (list, tuple)):
+            not_contains_text = [not_contains_text, ]
+        for t in not_contains_text:
+            testcase.assertNotIn(
+                t, ttext, f"table unexpectedly contains text '{t}':\n{table}")
 
     # verify all lines has same length
     for i, line in enumerate(text_lines):
@@ -434,4 +444,156 @@ class TestPPTable(unittest.TestCase):
             cols_names=['id', 'level', 'name'],
             n_body_lines=4,  # all 4 records expected to be visible
             contains_text="My Table",  # begining of the header must be present
+        )
+
+    def test_table_with_enum_field_type(self):
+        """Test table with enum field type."""
+
+        # 0. prepare enum field type
+        statuses_enum = PPEnumFieldType({
+            10: ("Ok status", None),
+            999: ("Error status", "WARN"),
+        })
+
+        # 0.1 prepare the table
+        records = [
+            (1, "user 01", 10),
+            (2, "user 02", 999),
+        ]
+
+        table = PPTable(
+            records, fields=['id', 'name', 'status'],
+            field_types={'status': statuses_enum},
+        )
+
+        # 1. chech how table looks
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'name', 'status'],
+            n_body_lines = 2,
+            cols_widths = [
+                2, # column name 'id'
+                7, # 'name 01'
+                16, # '999 Error status'
+            ],
+            contains_text=[
+                "10 Ok status",
+            ]
+        )
+
+        # 2. create several columns same field different formats
+        table.fmt = "id, status/name, status/full, status/val, status"
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'status', 'status', 'status', 'status'],
+            n_body_lines = 2,
+            cols_widths = [
+                2, # column name 'id'
+                12, # 'Error status'
+                16, # '999 Error status'
+                6, # 'status'
+                16, # '999 Error status'
+            ],
+            contains_text=[
+                "10 Ok status",
+            ]
+        )
+        fmt_str = str(table.fmt)
+        # table format contains status filed with format modidfiers 'val' and 'name'
+        self.assertIn('status/val', fmt_str)
+        self.assertIn('status/name', fmt_str)
+
+        # 3. make sure columns with 'val' and 'name' format modifiers display
+        # only value / name of enum
+        table.fmt = "id, status/name"
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'status'],
+            n_body_lines = 2,
+            cols_widths = [
+                2, # column name 'id'
+                12, # 'Error status'
+            ],
+            contains_text=[
+                "Ok status",
+                "Error status",
+            ],
+            not_contains_text=[
+                "999",
+                "10",
+            ],
+        )
+
+        table.fmt = "id, status/val"
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'status'],
+            n_body_lines = 2,
+            cols_widths = [
+                2, # column name 'id'
+                6, # column name 'status'
+            ],
+            contains_text=[
+                "999",
+                "10",
+            ],
+            not_contains_text=[
+                "Ok status",
+                "Error status",
+            ],
+        )
+
+        # 4. test situation when record contains unexpected enum value
+        records = [
+            (1, "user 01", 10),
+            (2, "user 02", 999),
+            (3, "user 03", 20),
+        ]
+
+        table = PPTable(
+            records, fields=['id', 'name', 'status'],
+            field_types={'status': statuses_enum},
+        )
+
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'name', 'status'],
+            n_body_lines = 3,
+            cols_widths = [
+                2, # column name 'id'
+                7, # 'name 01'
+                16, # '999 Error status'
+            ],
+            contains_text=[
+                "10 Ok status",
+                "<???>",
+            ]
+        )
+
+        # 5. test None values in enums
+        records = [
+            (1, "user 01", 10),
+            (2, "user 02", None),
+        ]
+
+        table = PPTable(
+            records, fields=['id', 'name', 'status'],
+            field_types={'status': statuses_enum},
+        )
+
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'name', 'status'],
+            n_body_lines = 2,
+            cols_widths = [
+                2, # column name 'id'
+                7, # 'name 01'
+                13, # ' 10 Ok status'
+            ],
+            contains_text=[
+                "10 Ok status",
+            ],
+            not_contains_text=[
+                "<???>",
+            ],
         )
