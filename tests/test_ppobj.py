@@ -602,3 +602,22 @@ class TestPPTable(unittest.TestCase):
                 "<???>",
             ],
         )
+
+    def test_empty_table(self):
+        """Test empty table when it's impossible to detect field names."""
+
+        records = []
+        table = PPTable(
+            records,
+            header="empty list of something",
+        )
+
+        verify_table_format(
+            self, table,
+            # ugly single column name used by dummy format of empty table
+            cols_names=['-                              -'],
+            n_body_lines = 0,
+            contains_text=[
+                "empty list of something",
+            ],
+        )

@@ -492,7 +492,7 @@ class PPTableFormat:
     _DFLT_FIELD_TYPE = _PPTDefaultFieldType()
 
     def __init__(self, fmt, *, other=None, fields=None, sample=None,
-                 field_types=None):
+                 allow_dummy=True, field_types=None):
         """Constructor of PPTableFormat.
 
         Arguments:
@@ -503,6 +503,8 @@ class PPTableFormat:
               order of attributes of actual records).
             - list of PPTableField objects.
         - sample: (optional) sample record to get information about fields from
+        - allow_dummy: in case it's impossible to find out fields allow to create
+          a dummy format (can be used if the table has no records)
         - field_types: (optional) {field_name: PPTableFieldType}. Can be used
           to specify types of newly constructed fields.
 
@@ -529,7 +531,8 @@ class PPTableFormat:
             "10-15" - if number of records is more that 26, only 10 first and
               15 last records will be displayed.
         """
-        self.fields = self._make_fields_list(other, fields, sample, field_types)
+        self.fields = self._make_fields_list(
+            other, fields, sample, field_types, allow_dummy)
         self.fields_by_name = {}  # {field_name: (field, rec_attr_pos)}
         for f in self.fields:
             if f.name in self.fields_by_name:
@@ -553,7 +556,7 @@ class PPTableFormat:
         return self._get_fmt_str()
 
     @classmethod
-    def _make_fields_list(cls, other, fields, sample, field_types):
+    def _make_fields_list(cls, other, fields, sample, field_types, allow_dummy):
         # first step of constructor: create list of fields from one
         # of available sources
         if other is not None:
@@ -575,13 +578,21 @@ class PPTableFormat:
             # fields is a list of names of fields
             assert all(isinstance(f, str) for f in fields)
             fields_names = fields
-        else:
-            assert sample is not None
+        elif sample is not None:
             assert hasattr(sample, "_fields"), (
                 f"can't create fields list from sample record {sample} "
                 f"(type {str(type(sample))}). The sample is usually a "
                 f"namedtuple and should have a '_fields' attribute")
             fields_names = sample._fields
+        elif allow_dummy:
+            # it's not possible to detect fileds list, but the table is empty.
+            # create a dummy format - a single column to make table wide enough
+            # for a 'Total 0 records' message
+            fields_names = ['-                              -', ]
+        else:
+            # should not be reachable. sample is None means no records, means
+            # dummy format should be allowed
+            assert False
 
         # now fields_names is a list of names of fields, in the order as they
         # are present in actual data record
@@ -764,7 +775,8 @@ class PPTable(PPObj):
 
         self._ppt_fmt = PPTableFormat(
             fmt,
-            other=fmt_obj, fields=fields, sample=sample, field_types=field_types)
+            other=fmt_obj, fields=fields, sample=sample, field_types=field_types,
+            allow_dummy=not records)
 
         if header is None:
             header = "some table"
