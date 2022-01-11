@@ -82,25 +82,38 @@ def verify_table_format(
     """
     ttext = ColoredText.strip_colors(str(table))
 
-    n_service_lines = 6  # number of lines which contain delimiters, totals etc.
-
     text_lines = ttext.split('\n')
-    testcase.assertTrue(
-        len(text_lines) >= n_service_lines,
-        f"Table text should contain at least {n_service_lines} "
-        f"lines with service info. Actual table:\n{table}")
+
+    separator_lines_ids = [
+        i
+        for i, line in enumerate(text_lines)
+        if all(char in ('+', '-') for char in line)]
+
+    testcase.assertEqual(
+        3, len(separator_lines_ids),
+        f"table is expected to contain 3 separator lines:\n{table}")
+
+    testcase.assertEqual(
+        0, separator_lines_ids[0],
+        f"first line of a table should be a separator line::\n{table}")
+
+    header_part = text_lines[separator_lines_ids[0]+1:separator_lines_ids[1]]
+    testcase.assertIn(
+        len(header_part), (1, 2),
+        "header part of table should consist of optional header line "
+        "and column names line")
+    column_names_line = header_part[-1]
+
+    actual_n_body_lines = separator_lines_ids[2] - separator_lines_ids[1] - 1
 
     table_width = len(text_lines[0])
 
     # 1. verify column names
     if cols_names is not None:
-        testcase.assertTrue(
-            len(text_lines) > 2,
-            f"line with column names is not available:\n{table}")
         actual_col_names = []
-        if len(text_lines[2]) > 2:
+        if len(column_names_line) > 2:
             actual_col_names = [
-                x.strip() for x in text_lines[2][1:-1].split('|')]
+                x.strip() for x in column_names_line[1:-1].split('|')]
         testcase.assertEqual(
             actual_col_names, cols_names,
             f"unexpected column names in table:\n{table}")
@@ -108,7 +121,7 @@ def verify_table_format(
     # 2. verify number of lines
     if n_body_lines is not None:
         testcase.assertEqual(
-            n_body_lines, len(text_lines) - n_service_lines,
+            actual_n_body_lines, n_body_lines,
             f"unexpected number of body lines in table:\n{table}")
 
     # 3. verify columns widths

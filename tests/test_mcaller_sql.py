@@ -170,3 +170,24 @@ class TestMCallerSQL(unittest.TestCase):
                                   # column 'u_id'
             ]
         )
+
+    def test_arbitrary_sql_call(self):
+        """MCallerSql should can execute arbitary 'manual' sql requests."""
+        # create and populate database
+        db = self._make_sample_db_accts()
+
+        # this MCallerSql does not wrap any methods, but can execute arbitrary
+        # sql requests and return results as a PPTable
+        sql_caller = MCallerSql(db)
+
+        t = sql_caller(
+            "SELECT users.id AS u_id, users.name, accounts.* FROM users "
+            "JOIN accounts ON users.account_id = accounts.id;")
+
+        self.assertTrue(isinstance(t, PPTable))
+
+        verify_table_format(
+            self, t,
+            n_body_lines=2,
+            cols_names=['u_id', 'name', 'id', 'name_1'],
+        )

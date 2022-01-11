@@ -189,7 +189,7 @@ class MCallerSql(MCaller):
                 f"db_connector' ({db_connector})")
         else:
             assert db_connector is not None, (
-                f"either 'db_conn' or 'db_connector' argument must be specified")
+                "either 'db_conn' or 'db_connector' argument must be specified")
 
         if db_connector is None:
             assert connector_args is None and connector_kwargs is None
@@ -215,6 +215,12 @@ class MCallerSql(MCaller):
     def get_sql_conn(self):
         """Returns sql connection to be used in current sql wrapper method."""
         return self.db_conn
+
+    def __call__(self, sql_request):
+        """Call arbitrary sql request, return results as PPTable object."""
+        mtd = SqlMethodT(sql_request, header="")
+        conn = self.get_sql_conn()
+        return mtd.list(conn)
 
     def _make_bm_notes_sql(self, bound_method, palette) -> BoundMethodNotes:
         # create BoundMethodNotes for bound sql-request method (method
