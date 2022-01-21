@@ -376,13 +376,14 @@ class PPTableField:
 class PPTableColumn:
     """Column of a PPTable."""
 
-    def __init__(self, name, field_type, fmt_modifier,
+    def __init__(self, name, field_type, fmt_modifier, break_by,
                  rec_attr_pos, min_width, max_width):
         self.name = name
         self.field_type = field_type
 
         self.field_type._verify_fmt_modifier(fmt_modifier)
         self.fmt_modifier = fmt_modifier
+        self.break_by = break_by
 
         self.rec_attr_pos = rec_attr_pos  # position of the field in record
         self.min_width = min_width
@@ -395,6 +396,7 @@ class PPTableColumn:
             self.name,
             self.field_type,
             self.fmt_modifier,
+            self.break_by,
             self.rec_attr_pos,
             self.min_width,
             self.max_width,
@@ -404,7 +406,9 @@ class PPTableColumn:
     def from_fmt_str(cls, col_fmt, fields_by_name):
         """Create PPTableColumn object from format string."""
         # col_fmt examples: "id:10-25(15)", "user_uuid/short:25"
-        # "field_name/format_modifier:min_w-max_w(cur_w)"
+        # "field_name/format_modifier!:min_w-max_w(cur_w)"
+        # optional '!' means 'break_by' this column (insert blank line on
+        # column value change)
         # cur_w part is ignored - Allow it to be present to make it
         # possible to set new fmt string in a format it was reported.
 
@@ -420,6 +424,12 @@ class PPTableColumn:
             field_name = col_fmt
             width_fmt = ""
 
+        # detect 'break_by' indicator
+        break_by = field_name.endswith('!')
+        if break_by:
+            field_name = field_name[:-1]
+
+        # detect optional format modifier
         fmt_modifier = None
         br_pos = field_name.find('/')
         if br_pos >= 0:
@@ -465,6 +475,7 @@ class PPTableColumn:
             field.name,
             field.field_type,
             fmt_modifier,
+            break_by,
             field.rec_attr_pos,
             min_width,
             max_width,
@@ -475,6 +486,9 @@ class PPTableColumn:
         fmt_str = self.name
         if self.fmt_modifier is not None:
             fmt_str += f"/{self.fmt_modifier}"
+
+        if self.break_by:
+            fmt_str += "!"
 
         if self.min_width == self.max_width:
             fmt_str += f":{self.min_width}"
@@ -666,7 +680,7 @@ class PPTableFormat:
             # default: show all columns
             self.columns = [
                 PPTableColumn(
-                    f.name, f.field_type, None,
+                    f.name, f.field_type, None, False,
                     f.rec_attr_pos, f.min_width, f.max_width,
                 ) for f in self.fields]
             return
@@ -736,6 +750,13 @@ class PPTable(PPObj):
                 fmt = palette.get_color(None)
                 summary = fmt(summary)
             return self._fit_to_width(summary, width, True, palette)
+
+    class _ServiceLine:
+        # contents of a 'service' line of a printed table - line, which
+        # doesn't correspond to any record (f.e. empty 'break by' line)
+        __slots__ = ('line_text', )
+        def __init__(self, line_text=None):
+            self.line_text = line_text
 
     def __init__(
             self, records, *,
@@ -822,22 +843,41 @@ class PPTable(PPObj):
 
         columns = self._ppt_fmt.columns
 
+        # prepare list of table lines. Table line may correspond to a record
+        # or to a special markup lines
+        table_lines = []
+        break_line = self._ServiceLine()
+        skipped_recs_line = self._ServiceLine()
+        break_by_attrs = [col.rec_attr_pos for col in columns if col.break_by]
+        if self.records:
+            prev_rec = self.records[0]
+            table_lines.append(prev_rec)
+            for rec in self.records[1:]:
+                if any(rec[x] != prev_rec[x] for x in break_by_attrs):
+                    table_lines.append(break_line)
+                table_lines.append(rec)
+                prev_rec = rec
+
+        # check if some records should be hided because of record numbers limits
         n_first = self._ppt_fmt.n_first
         n_last = self._ppt_fmt.n_last
         if (n_first is not None
             and n_last is not None
-            and len(self.records) > n_first + n_last + 1
+            and len(table_lines) > n_first + n_last + 1
            ):
-            n_skipped = len(self.records) - n_first - n_last
+            n_skipped_table_lines = len(self.records) - n_first - n_last
+            assert n_skipped_table_lines >= 2
+            first_lines = table_lines[:n_first] if n_first else []
+            last_lines = table_lines[-n_last:] if n_last else []
+            # calculate number of not visible records.
+            n_skipped = len(self.records) - sum(
+                1 if not isinstance(tl, self._ServiceLine) else 0
+                for tlines in (first_lines, last_lines)
+                for tl in tlines)
+            table_lines = first_lines + [skipped_recs_line] + last_lines
         else:
             # show all records
-            n_first = len(self.records)
-            n_last = 0
             n_skipped = 0
-
-        assert n_first >= 0 and n_last >= 0 and n_skipped >= 0
-        head_recs = self.records[:n_first] if n_first else []
-        foot_recs = self.records[-n_last:] if n_last else []
 
         # calculate actual widths of table columns
         # process only columns w/o specified width
@@ -850,13 +890,14 @@ class PPTable(PPObj):
 
         cols = [col for col in columns if col.min_width != col.max_width]
         desired_widths = [len(col.name) for col in cols]
-        for recs in (head_recs, foot_recs):
-            for rec in recs:
-                for i, col in enumerate(cols):
-                    value = rec[col.rec_attr_pos]
-                    desired_widths[i] = max(
-                        desired_widths[i], col.field_type.get_cell_text_len(
-                            value, col.fmt_modifier))
+        for rec in table_lines:
+            if isinstance(rec, self._ServiceLine):
+                continue
+            for i, col in enumerate(cols):
+                value = rec[col.rec_attr_pos]
+                desired_widths[i] = max(
+                    desired_widths[i], col.field_type.get_cell_text_len(
+                        value, col.fmt_modifier))
 
         for desired_width, col in zip(desired_widths, cols):
             col.width = min(
@@ -867,6 +908,15 @@ class PPTable(PPObj):
         border_color = self.palette.get_color("TBL_BORDER")
         sep = border_color('|')
         service_cells_formatter = self._ServiceCells()
+
+        # contents of service lines can be created now
+        break_line.line_text = sep + " "*(table_width - 2) + sep
+        skipped_recs_line.line_text = sep + service_cells_formatter.make_summary_text(
+            self.palette.get_color("WARN")("... ") +
+            self.palette.get_color(None)(f"{n_skipped} records skipped"),
+            table_width - 2,
+            self.palette,
+        ) + sep
 
         # 1. make first border line
         border_line = border_color(
@@ -892,28 +942,17 @@ class PPTable(PPObj):
         # 4. one more border_line
         yield border_line
 
-        # 5. first visible records
-        for rec in head_recs:
-            yield self._make_table_line(rec, columns, sep, self.palette)
+        # 5. table contents - actual records and service lines
+        for tl in table_lines:
+            if isinstance(tl, self._ServiceLine):
+                yield tl.line_text
+            else:
+                yield self._make_table_line(tl, columns, sep, self.palette)
 
-        # 6. indicator of skipped lines
-        if n_skipped:
-            line = sep + service_cells_formatter.make_summary_text(
-                self.palette.get_color("WARN")("... ") +
-                self.palette.get_color(None)(f"{n_skipped} records skipped"),
-                table_width - 2,
-                self.palette,
-            ) + sep
-            yield line
-
-        # 7. last visible records
-        for rec in foot_recs:
-            yield self._make_table_line(rec, columns, sep, self.palette)
-
-        # 8. final border line
+        # 6. final border line
         yield border_line
 
-        # 9. summary line
+        # 7. summary line
         if self._footer:
             yield service_cells_formatter.make_summary_text(
                 self._footer,

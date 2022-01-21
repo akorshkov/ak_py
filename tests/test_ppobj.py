@@ -347,7 +347,7 @@ class TestPPTable(unittest.TestCase):
         verify_table_format(
             self, table,
             cols_names=['id', 'level', 'name'],
-            n_body_lines=4, # all 4 records expected to be visible
+            n_body_lines=4,  # all 4 records expected to be visible
             cols_widths=[2, 5, 6],
         )
 
@@ -357,7 +357,7 @@ class TestPPTable(unittest.TestCase):
         self.assertEqual(str(table), str(table1))
 
     def test_construct_with_custom_field_types(self):
-        """Test PPTable with custom field types.
+        """Test PPTable with custom field type.
 
         This filed type supports modifiers.
         """
@@ -504,8 +504,8 @@ class TestPPTable(unittest.TestCase):
         verify_table_format(
             self, table,
             cols_names=['id', 'status', 'status', 'status', 'status'],
-            n_body_lines = 2,
-            cols_widths = [
+            n_body_lines=2,
+            cols_widths=[
                 2, # column name 'id'
                 12, # 'Error status'
                 16, # '999 Error status'
@@ -614,6 +614,41 @@ class TestPPTable(unittest.TestCase):
             not_contains_text=[
                 "<???>",
             ],
+        )
+
+    def test_table_with_break_by_columns(self):
+        """Test table with 'break_by' columns."""
+
+        records = [
+            (1, "user 01", 10),
+            (2, "user 02", 10),
+            (3, "user 03", 10),
+            (4, "user 04", 20),
+            (5, "user 05", 20),
+        ]
+
+        # create table with a 'break_by' column
+        table = PPTable(
+            records, fields=['id', 'name', 'status'],
+            fmt="name, status!, id",  # '!' means 'break by' this column
+        )
+
+        verify_table_format(
+            self, table,
+            cols_names=['name', 'status', 'id'],
+            n_body_lines=6,  # 5 visible records + 1 'break by' line
+        )
+
+        fmt_str = str(table.fmt)
+        self.assertIn('status!', fmt_str, "'status' column is 'break_by'")
+
+        # set format with several 'break by' columns
+        table.fmt = "status!,name, id!"
+
+        verify_table_format(
+            self, table,
+            cols_names=['status', 'name', 'id'],
+            n_body_lines=9,  # 5 visible records + 4 'break by' lines
         )
 
     def test_empty_table(self):
