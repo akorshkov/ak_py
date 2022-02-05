@@ -79,6 +79,28 @@ class TestXlsTables(unittest.TestCase):
         self.assertEqual("Arnold", arnold.name)
         self.assertEqual(20, arnold.status)
 
+        # cehck values origins
+        self.assertEqual("A3", arnold.get_attr_origin('id'))
+        self.assertEqual("B3", arnold.get_attr_origin('name'))
+        self.assertEqual("C3", arnold.get_attr_origin('status'))
+
+        self.assertEqual("sheet1 A3", arnold.get_attr_origin('id', incl_ws=True))
+
+        with self.assertRaises(ValueError) as exc:
+            arnold.get_attr_origin('not_an_attr')
+
+        err_msg = str(exc.exception)
+        self.assertIn("not_an_attr", err_msg)
+        self.assertIn("unknown attribute", err_msg)
+
+        # it does not make sense to specify 'value' argument when fetching
+        # origin of usual (not 'ranged') attribute.
+        with self.assertRaises(ValueError) as exc:
+            arnold.get_attr_origin('status', 'some_val')
+
+        err_msg = str(exc.exception)
+        self.assertIn("'status' is not a ranged attribute", err_msg)
+
     def test_skip_columns(self):
         """It is possble to skip some attributes when reading data from table."""
         class XlPerson(XlsObject):
@@ -106,6 +128,8 @@ class TestXlsTables(unittest.TestCase):
         self.assertEqual(20, arnold.id)
         self.assertIsNone(arnold.name)
         self.assertEqual(20, arnold.status)
+
+        self.assertEqual("<skipped column>", arnold.get_attr_origin('name'))
 
     def test_worksheet_with_empty_lines(self):
         """worksheet may start with empty lines. And columns."""
@@ -192,6 +216,23 @@ class TestXlsTables(unittest.TestCase):
 
         henry = objs[1]
         self.assertEqual(set(), henry.classes)
+
+        # check origin of the ranged attribute
+        self.assertEqual("B2:E2", arnold.get_attr_origin('classes'))
+        self.assertEqual(
+            "sheet1 B2:E2", arnold.get_attr_origin('classes', incl_ws=True))
+        self.assertEqual("B2", arnold.get_attr_origin('classes', 'math'))
+        self.assertEqual(
+            "sheet1 B2", arnold.get_attr_origin('classes', 'math', incl_ws=True))
+        self.assertEqual("D2", arnold.get_attr_origin('classes', 'history'))
+        self.assertEqual("E2", arnold.get_attr_origin('classes', 'cs'))
+
+        with self.assertRaises(ValueError) as exc:
+            arnold.get_attr_origin('classes', 'philosophy')
+
+        err_msg = str(exc.exception)
+        self.assertIn(
+            "ranged attribute 'classes' has no key 'philosophy'", err_msg)
 
         # columns corresponding to range values may be the first in table
         wb = MockedWorkBook([
@@ -349,3 +390,43 @@ class TestXlsTables(unittest.TestCase):
         self.assertEqual(20, arnold.id)
         self.assertEqual("Arnold", arnold.name)
         self.assertEqual(None, arnold.status)
+
+    def test_optional_ranged_columns(self):
+        """Test corner case of a ranged attribute - zero columns correspond to it."""
+
+        class XlObj(XlsObject):
+            _ATTRS = ['id', 'name', 'classes', 'status']
+
+        wb = MockedWorkBook([
+            ('sheet1', [
+                '|id | name | status|',
+                '|0  |Arnold|10     |',
+                '|1  |Henry |10     |',
+            ]),
+        ])
+
+        classes_set = CellRangeSet(cell_bool)
+
+        with self.assertRaises(ValueError) as exc:
+            list(read_table(wb['sheet1'], XlObj, {
+                'id': ('id', cell_int),
+                'name': ('name', cell_str),
+                'status': ('status', cell_int),
+                'classes': ('*', classes_set),
+            }))
+
+        err_msg = str(exc.exception)
+        self.assertIn(
+            "no columns corresponding to ranged attribute 'classes'", err_msg)
+
+        objs = list(read_table(wb['sheet1'], XlObj, {
+            'id': ('id', cell_int),
+            'name': ('name', cell_str),
+            'status': ('status', cell_int),
+            'classes': ('*', classes_set, {'column_is_optional': True}),
+        }))
+
+        arnold = objs[0]
+        self.assertEqual(set([]), arnold.classes)
+
+        self.assertEqual("<skipped column>", arnold.get_attr_origin('classes'))

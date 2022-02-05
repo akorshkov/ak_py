@@ -71,7 +71,7 @@ class Cell:
 
     def __init__(self, ws, coordinate, value):
         self.parent = ws
-        self.coordinate = coordinate
+        self.coordinate = coordinate  # example "B10"
         self.value = value
 
     def __str__(self):

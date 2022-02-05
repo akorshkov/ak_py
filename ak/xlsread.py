@@ -115,10 +115,15 @@ class CellRangeDict(_CellRangeReader):
     def val_from_cells(self, cells_titles, cells):
         """range of cells -> {column_title: cell_value}."""
         assert len(cells_titles) == len(cells)
-        return {
+        val = {
             title: self.cell_type.val_from_cell(cell)
             for title, cell in zip(cells_titles, cells)
         }
+        attr_origins = {
+            cell_title: cell.coordinate
+            for cell_title, cell in zip(cells_titles, cells)
+        }
+        return val, attr_origins
 
 
 class CellRangeSet(_CellRangeReader):
@@ -126,11 +131,16 @@ class CellRangeSet(_CellRangeReader):
     def val_from_cells(self, cells_titles, cells):
         """Range of cells -> set(column_title of marked cells)."""
         assert len(cells_titles) == len(cells)
-        return {
+        val = {
             title
             for title, cell in zip(cells_titles, cells)
             if self.cell_type.val_from_cell(cell)
         }
+        attr_origins = {
+            cell_title: cell.coordinate
+            for cell_title, cell in zip(cells_titles, cells)
+        }
+        return val, attr_origins
 
 
 #########################
@@ -147,30 +157,41 @@ class XlsObject:
     _NUM_ID_ATTRS = 0  # number of first attributes in _ATTRS, which make the
                        # logical id of the object
 
-    __slots__ = 'anchor_xls_cell', 'logic_id'
+    __slots__ = '_src_ws_name', '_anchor_cell_coord', '_attrs_origins', 'logic_id'
 
     def __init__(self, cells_types, cells_list):
         assert self._NUM_ID_ATTRS <= len(self._ATTRS)
         assert len(cells_list) == len(self._ATTRS), (
             f"Can't init {type(self)}. Expected "
             f"{len(self._ATTRS)} cells, actually got {len(cells_list)} cells")
-        self.anchor_xls_cell = cells_list[0]
+
+        anchor_cell = cells_list[0]
+        self._src_ws_name = anchor_cell.parent.title
+        if ' ' in self._src_ws_name:
+            self._src_ws_name = f"'{self._src_ws_name}'"
+        self._anchor_cell_coord = anchor_cell.coordinate
+        self._attrs_origins = {}
+
         for attr_name, cell_type, cell in zip(self._ATTRS, cells_types, cells_list):
             if hasattr(cell_type, 'val_from_cells'):
                 # cell should be not a single cell, but range
                 column_names, cells = cell
-                val = cell_type.val_from_cells(column_names, cells)
+                val, attr_origins = cell_type.val_from_cells(column_names, cells)
             elif cell_type is None:
                 # this attribute explicitely ignored by reading rules
                 assert cell is None
                 val = None
+                attr_origins = "<skipped column>"
             elif cell is None:
                 # this cell corresponds to a 'missing' column
                 # it was explicitely allowed with 'column_is_optional' rule
                 val = None
+                attr_origins = "<skipped column>"
             else:
                 val = cell_type.val_from_cell(cell)
+                attr_origins = cell.coordinate
             setattr(self, attr_name, val)
+            self._attrs_origins[attr_name] = attr_origins
 
         self.logic_id = self._compose_key_value()
 
@@ -203,11 +224,66 @@ class XlsObject:
         return all(v is None for v in self.logic_id)
 
     def __str__(self):
-        ac = self.anchor_xls_cell
-        ws_descr = ac.parent.title
-        if ' '  in ws_descr:
-            ws_descr = f"'{ws_descr}'"
-        return f"<{type(self).__name__}({ws_descr} {ac.coordinate}) {self.logic_id}>"
+        return (
+            f"<{type(self).__name__}"
+            f"({self._src_ws_name} {self._anchor_cell_coord}) {self.logic_id}>")
+
+    def get_attr_origin(self, attr_name, range_key=None, *, incl_ws=False):
+        """Return coordinate of the cell(s) corresponding to attribute.
+
+        Examples:
+        - x.get_attr_origin('name') => "C10" means that x.name value was read
+            from excel cell "C10"
+        - x.get_attr_origin('grades') => "D13:P13" means that a.grades is a
+            ranged attribute, values for it were taken from range of cells from
+            "D13" to "P13"
+        - x.get_attr_origin('grades', 'math') => "M13" 'ranged' attribute, the
+           value  corresponding to key 'math' was read from excel cell "M13"
+
+        Arguments:
+        - attr_name: name of attribute
+        - range_key: can be specified for ranged attributes
+        - incl_ws: if to include worksheet name in returned cell coordinate.
+        """
+        ws_prefix = f"{self._src_ws_name} " if incl_ws else ""
+        origins = self._attrs_origins.get(attr_name)
+
+        if origins is None:
+            if attr_name in self._ATTRS:
+                return ws_prefix + "<skipped column>"
+            if hasattr(self, attr_name):
+                raise ValueError(
+                    f"attribute '{attr_name}' does not correspond to excell cell")
+            raise ValueError(f"unknown attribute '{attr_name}'")
+
+        if isinstance(origins, str):
+            # this is not a 'ranged' attribute
+            if range_key is not None:
+                raise ValueError(
+                    f"'{attr_name}' is not a ranged attribute, "
+                    f"range_key argument '{range_key}' is not applicable")
+            return ws_prefix + origins
+
+        # the attribute must be ranged
+        assert isinstance(origins, dict)
+        if range_key is None:
+            # return description of all the source cells
+            cells_coords = sorted(origins.values())
+            if len(cells_coords) == 0:
+                cells_range_descr = "<skipped column>"
+            elif len(cells_coords) == 1:
+                cells_range_descr = cells_coords[0]
+            else:
+                cells_range_descr = f"{cells_coords[0]}:{cells_coords[-1]}"
+            return ws_prefix + cells_range_descr
+
+        val_cell_origin = origins.get(range_key)
+
+        if val_cell_origin is None:
+            raise ValueError(
+                f"ranged attribute '{attr_name}' has no key '{range_key}'")
+
+        return ws_prefix + val_cell_origin
 
     def __repr__(self):
         return self.__str__()
@@ -220,7 +296,8 @@ class XlsObject:
             if getattr(self, attr_name) != getattr(other, attr_name):
                 raise ValueError(
                     f"{type(self)} objects created from cells "
-                    f"{self.anchor_xls_cell} and {other.anchor_xls_cell} have "
+                    f"'{self._anchor_cell_coord}' and "
+                    f"'{other._anchor_cell_coord}' have "
                     f"same logic_id value {self.logic_id} "
                     f"but different values of attribute '{attr_name}': "
                     f"{getattr(self, attr_name)} and {getattr(other, attr_name)}"
@@ -375,8 +452,8 @@ class _ObjScrCellsMap:
 
                 if not range_cells_names and not attr_rrules.column_is_optional:
                     raise ValueError(
-                        f"can't detect columns corresponding to range "
-                        f"attribute {attr_rrules.attr_name}. List of all "
+                        f"no columns corresponding to ranged "
+                        f"attribute '{attr_rrules.attr_name}'. List of all "
                         f"columns names: {cols_names}")
 
                 range_cells_ids = [
