@@ -10,7 +10,7 @@ class XlPerson(XlsObject):
     _NUM_ID_ATTRS = 1
 
 # transform data from excel worksheet into XlPerson objects
-people = list(read_table(wb['sheet1'], XlPerson, {
+people = list(iter_table(wb['sheet1'], XlPerson, {
     'id': ('Id', cell_int),
     'name': ("Person's name", cell_str),
     'status': ('Status', cell_int),
@@ -501,15 +501,17 @@ class XlsTableReader:
     For each line of the table one or several objects are created (according to
     specified transformations rules).
     """
-    def __init__(self, *objs_rrules, stop_on="blank all"):
+    def __init__(self, *objs_rrules):
         self.objs_rrules = objs_rrules  # [XlsObjReadRules, ]
         self.cells_maps = [
             _ObjScrCellsMap(obj_rrule.attrs_rules) for obj_rrule in self.objs_rrules]
-        self.stop_on = stop_on
 
-    def read_table(self, worksheet):
+    def iter_table(self, worksheet, *, stop_on="blank all", ladder_table=False):
         """Generate tuples of XlsObjects according to self.objs_rrules."""
         titles_processed = False
+
+        prev_row = None  # [cell, ]
+        first_col_pos = None
 
         for row in worksheet.iter_rows():
             # skip optional first empty rows
@@ -518,7 +520,7 @@ class XlsTableReader:
 
             # detect end of table
             if titles_processed:
-                if self.stop_on == 'blank first':
+                if stop_on == 'blank first':
                     if self._cell_is_empty(row[0]):
                         break
                 else:
@@ -527,7 +529,10 @@ class XlsTableReader:
 
             if not titles_processed:
                 # this is a titles row. Time to prepare mappings
-                cols_names = [cell.value for cell in row]
+                cols_names = [
+                    str(cell.value).strip() if cell.value is not None else ""
+                    for cell in row]
+
                 col_names_ids = {
                     col_name: i for i, col_name in enumerate(cols_names)}
                 known_cols_names = {
@@ -538,14 +543,42 @@ class XlsTableReader:
                     cells_map.bind_titles_row(
                         cols_names, col_names_ids, known_cols_names)
                 titles_processed = True
+                if ladder_table:
+                    # following info is only necessary pro processing 'ladder' tables
+                    first_col_pos = next(
+                        (pos for pos, name in enumerate(cols_names) if name),
+                        None,
+                    )
                 continue
 
             # create result objects from current row
+            # but first it may be necessary to prepare the current row.
+            # In case of ladder table, current row of cells consists of cells
+            # from several excel rows.
+            if ladder_table and first_col_pos is not None:
+                if prev_row is None:
+                    # this is the first row of data cells.
+                    prev_row = row
+                    current_row = row
+                else:
+                    # susbstitute first empty cells by cells of previous row - this
+                    # is the essence of ladder table
+                    current_row = list(row)
+                    for i in range(first_col_pos, len(current_row)):
+                        if self._cell_is_empty(current_row[i]):
+                            current_row[i] = prev_row[i]
+                        else:
+                            break
+            else:
+                current_row = row
+
             results = []
             for obj_rrules, cells_map in zip(self.objs_rrules, self.cells_maps):
-                cells_types, cells_list = cells_map.cells_from_row(row)
+                cells_types, cells_list = cells_map.cells_from_row(current_row)
                 results.append(
                     obj_rrules.obj_class.construct(cells_types, cells_list))
+
+            prev_row = current_row
 
             yield results
 
@@ -558,7 +591,8 @@ class XlsTableReader:
         return cell.value is None or str(cell.value).strip() == ""
 
 
-def read_table(worksheet, xls_obj_class, attrs_rules, *, stop_on="blank all"):
+def iter_table(worksheet, xls_obj_class, attrs_rules, *,
+               stop_on="blank all", ladder_table=False):
     """This method should be used to read data from excel table in most cases.
 
     Arguments:
@@ -577,10 +611,25 @@ def read_table(worksheet, xls_obj_class, attrs_rules, *, stop_on="blank all"):
     """
     obj_rrules = XlsObjReadRules(xls_obj_class, attrs_rules)
 
-    table_reader = XlsTableReader(obj_rrules, stop_on=stop_on)
+    table_reader = XlsTableReader(obj_rrules)
 
-    for (x, ) in table_reader.read_table(worksheet):
+    for (x, ) in table_reader.iter_table(
+        worksheet, stop_on=stop_on, ladder_table=ladder_table,
+    ):
         yield x
+
+
+def read_table(worksheet, xls_obj_class, attrs_rules, **kwargs):
+    """Wrapper around iter_table - returns list of objects."""
+    return list(iter_table(worksheet, xls_obj_class, attrs_rules, **kwargs))
+
+
+def read_table_make_map(
+        worksheet, xls_obj_class, attrs_rules, **kwargs):
+    """Wrapper around iter_table - returns dictionary of objects."""
+    return xls_obj_class.make_objects_map(
+        iter_table(worksheet, xls_obj_class, attrs_rules, **kwargs)
+    )
 
 
 cell_str = CellStr()

@@ -3,7 +3,7 @@
 import unittest
 from ak.xlsread import (
     cell_str, cell_int, cell_list, cell_bool,
-    XlsObject, read_table, CellRangeSet, CellRangeDict,
+    XlsObject, read_table, read_table_make_map, CellRangeSet, CellRangeDict,
 )
 from .mock_openpyxl import MockedWorkBook, Cell
 
@@ -66,11 +66,11 @@ class TestXlsTables(unittest.TestCase):
             ]),
         ])
 
-        people = list(read_table(wb['sheet1'], XlPerson, {
+        people = read_table(wb['sheet1'], XlPerson, {
             'id': ('Id', cell_int),
             'name': ("Person's name", cell_str),
             'status': ('Status', cell_int),
-        }))
+        })
 
         self.assertEqual(3, len(people), f"people: {people}")
 
@@ -116,11 +116,11 @@ class TestXlsTables(unittest.TestCase):
             ]),
         ])
 
-        people = list(read_table(wb['sheet1'], XlPerson, {
+        people = read_table(wb['sheet1'], XlPerson, {
             'id': ('Id', cell_int),
             'name': None,  # this attribute will not be read from table
             'status': ('Status', cell_int),
-        }))
+        })
 
         self.assertEqual(3, len(people), f"people: {people}")
 
@@ -148,11 +148,11 @@ class TestXlsTables(unittest.TestCase):
             ]),
         ])
 
-        people = list(read_table(wb['sheet1'], XlPerson, {
+        people = read_table(wb['sheet1'], XlPerson, {
             'id': ('Id', cell_int),
             'name': ("Person's name", cell_str),
             'status': ('Status', cell_int),
-        }))
+        })
 
         self.assertEqual(3, len(people), f"people: {people}")
 
@@ -175,10 +175,10 @@ class TestXlsTables(unittest.TestCase):
             ]),
         ])
 
-        objs = list(read_table(wb['sheet1'], XlObj, {
+        objs = read_table(wb['sheet1'], XlObj, {
             'id': ('ID', cell_int),
             'classes': ('Classes', cell_list),
-        }))
+        })
 
         self.assertEqual(2, len(objs))
         self.assertEqual(['math', 'science', 'history'], objs[0].classes)
@@ -199,12 +199,12 @@ class TestXlsTables(unittest.TestCase):
 
         classes_set = CellRangeSet(cell_bool)
 
-        objs = list(read_table(wb['sheet1'], XlObj, {
+        objs = read_table(wb['sheet1'], XlObj, {
             'id': ('id', cell_int),
             'name': ('name', cell_str),
             'status': ('status', cell_int),
             'classes': ('*', classes_set),
-        }))
+        })
 
         self.assertEqual(2, len(objs))
         arnold = objs[0]
@@ -243,12 +243,12 @@ class TestXlsTables(unittest.TestCase):
             ]),
         ])
 
-        objs = list(read_table(wb['sheet1'], XlObj, {
+        objs = read_table(wb['sheet1'], XlObj, {
             'id': ('id', cell_int),
             'name': ('name', cell_str),
             'status': ('status', cell_int),
             'classes': ('*', classes_set),
-        }))
+        })
 
         self.assertEqual(2, len(objs))
 
@@ -273,12 +273,12 @@ class TestXlsTables(unittest.TestCase):
 
         grades_reader = CellRangeDict(cell_int)
 
-        objs = list(read_table(wb['sheet1'], XlObj, {
+        objs = read_table(wb['sheet1'], XlObj, {
             'id': ('id', cell_int),
             'name': ('name', cell_str),
             'status': ('status', cell_int),
             'grades': ('*', grades_reader),
-        }))
+        })
 
         self.assertEqual(2, len(objs))
         arnold = objs[0]
@@ -318,11 +318,11 @@ class TestXlsTables(unittest.TestCase):
             ]),
         ])
 
-        people = list(read_table(wb['sheet1'], XlPerson, {
+        people = read_table(wb['sheet1'], XlPerson, {
             'id': ('Id', cell_int),
             'name': ("Person's name", cell_str),
             'status': ('Status', cell_int),
-        }))
+        })
 
         self.assertEqual(5, len(people), f"people: {people}")
 
@@ -364,11 +364,11 @@ class TestXlsTables(unittest.TestCase):
         ])
 
         with self.assertRaises(ValueError) as exc:
-            _ = list(read_table(wb['sheet1'], XlPerson, {
+            read_table(wb['sheet1'], XlPerson, {
                 'id': ('Id', cell_int),
                 'name': ("Person's name", cell_str),
                 'status': ('Status', cell_int),
-            }))
+            })
 
         err_msg = str(exc.exception)
 
@@ -379,11 +379,11 @@ class TestXlsTables(unittest.TestCase):
         #
         # need to specify this option for column 'Status' as it is not present
         # specifying this option for a present column ('Id') should have no effect
-        people = list(read_table(wb['sheet1'], XlPerson, {
+        people = read_table(wb['sheet1'], XlPerson, {
             'id': ('Id', cell_int, {'column_is_optional': True}),
             'name': ("Person's name", cell_str),
             'status': ('Status', cell_int, {'column_is_optional': True}),
-        }))
+        })
         self.assertEqual(3, len(people), f"people: {people}")
 
         arnold = people[1]
@@ -408,25 +408,96 @@ class TestXlsTables(unittest.TestCase):
         classes_set = CellRangeSet(cell_bool)
 
         with self.assertRaises(ValueError) as exc:
-            list(read_table(wb['sheet1'], XlObj, {
+            read_table(wb['sheet1'], XlObj, {
                 'id': ('id', cell_int),
                 'name': ('name', cell_str),
                 'status': ('status', cell_int),
                 'classes': ('*', classes_set),
-            }))
+            })
 
         err_msg = str(exc.exception)
         self.assertIn(
             "no columns corresponding to ranged attribute 'classes'", err_msg)
 
-        objs = list(read_table(wb['sheet1'], XlObj, {
+        objs = read_table(wb['sheet1'], XlObj, {
             'id': ('id', cell_int),
             'name': ('name', cell_str),
             'status': ('status', cell_int),
             'classes': ('*', classes_set, {'column_is_optional': True}),
-        }))
+        })
 
         arnold = objs[0]
         self.assertEqual(set([]), arnold.classes)
 
         self.assertEqual("<skipped column>", arnold.get_attr_origin('classes'))
+
+    def test_ladder_table(self):
+        """Test parsing 'ladder' table."""
+        class XlEvent(XlsObject):
+            _ATTRS = ['id', 'name', 'year', 'month', 'day']
+            _NUM_ID_ATTRS = 1
+
+            def get_vals(self):
+                """to test assigned values."""
+                return self.year, self.month, self.day
+
+            def get_origins(self):
+                """to test origins of assigned values."""
+                return tuple(
+                    self.get_attr_origin(attr) for attr in ['year', 'month', 'day'])
+
+        wb = MockedWorkBook([
+            ('sheet1', [
+                "|' '|Year  |Month| Day | Event Id | Event name |",
+                "|   |2019  |11   |30   | 1        | event 10   |",
+                "|   |      |12   |15   | 2        | event 20   |",
+                "|   |2020  |     |1    | 3        | event 30   |",
+                "|xx |      |1    |1    | 4        | event 40   |",
+                "|   |2021  |1    |1    | 5        | event 50   |",
+                "|   |      |     |     | 6        | event 60   |",
+                "|   |      |2    |4    | 7        | event 70   |",
+            ]),
+        ])
+
+        objs = read_table_make_map(wb['sheet1'], XlEvent, {
+            'id': ("Event Id", cell_int),
+            'name': ("Event name", cell_str),
+            'year': ("Year", cell_int),
+            'month': ("Month", cell_int),
+            'day': ("Day", cell_int),
+        }, ladder_table=True)
+
+        self.assertEqual(7, len(objs))
+
+        # obj 1
+        self.assertEqual((2019, 11, 30), objs[1].get_vals())
+        self.assertEqual(('B2', 'C2', 'D2'), objs[1].get_origins())
+
+        # obj 2
+        self.assertEqual(
+            (2019, 12, 15), objs[2].get_vals(),
+            "because the table is 'ladder' value should be taken from upper call")
+        self.assertIn("E3", str(objs[2]), "E3 is cooranate of 'id' cell")
+        self.assertEqual("B2", objs[2].get_attr_origin('year'))
+        self.assertEqual(('B2', 'C3', 'D3'), objs[2].get_origins())
+
+        # obj 3
+        self.assertEqual((2020, None, 1), objs[3].get_vals())
+        self.assertEqual(('B4', 'C4', 'D4'), objs[3].get_origins())
+
+        # obj 4
+        # not empty A5 cell should not affect anything as it is outside of table
+        self.assertEqual((2020, 1, 1), objs[4].get_vals())
+        self.assertEqual(('B4', 'C5', 'D5'), objs[4].get_origins())
+
+        # obj 5
+        self.assertEqual((2021, 1, 1), objs[5].get_vals())
+        self.assertEqual(('B6', 'C6', 'D6'), objs[5].get_origins())
+
+        # obj 6
+        self.assertEqual((2021, 1, 1), objs[6].get_vals())
+        self.assertEqual(('B6', 'C6', 'D6'), objs[6].get_origins())
+
+        # obj 7
+        self.assertEqual((2021, 2, 4), objs[7].get_vals())
+        self.assertEqual(('B6', 'C8', 'D8'), objs[7].get_origins())
