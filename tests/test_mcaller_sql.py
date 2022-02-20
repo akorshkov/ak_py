@@ -143,7 +143,7 @@ class TestMCallerSQL(unittest.TestCase):
                 header="CustHeader",
                 # footer="Cust footer", - not implemented
                 fmt="u_id, id:10, name_1:15;*",
-                field_types={'u_id': custom_field_type},
+                fields_types={'u_id': custom_field_type},
             )
 
             @method_sql

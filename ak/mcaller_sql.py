@@ -45,7 +45,7 @@ class SqlMethodT:
 
     def __init__(
             self, sql_request, params_names=None, record_name=None, *,
-            header=None, footer=None, fmt=None, field_types=None):
+            header=None, footer=None, fmt=None, fields_types={}):
         """Create SqlMethodT - sql method which returns pretty-printable PPTable.
 
         SqlMethodT executes SqlMethod and presents results as PPTable.
@@ -63,7 +63,7 @@ class SqlMethodT:
         PPTableFormat-related arguments:
         - header, footer: optional custom header and footer of the table.
           Check doc of al.ppobj.PPTable for more details
-        - fmt, field_types: optional table format specifications.
+        - fmt, fields_types: optional table format specifications.
           Check ak.ppobj.PPTableFormat for more details
         """
         if isinstance(sql_request, SqlMethod):
@@ -79,7 +79,7 @@ class SqlMethodT:
 
         # stored arguments for PPTableFormat constructor
         self._ppt_fmt = fmt
-        self._ppt_field_types = field_types
+        self._ppt_fields_types = fields_types
         self._ppt_format = None  # to be initialized later
 
         # stored arguments for result PPTables constructors
@@ -136,9 +136,8 @@ class SqlMethodT:
             # construct default header
             self._ppt_header = f"{self._record_name} table"
 
-        self._ppt_format = PPTableFormat(
-            self._ppt_fmt, fields=self.field_names,
-            field_types=self._ppt_field_types)
+        self._ppt_format = PPTableFormat.mk_by_fields_names(
+            self._ppt_fmt, self.field_names, self._ppt_fields_types)
 
     @staticmethod
     def _make_unique_names_list(names_list):

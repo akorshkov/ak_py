@@ -240,7 +240,7 @@ class TestPPTable(unittest.TestCase):
                 n_body_lines=4,
             )
 
-        # 8. check zero visible lines does not break anything
+        # 8. check zero visible lines do not break anything
         table.fmt = "id:5, level:10, name:15 ;0:0"
         verify_table_format(
             self, table,
@@ -299,6 +299,79 @@ class TestPPTable(unittest.TestCase):
             ],
         )
 
+    def test_lines_limits(self):
+        """Check lines limits are reported correctly """
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+            (5, 9, "Hermiona"),
+        ]
+
+        table = PPTable(records, fields=['id', 'level', 'name'])
+
+        def _get_num_vis_lines_fmt(fmt):
+            # get the second section of fmt string: the one which limits
+            # number of visible lines
+            sections = str(fmt).split(';')
+            if len(sections) > 1:
+                return sections[1]
+            return ""
+
+        _ = str(table)  # simulate printing the table. Info about lines limits
+                        # is initialized on printing
+        self.assertEqual(
+            _get_num_vis_lines_fmt(table.fmt), "",
+            "all lines are visible, no need to mention lines limits in fmt")
+
+        table.fmt = "id,level,name;1:2"
+        _ = str(table)
+        self.assertEqual(
+            _get_num_vis_lines_fmt(table.fmt), "1:2",
+            "not all lines are visible, include limits into fmt")
+
+        # visible lines limits not specified, they remain the same
+        table.fmt = "id,level,name"
+        _ = str(table)
+        self.assertEqual(
+            _get_num_vis_lines_fmt(table.fmt), "1:2",
+            "not all lines are visible, include limits into fmt")
+
+        table.fmt = "id,level,name;1:3"
+        _ = str(table)
+        self.assertEqual(
+            _get_num_vis_lines_fmt(table.fmt), "",
+            "all lines are visible, no need to mention lines limits in fmt")
+
+        table.fmt = "id,level,name;*"
+        _ = str(table)
+        self.assertEqual(
+            _get_num_vis_lines_fmt(table.fmt), "",
+            "all lines are visible, no need to mention lines limits in fmt")
+
+    def test_columns_zero_width(self):
+        """It's ok for a column to have 0 width.
+
+        It does not make much sence and looks like double border, but
+        it should work.
+        """
+        records = [
+            (10, "Arnold"),
+            (10, "Arnold"),
+            (20, "Arnold"),
+        ]
+
+        table = PPTable(
+            records, fmt="grade!:0, name", fields=['grade', 'name'])
+
+        verify_table_format(
+            self, table,
+            cols_names=['', 'name'],
+            n_body_lines=4,  # 3 records and a 'break by' line
+            cols_widths=[0, len("Arnold")],
+        )
+
     def test_construct_with_explicit_fields(self):
         """Test creation of PPTable with manually created fields."""
         # prepare the table for experiments
@@ -343,18 +416,15 @@ class TestPPTable(unittest.TestCase):
             RecType(4, 7, "Elizer"),
         ]
 
-        table = PPTable(records, sample=records[0])
+        # in case records are not empty it's ok to skip 'sample' argument -
+        # the first record will be used as a sample
+        table = PPTable(records)
         verify_table_format(
             self, table,
             cols_names=['id', 'level', 'name'],
             n_body_lines=4,  # all 4 records expected to be visible
             cols_widths=[2, 5, 6],
         )
-
-        # in case records are not empty it's ok to skip 'sample' argument -
-        # the first record will be used as a sample
-        table1 = PPTable(records)
-        self.assertEqual(str(table), str(table1))
 
     def test_construct_with_custom_field_types(self):
         """Test PPTable with custom field type.
@@ -403,7 +473,7 @@ class TestPPTable(unittest.TestCase):
         ]
         table = PPTable(
             records, fields=['id', 'level', 'name'],
-            field_types={'level': custom_field_type},
+            fields_types={'level': custom_field_type},
         )
 
         # 1. check how table looks
@@ -481,7 +551,7 @@ class TestPPTable(unittest.TestCase):
 
         table = PPTable(
             records, fields=['id', 'name', 'status'],
-            field_types={'status': statuses_enum},
+            fields_types={'status': statuses_enum},
         )
 
         # 1. chech how table looks
@@ -570,7 +640,7 @@ class TestPPTable(unittest.TestCase):
 
         table = PPTable(
             records, fields=['id', 'name', 'status'],
-            field_types={'status': statuses_enum},
+            fields_types={'status': statuses_enum},
         )
 
         verify_table_format(
@@ -596,7 +666,7 @@ class TestPPTable(unittest.TestCase):
 
         table = PPTable(
             records, fields=['id', 'name', 'status'],
-            field_types={'status': statuses_enum},
+            fields_types={'status': statuses_enum},
         )
 
         verify_table_format(
@@ -668,4 +738,163 @@ class TestPPTable(unittest.TestCase):
             contains_text=[
                 "empty list of something",
             ],
+        )
+
+
+class TestEnhancedPPTable(unittest.TestCase):
+    """Enhanced tables are used to display not 'simple' records.
+
+    'simple' records are just lists/tuples of values.
+    Not simple record may have non-trivial structure (list of disctionaries etc.)
+    """
+
+    def test_extended_table_simple_case(self):
+        """Test straightforward case"""
+        records = [
+            # records have complex structure: info about a person and info about
+            # country.
+            ((1, 10, "Linus"), ('fn', 'Finland')),
+            ((2, 10, "Arnold"), ('ru', 'Russia')),
+            ((3, 17, "Jerry"), ('nw', 'Neverland')),
+            ((4, 7, "Elizer"), ('iz', 'Izrael')),
+        ]
+
+        table = PPTable(records, fmt=(
+            "id<-0.0:10, name<-0.2,country<-1.1"))
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'name', 'country'],
+            n_body_lines=4,
+            cols_widths=[10, len("Arnold"), len('Neverland')],
+        )
+
+    def test_records_with_namedtuples_and_dicts(self):
+        """Test records containing namedtuples and dictionaries."""
+
+        PersData = namedtuple('PersData', ['id', 'level', 'name'])
+
+        records = [
+            # records have complex structure: info about a person and info about
+            # country.
+            (PersData(1, 10, "Linus"), {'c_code': 'fn', 'c_name': 'Finland'}),
+            (PersData(2, 10, "Arnold"), {'c_code': 'ru', 'c_name': 'Russia'}),
+            (PersData(3, 17, "Jerry"), {'c_code': 'nw', 'c_name': 'Neverland'}),
+            (PersData(4, 7, "Elizer"), {'c_code': 'iz', 'c_name': 'Izrael'}),
+        ]
+
+        table = PPTable(records, fmt=(
+            "name<-0.name, id<-0.id,c_name<-1.[c_name],"
+            "level<-0.level, c_code<-1.[c_code]"))
+        verify_table_format(
+            self, table,
+            cols_names=['name', 'id', 'c_name', 'level', 'c_code'],
+            n_body_lines=4,
+            cols_widths=[
+                len("Arnold"), len('id'), len('Neverland'),
+                len('level'), len('c_code')])
+
+        t0_text = str(table)
+
+        # it is possible to omit last element of value_path if it is the same as
+        # field name
+        table = PPTable(records, fmt=(
+            "name<-0., id<-0.,"  # 'name<-0.' is shortcut of 'name<-0.name'
+            "c_name<-1.[c_name],"
+            "level<-0.1, "  # 'level<-0.1' == 'level<-0.level' (it's namedtuple)
+            "c_code<-1.[c_code]"))
+        t1_text = str(table)
+        self.assertEqual(t0_text, t1_text, "formats are equivalent")
+
+    def test_columns_referring_same_field(self):
+        """Case when several columns refer to the same field.
+
+        Deacriptions of such column must not conflict.
+        """
+        records = [
+            # records have complex structure: info about a person and info about
+            # country.
+            ((1, 10, "Linus"), ('fn', 'Finland')),
+            ((2, 10, "Arnold"), ('ru', 'Russia')),
+            ((3, 17, "Jerry"), ('nw', 'Neverland')),
+            ((4, 7, "Elizer"), ('iz', 'Izrael')),
+        ]
+
+        with self.assertRaises(ValueError) as exc:
+            PPTable(records, fmt=(
+                "id:10,"  # value_path is not specified
+                " name<-0.2,country<-1.1"))
+
+        err_msg = str(exc.exception)
+        self.assertIn("value_paths not found", err_msg)
+
+        table = PPTable(records, fmt=(
+            "id:10,"  # value_path is not specified, but it's ok because ...
+            " name<-0.2,country<-1.1,"
+            "id<-0.0:20,"  # ... it is specified in this column descr
+            "id<-0.0:15"  # value_path redefined, but ok - is the same
+        ))
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'name', 'country', 'id', 'id'],
+            n_body_lines=4,
+            cols_widths=[10, len("Arnold"), len('Neverland'), 20, 15],
+        )
+
+        with self.assertRaises(ValueError) as exc:
+            PPTable(records, fmt=(
+                "id<-0.0,"
+                "id<-0.1"  # conflicting value_path for field 'id'
+            ))
+
+        err_msg = str(exc.exception)
+        self.assertIn("different value_paths for the same field", err_msg)
+
+    def test_break_by(self):
+        """'break_by' and 'value_path' are both present in the fmt.
+
+        Make sure fmt is parsed correctly in this case.
+        """
+        records = [
+            ((10, "Linus"), ),
+            ((10, "Arnold"), ),
+            ((20, "Arnold"), ),
+        ]
+
+        table = PPTable(records, fmt="seat!<-0.0:3-10,owner<-0.1")
+        verify_table_format(
+            self, table,
+            cols_names=['seat', 'owner'],
+            n_body_lines=4,  # 3 records and 1 break_by
+            cols_widths=[len('seat'), len("Arnold")],
+        )
+
+    def test_invisible_columns(self):
+        """Test columns with width '-1'.
+
+        When PPTable is created using 'enhanced' format information about
+        fields is incorporated into columns description. To create a field
+        without a column it is possible to specify it's withd -1.
+        """
+        records = [
+            ((10, "Linus"), ),
+            ((10, "Arnold"), ),
+            ((20, "Arnold"), ),
+        ]
+
+        table = PPTable(records, fmt="seat<-0.0:-1,owner<-0.1")
+
+        verify_table_format(
+            self, table,
+            cols_names=['owner'],
+            n_body_lines=3,
+            cols_widths=[len("Arnold")],
+        )
+
+        # But the field 'seat' was created and it can be used when we set new fmt
+        table.fmt = "seat, owner"
+        verify_table_format(
+            self, table,
+            cols_names=['seat', 'owner'],
+            n_body_lines=3,
+            cols_widths=[len('seat'), len("Arnold")],
         )

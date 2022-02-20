@@ -6,6 +6,7 @@ Classes provided by this module:
 """
 
 from typing import Iterator
+from ak import utils
 from ak.color import ColorFmt, ColoredText, Palette
 
 #########################
@@ -276,9 +277,15 @@ class PPTableFieldType:
     def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
         """Returns desired text for a value and alignment.
 
+        Actual text may be truncated (hence different from desired text)
+
         Implementation for general field type: value printed almost as is.
         To be overiden in derived classes.
         """
+        if fmt_modifier is not None:
+            raise ValueError(
+                f"{type(self)} field type does not support format modifiers. "
+                f"Specified fmt_modifier: '{fmt_modifier}'")
         if isinstance(value, (int, float)):
             syntax_name = "NUMBER"
             align_left = False
@@ -344,116 +351,188 @@ class _PPTDefaultFieldType(PPTableFieldType):
         return len(str(value))
 
 
-class PPTableField:
-    """Describes possible source of data for a column of PPTable.
+class _PPTableParsedFmt:
+    # parser of fmt - string representing PPTable format
 
-    F.e. user wants to display an additional column in table. He specifies
-    that new column should display 'status' of the object. In this case 'status'
-    corresponds to PPTableField object, which specifies position of corresponding
-    value in the actual record and PPTableFieldType.
+    __slots__ = ('fmt', 'columns', 'vis_lines', 'table_width')
 
-    Table can have several (or none) actual columns corresponding to the same field.
+    class _ParsedColFmt(utils.DataRecord):
+        # parsed information about a single column
+        __slots__ = ['fmt', 'field_name', 'fmt_modifier', 'break_by',
+                     'value_path', 'min_w', 'max_w', 'cur_w']
 
-    Several (or none) fields may correspond to the same value in data record.
-    F.e. two fields may correspond the same numeric value of status, but these
-    fields have different PPTableFieldType, so the columns corresponding to these
-    fields may display the status differently: either a simple number or
-    a name from corresponding enum.
-    """
+    def __init__(self, fmt):
+        """Parse fmt - string containing PPTable format description"""
+        self.fmt = fmt
 
-    def __init__(self, name, rec_attr_pos, field_type,
-                 min_width=None, max_width=None):
+        if fmt is None:
+            fmt = ";;"
 
-        assert rec_attr_pos is not None
+        # 0. fmt is "visible_columns ; visible_records ; table_width"
+        fmt_s_cols, fmt_s_lines, _fmt_s_twidths = self._fmt_str_split(fmt)
 
-        self.name = name
-        self.field_type = field_type
-        self.rec_attr_pos = rec_attr_pos
-        self.min_width = min_width if min_width is not None else field_type.min_width
-        self.max_width = max_width if max_width is not None else field_type.max_width
+        self.columns = self._parse_cols_fmt(fmt_s_cols)
+        self.vis_lines = self._parse_vis_lines_fmt(fmt_s_lines)
+        self.table_width = None  # not implememnted
 
+    def contains_fields_info(self):
+        """Check if any column info contains field-specific information.
 
-class PPTableColumn:
-    """Column of a PPTable."""
+        Field-specific information is path to value in record object
+        (smthn like '<-0.department.[main]' in fmt string)
+        """
+        if self.columns in ["", "*"]:
+            return False
 
-    def __init__(self, name, field_type, fmt_modifier, break_by,
-                 rec_attr_pos, min_width, max_width):
-        self.name = name
-        self.field_type = field_type
+        return any(col.value_path is not None for col in self.columns)
 
-        self.field_type._verify_fmt_modifier(fmt_modifier)
-        self.fmt_modifier = fmt_modifier
-        self.break_by = break_by
+    def get_fields_info(self):
+        """Get field-specific information from columns descriptions.
 
-        self.rec_attr_pos = rec_attr_pos  # position of the field in record
-        self.min_width = min_width
-        self.max_width = max_width
-        self.width = None  # actual width of the column, will be calculated later
+        This method verifies that columns descriptions contain consistent
+        fields-related information for all fields.
 
-    def clone(self):
-        """Clone self. (except for 'width' attribute)"""
-        return PPTableColumn(
-            self.name,
-            self.field_type,
-            self.fmt_modifier,
-            self.break_by,
-            self.rec_attr_pos,
-            self.min_width,
-            self.max_width,
-        )
+        Method returns {field_name: value_path_str}
+        """
+        path_by_field_name = {}
+        fieldnames_wo_value_path = set()
+        for col in self.columns:
+            if col.value_path is None:
+                # this column descr contains no value_path, but may be it is
+                # included into another column referring to the same field
+                fieldnames_wo_value_path.add(col.field_name)
+                continue
+
+            if col.field_name in path_by_field_name:
+                prev_path = path_by_field_name[col.field_name]
+                if prev_path == col.value_path:
+                    # two columns contain value_paths for the same field.
+                    # But these value_paths are the same - ok
+                    continue
+                raise ValueError(
+                    f"fmt string contains different value_paths for the "
+                    f"same field '{col.field_name}': '{prev_path}' and "
+                    f"'{col.value_path}'. Original fmt string:\n{self.fmt}")
+
+            path_by_field_name[col.field_name] = col.value_path
+
+        fieldnames_wo_value_path = {
+            fn for fn in fieldnames_wo_value_path
+            if fn not in path_by_field_name
+        }
+
+        if fieldnames_wo_value_path:
+            raise ValueError(
+                f"value_paths not found in columns descriptions for the following "
+                f"fields: {fieldnames_wo_value_path}. Original fmt:\n'{self.fmt}'")
+
+        return path_by_field_name
+
+    def verify_not_enhanced(self):
+        """Raises exception if fmt contains any columns with value_path."""
+        if self.columns in ["", "*"]:
+            return
+
+        cols_with_path = [col for col in self.columns if col.value_path is not None]
+        if cols_with_path:
+            descr = ", ".join(
+                f"'{col.field_name}' <- '{col.value_path}'"
+                for col in cols_with_path)
+            raise ValueError(
+                f"'value_path' description can only be used in enhanced fmt and "
+                f"is not applicable for usual fmt. fmt of following columns "
+                f"have 'value_path' description: {descr}")
+
+    def cols_are_explicit(self):
+        """Check if fmt contains explicit columns list (not special value)."""
+        return self.columns not in ["", "*"]
+
+    @staticmethod
+    def _fmt_str_split(fmt_str):
+        # constructor helper: split 'fmt' string into 3 sections
+        if fmt_str is None:
+            fmt_str = ";;"
+        parts = fmt_str.split(';')
+        if len(parts) > 3:
+            raise ValueError(
+                f"Invalid fmt string (it contains more than 3 "
+                f" ';'-delimited sections: '{fmt_str}'")
+
+        while len(parts) < 3:
+            parts.append("")  # "" format means "no need to change anything"
+
+        return parts
+
+    def _parse_cols_fmt(self, fmt_s_cols):
+        # constructor helper: parse 'columns' part of the fmt string
+        if fmt_s_cols in ("", "*"):
+            return fmt_s_cols  # special values "change nothing" and "show all"
+
+        return [self._parse_col_fmt(s) for s in fmt_s_cols.split(',')]
 
     @classmethod
-    def from_fmt_str(cls, col_fmt, fields_by_name):
-        """Create PPTableColumn object from format string."""
-        # col_fmt examples: "id:10-25(15)", "user_uuid/short:25"
-        # "field_name/format_modifier!:min_w-max_w(cur_w)"
-        # optional '!' means 'break_by' this column (insert blank line on
-        # column value change)
-        # cur_w part is ignored - Allow it to be present to make it
-        # possible to set new fmt string in a format it was reported.
+    def _parse_col_fmt(cls, fmt):
+        # constructor helper: parse a single column fmt descr -> _ParsedColFmt
+        result = cls._ParsedColFmt()
+        result.fmt = fmt
 
         # 1.1. find field name
-        chunks = col_fmt.split(":")
+        chunks = [s.strip() for s in fmt.split(":")]
         if len(chunks) > 2:
-            raise ValueError(f"Invalid column format: '{col_fmt}'")
+            raise ValueError(
+                f"Invalid column format (':' encontered more than once): '{fmt}'")
         elif len(chunks) == 2:
-            # fmt looks like "name:5-15"
+            # fmt looks like "name:5-15<-value_path"
             field_name, width_fmt = chunks
         else:
             # fmt is just a field name
-            field_name = col_fmt
+            field_name = chunks[0]
             width_fmt = ""
 
+        # detect presense of 'value_path'
+        i = field_name.find('<-')
+        if i != -1:
+            result.value_path = field_name[i+2:].strip()
+            field_name = field_name[:i].strip()
+
         # detect 'break_by' indicator
-        break_by = field_name.endswith('!')
-        if break_by:
+        result.break_by = field_name.endswith('!')
+        if result.break_by:
             field_name = field_name[:-1]
 
         # detect optional format modifier
-        fmt_modifier = None
-        br_pos = field_name.find('/')
-        if br_pos >= 0:
+        i = field_name.find('/')
+        if i >= 0:
             # field name includes format modifier. Like this: "user_uuid/short"
-            fmt_modifier = field_name[br_pos+1:]
-            field_name = field_name[:br_pos]
+            result.fmt_modifier = field_name[i+1:]
+            field_name = field_name[:i]
 
-        if field_name not in fields_by_name:
-            raise ValueError(
-                f"Unknown field '{field_name}' specified. "
-                f"Available fields: {fields_by_name.keys()}.")
-        field = fields_by_name[field_name]
+        result.field_name = field_name
 
         # 1.2. ignore the optional current actual width
-        br_pos = width_fmt.find('(')
-        if br_pos >= 0:
-            width_fmt = width_fmt[:br_pos]
+        i = width_fmt.find('(')
+        if i >= 0:
+            cur_w_str = width_fmt[i:]
+            if not cur_w_str.endswith(')'):
+                raise ValueError(
+                    f"invalid column fmt '{fmt}'; no closing paren "
+                    f"found in curent width description '{cur_w_str}'")
+            cur_w_str = cur_w_str[1:-1]
+            try:
+                result.cur_w = int(cur_w_str)
+            except ValueError as err:
+                raise ValueError(
+                    f"invalid column fmt '{fmt}'; invalid current "
+                    f"width description '{cur_w_str}'") from err
+            width_fmt = width_fmt[:i]
 
         # 1.3. parse width limits
         # It may be either a number or range
-        if not width_fmt:
-            min_width = field.min_width
-            max_width = field.max_width
-        else:
+        if width_fmt == '-1':
+            # special value: column object will not be created from it
+            result.min_w = -1
+            result.max_w = -1
+        elif width_fmt:
             chunks = width_fmt.split('-')
             if len(chunks) > 2:
                 raise ValueError(f"Invalid width range: '{width_fmt}'")
@@ -463,23 +542,171 @@ class PPTableColumn:
                     widths.append(int(w))
                 except ValueError as err:
                     raise ValueError(
-                        f"Invalid width '{w}' specified for field {field_name}"
+                        f"Invalid column fmt '{fmt}' specified for field "
+                        f"'{field_name}': Invalid width '{w}'."
                     ) from err
-            if len(widths) > 1:
-                min_width, max_width = widths
+            if len(widths) == 2:
+                result.min_w, result.max_w = widths
             else:
-                min_width = widths[0]
-                max_width = min_width
+                result.min_w = widths[0]
+                result.max_w = result.min_w
 
+        return result
+
+    @staticmethod
+    def _parse_vis_lines_fmt(fmt_s_lines):
+        # constructor helper: parse 'visible lines' part of fmt string
+        if fmt_s_lines == "":
+            return None
+        if fmt_s_lines == "*":
+            return (None, None)
+
+        # "20:10" - show 20 first recs and 15 last recs
+        parts = [x.strip() for x in fmt_s_lines.split(':')]
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid visible lines limits fmt: '{fmt_s_lines}'. "
+                f"If limits are specified, they should be in form "
+                f"'max_num_first_lines:max_num_last_lines'")
+        try:
+            n_first, n_last = [int(x) for x in parts]
+        except ValueError as err:
+            raise ValueError(
+                f"Invalid visible lines limits fmt: '{fmt_s_lines}'"
+            ) from err
+
+        return n_first, n_last
+
+
+class PPTableField:
+    """Describes possible source of data for a column of PPTable.
+
+    Each column of a table refers to some field. The field contain rules how
+    to fetch a value for this column from a record and information about type
+    of this value (for example possible alternative ways to represent the value)
+
+    Table can have several (or none) actual columns corresponding to the same field.
+    """
+
+    def __init__(self, name, value_path, field_type,
+                 min_width=None, max_width=None):
+        """PPTableField constructor."""
+        self.name = name
+        self.field_type = field_type
+        self.value_path = self._prepare_value_path(value_path, name)
+        self.min_width = min_width if min_width is not None else field_type.min_width
+        self.max_width = max_width if max_width is not None else field_type.max_width
+
+    def fetch_value(self, record):
+        """get value from a record according to the rules specified by value_path."""
+        val = record
+        for is_attr, key in self.value_path:
+            if is_attr:
+                val = getattr(val, key)
+            else:
+                val = val[key]
+        return val
+
+    @classmethod
+    def _prepare_value_path(cls, value_path, field_name):
+        # "0.name" -> [(False, 0), (True, 'name')]
+        # "1.[name]" -> [(False, 0), (False, 'name')]
+        # "0." -> [(False, 0), (True, 'field_name')]
+        if isinstance(value_path, int):
+            return [(False, value_path)]
+        assert isinstance(value_path, str)
+
+        prepared_path = []
+
+        steps = [s.strip() for s in value_path.split('.')]
+        for step in steps:
+            in_brakets = False
+            if step.startswith('[') and step.endswith(']'):
+                in_brakets = True
+                step = step[1:-1]
+
+            key = cls._opt_convert_int(step)
+            is_attr = isinstance(key, str) and not in_brakets
+            prepared_path.append((is_attr, key))
+
+        if not prepared_path:
+            raise ValueError(f"unexpected empty value_path: {value_path}")
+        last_element = prepared_path[-1]
+        if last_element[1] == '':
+            # empty last element means it's the same as field name
+            prepared_path[-1] = (last_element[0], field_name)
+
+        return prepared_path
+
+    @staticmethod
+    def _opt_convert_int(text):
+        # if string looks like int - convert it to int
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        return text
+
+
+class PPTableColumn:
+    """Column of a PPTable.
+
+    Part of PPTableFormat, describes properties of actual column of the table.
+    """
+
+    def __init__(self, field, name, fmt_modifier, break_by,
+                 min_width, max_width):
+        """PPTableColumn constructor.
+
+        Arguments:
+        - field: PPTableField, specifies position of corresponding velue in
+            record and formatting rules
+        - name: name of column
+        - fmt_modifier: in case PPTableField supports several ways to format
+            the value (f.e. long and short form of uuid) - specifies how to
+            format the value.
+        - break_by: indicates that an empty row should be inserted into table
+            whenever the value of this column changes.
+        - min_width, max_width: limits for column width.
+        """
+        self.field = field
+        self.name = name
+
+        self.field.field_type._verify_fmt_modifier(fmt_modifier)
+        self.fmt_modifier = fmt_modifier
+        self.break_by = break_by
+
+        self.min_width = min_width if min_width is not None else field.min_width
+        self.max_width = max_width if max_width is not None else field.max_width
+        self.width = None  # actual width of the column, will be calculated later
+
+    def clone(self):
+        """Clone self. (except for 'width' attribute)"""
         return PPTableColumn(
-            field.name,
-            field.field_type,
-            fmt_modifier,
-            break_by,
-            field.rec_attr_pos,
-            min_width,
-            max_width,
+            self.field,
+            self.name,
+            self.fmt_modifier,
+            self.break_by,
+            self.min_width,
+            self.max_width,
         )
+
+    def get_cell_text_len(self, record):
+        """Get desired cell length for this value.
+
+        (Actual cell may be shorter or longer).
+        """
+        value = self.field.fetch_value(record)
+        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier)
+
+    def make_cell_text(self, record, palette):
+        """Make text for a cell.
+
+        Length of created text is exactly self.width.
+        """
+        value = self.field.fetch_value(record)
+        return self.field.field_type.make_cell_text(
+            value, self.fmt_modifier, self.width, palette)
 
     def to_fmt_str(self):
         """Create fmt string - human readable and editable descr of self."""
@@ -501,65 +728,277 @@ class PPTableColumn:
 
 
 class PPTableFormat:
-    """Contains information about PPTable format: visible columns, etc."""
+    """Contains information about PPTable format: visible columns, etc.
+
+    PPTableFormat can be described by string (so called 'fmt' string),
+    and can be constructed based on fmt string.
+
+    'fmt' string consists of 3 parts separated by ';'. These parts are
+    1. visible columns descriptions
+    2. record limits description
+    3. total table width (not implemented)
+
+    Special values for each part are:
+    "" - keep format as in 'other' or create default
+    "*" - "show all"
+
+    1. visible columns description describes columns of the table. Examples:
+
+        "field_1:7, field_2:5-20" - two columns, width of first is fixed, width
+          of the second must be in range [5-20].
+
+        "field_1!:7" - '!' indicates 'break_by' property: empty line will be
+          inserted into table whenever value of this column changes.
+
+        "field_1!<-0.attr" - '<-0.attr' specifies 'value_path' - property
+          required in some scenarios of PPTable creation when information
+          about fields is included into columns descriptions.
+
+    2. record limits example:
+
+        "10-15" - if number of records is more that 26, only 10 first and
+          15 last records will be displayed.
+
+    3. not implemented.
+    """
 
     _DFLT_FIELD_TYPE = _PPTDefaultFieldType()
+    _DFLT_LIMIT_LINES = (30, 20)  # n_first, n_last
 
-    def __init__(self, fmt, *, other=None, fields=None, sample=None,
-                 allow_dummy=True, field_types=None):
+    def __init__(
+            self, fields, columns, limit_flines=None, limit_llines=None):
         """Constructor of PPTableFormat.
 
         Arguments:
-        - fmt: string, which describes format of the table (*)
-        - other: (optional) other PPTableFormat object to get details from
-        - fields: (optional) one of:
-            - list of names of fields (these names must correspond to the
-              order of attributes of actual records).
-            - list of PPTableField objects.
-        - sample: (optional) sample record to get information about fields from
-        - allow_dummy: in case it's impossible to find out fields allow to create
-          a dummy format (can be used if the table has no records)
-        - field_types: (optional) {field_name: PPTableFieldType}. Can be used
-          to specify types of newly constructed fields.
+        - fields: [PPTableField, ] - possible 'sources' of columns
+        - columns: [PPTableColumn, ] - format of visible columns
+        - limit_flines, limit_llines - limits of numbers of visible lines
 
-        (*) New PPTableFormat is created according to 'fmt' description
-        either 'from scratch' (if 'fields' or 'sample' arg specified) or from
-        existing 'other' PPTableFormat object.
-
-        'fmt' string consists of 3 parts separated by ';'. These parts are
-        1. visible columns description
-        2. record limits description
-        3. total table width (not implemented)
-
-        Special values for each part are:
-        "" - keep format as in 'other' or create default
-        "*" - "show all"
-
-        1. visible columns description describes columns of the table. Example:
-
-            "field_1:7, field_2:5-20" - two columns, width of first is fixed, width
-              of the second must be in range [5-20].
-
-        2. record limits example:
-
-            "10-15" - if number of records is more that 26, only 10 first and
-              15 last records will be displayed.
+        In most cases you would better use alternative constructors:
+        - mk_by_other
+        - mk_by_fields_names
+        - mk_by_fields
+        - mk_by_extended_fmt
+        - mk_by_fmt
+        - mk_auto_columns_names
+        - mk_dummy_empty
         """
-        self.fields = self._make_fields_list(
-            other, fields, sample, field_types, allow_dummy)
-        self.fields_by_name = {}  # {field_name: (field, rec_attr_pos)}
-        for f in self.fields:
-            if f.name in self.fields_by_name:
-                raise ValueError(
-                    f"Duplicate field name '{f.name}': {self.fields}")
-            self.fields_by_name[f.name] = f
+        self.fields = fields
+        self.columns = [c.clone() for c in columns]
+        self.limit_flines = limit_flines
+        self.limit_llines = limit_llines
+        # indicates if the table (which ownes this format object) has more lines
+        # than can be displayed (because of self.limit_flines and self.limit_llines
+        # limits)
+        self.any_lines_skipped = None
 
-        self.columns = None
-        self.n_first = None
-        self.n_last = None
-        self.ns_are_default = True
-        self._init_self_with_fmt(fmt, other)
-        assert self.columns is not None
+    @classmethod
+    def mk_by_other(cls, fmt, other):
+        """Copy-constructor of PPTableFormat."""
+        fmt_obj = cls(
+            other.fields, other.columns, other.limit_flines, other.limit_llines)
+        if fmt is not None:
+            parsed_fmt = cls._parse_fmt(fmt)
+            parsed_fmt.verify_not_enhanced()
+            fmt_obj._set_parsed_fmt(parsed_fmt, other)
+        return fmt_obj
+
+    @classmethod
+    def mk_by_fields_names(cls, fmt, fields_names, fields_types):
+        """Constructor of PPTableFormat.
+
+        To be used if records for the table are simple tuples/lists of values.
+
+        Arguments:
+        - fmt: format string (or _PPTableParsedFmt). Check PPTableFormat doc.
+        - fields_names: list of names of values (must correspond to values
+            in actual records)
+        - fields_types: {field_name: PPTableFieldType} - can be used to
+            specify not-default types of fields.
+        """
+        fields = [
+            PPTableField(
+                name, pos,
+                fields_types.get(name, cls._DFLT_FIELD_TYPE),
+            ) for pos, name in enumerate(fields_names)]
+
+        return cls.mk_by_fields(fmt, fields)
+
+    @classmethod
+    def mk_by_fields(cls, fmt, fields):
+        """Constructor of PPTableFormat.
+
+        To be used if records for the table are simple tuples/lists of values.
+
+        Arguments:
+        - fmt: format string (or _PPTableParsedFmt). Check PPTableFormat doc.
+        - fields: [PPTableField, ]
+        """
+        fmt_obj = cls(fields, [])
+        parsed_fmt = cls._parse_fmt(fmt)
+        parsed_fmt.verify_not_enhanced()
+        fmt_obj._set_parsed_fmt(parsed_fmt)
+        return fmt_obj
+
+    @classmethod
+    def mk_by_extended_fmt(cls, fmt, fields_types):
+        """Constructor of PPTableFormat.
+
+        To be used if records for the table have complex structure, so that it's
+        necessary to specify a 'path' to a value. For example value for a field
+        'name' is record[1].contact['main'].name.
+
+        Arguments:
+        - fmt: "extended" format string (or parsed one) - columns descriptions
+            must contain paths to values. Check PPTableFormat doc.
+        - sample: the sample record. Expected an object with _fields -
+            list of names of values. Usually an object of namedtuple-derived class.
+        - fields_types: {field_name: PPTableFieldType} - can be used to
+            specify not-default types of fields.
+        """
+        parsed_fmt = cls._parse_fmt(fmt)
+        value_path_by_field = parsed_fmt.get_fields_info()
+
+        fields = [
+            PPTableField(
+                c.field_name, value_path_by_field[c.field_name],
+                fields_types.get(c.field_name, cls._DFLT_FIELD_TYPE),
+            ) for c in parsed_fmt.columns]
+
+        fmt_obj = cls(fields, [])
+        fmt_obj._set_parsed_fmt(parsed_fmt)
+        return fmt_obj
+
+    @classmethod
+    def mk_by_fmt(cls, fmt, sample_record, fields_types):
+        """Constructor of PPTableFormat.
+
+        To be used if records are simple lists/tuples and there is no other
+        information about fields except for columns described in fmt. In this
+        case fields will be created based on columns descriptions.
+
+        Arguments:
+        - fmt: format string (or _PPTableParsedFmt). Check PPTableFormat doc.
+        - sample_record: if provided it will be used to check if guessed fields
+            information matches the samle
+        - fields_types: {field_name: PPTableFieldType} - can be used to
+            specify not-default types of fields.
+        """
+        parsed_fmt = cls._parse_fmt(fmt)
+        assert isinstance(parsed_fmt.columns, (list, tuple))
+        if sample_record is not None:
+            if not isinstance(sample_record, (list, tuple)):
+                raise ValueError(
+                    f"This PPTableFormat constructor may be used only if table "
+                    f"records are 'simple' (lists or tuples). The sample record "
+                    f"is not 'simple': {type(sample_record)} {sample_record}. ")
+            if len(parsed_fmt.columns) != len(sample_record):
+                raise ValueError(
+                    f"This PPTableFormat constructor expects that all the record "
+                    f"fields correspond to columns specified in format. Number of "
+                    f"fields in sample record is {len(sample_record)}: "
+                    f"{sample_record}.\n"
+                    f"Number of columns in format is {len(parsed_fmt.columns)}:\n"
+                    f"{parsed_fmt.fmt}")
+        fields_names = [c.field_name for c in parsed_fmt.columns]
+        return cls.mk_by_fields_names(parsed_fmt, fields_names, fields_types)
+
+    @classmethod
+    def mk_auto_columns_names(cls, fmt, sample_record):
+        """Constructor of PPTableFormat.
+
+        To be used if records are simple lists/tuples and there is no other
+        information fields names. We can only guess number of fields by
+        sample_record. Fields names will be auto-generated.
+
+        Arguments:
+        - fmt: format string (or _PPTableParsedFmt). Check PPTableFormat doc.
+        - sample_record: sample record
+        """
+        assert sample_record is not None
+        if not isinstance(sample_record, (list, tuple)):
+            raise ValueError(
+                f"This PPTableFormat constructor may be used only if table "
+                f"records are 'simple' (lists or tuples). The sample record "
+                f"is not 'simple': {type(sample_record)} {sample_record}. ")
+        fields_names = [
+            f"col_{i}" for i in range(1, 1+len(sample_record))]
+        return cls.mk_by_fields_names(fmt, fields_names, {})
+
+    @classmethod
+    def mk_dummy_empty(cls, fmt):
+        """Constructor of PPTableFormat.
+
+        It is not possible to get any information about fields/columns. But
+        the table is empty anyway. Create a table with a single quasi-column.
+
+        Arguments:
+        - fmt: format string (or _PPTableParsedFmt). This constructor is called
+            only if fmt contains no useful information, it will be used as dummy.
+        """
+        fields_names = ['-                              -', ]
+        return cls.mk_by_fields_names(fmt, fields_names, {})
+
+    @staticmethod
+    def _parse_fmt(fmt):
+        # parse fmt string if not parsed yet
+        if isinstance(fmt, _PPTableParsedFmt):
+            return fmt
+        if fmt is None:
+            fmt = ""
+        assert isinstance(fmt, str), f"{type(fmt)}: {fmt}"
+        return _PPTableParsedFmt(fmt)
+
+    def _set_parsed_fmt(self, parsed_fmt, other=None):
+
+        fields_by_name = {f.name: f for f in self.fields}
+
+        # 1. create list of columns
+        columns = []
+        if parsed_fmt.columns == "" and other is not None:
+            # copy columns from the other
+            columns = [c.clone() for c in other.columns]
+        elif parsed_fmt.columns in ("", "*"):
+            # show column for each field
+            for field in self.fields:
+                columns.append(PPTableColumn(
+                    field, field.name,
+                    None,  # fmt_modifier
+                    False,  # break_ty
+                    field.min_width, field.max_width))
+        else:
+            # columns specified in the fmt
+            for c in parsed_fmt.columns:
+                if c.field_name not in fields_by_name:
+                    avail_fields = ", ".join(fields_by_name.keys())
+                    raise ValueError(
+                        f"column fmt '{c.fmt}' refers to unknown field "
+                        f"'{c.field_name}'. Available fields: {avail_fields}")
+                field = fields_by_name[c.field_name]
+
+                if all(w is not None and w < 0 for w in [c.min_w, c.max_w]):
+                    # special case: column description was used to create
+                    # field only, column will not be created for it
+                    assert c.min_w == -1 and c.max_w == -1
+                    continue
+
+                columns.append(PPTableColumn(
+                    field, c.field_name,
+                    c.fmt_modifier, c.break_by,
+                    c.min_w, c.max_w))
+
+        self.columns = columns
+
+        # 2. process visible lines limits
+        if parsed_fmt.vis_lines is None:
+            # this section was not specified in fmt
+            if other is None:
+                self.limit_flines, self.limit_llines = self._DFLT_LIMIT_LINES
+            else:
+                self.limit_flines = other.limit_flines
+                self.limit_llines = other.limit_llines
+        else:
+            self.limit_flines, self.limit_llines = parsed_fmt.vis_lines
 
     def __repr__(self):
         # it's important that repr contains fmt string, which can be used
@@ -569,80 +1008,6 @@ class PPTableFormat:
     def __str__(self):
         return self._get_fmt_str()
 
-    @classmethod
-    def _make_fields_list(cls, other, fields, sample, field_types, allow_dummy):
-        # first step of constructor: create list of fields from one
-        # of available sources
-        if other is not None:
-            # just get fields from the other
-            assert fields is None
-            assert sample is None
-            assert field_types is None
-            return other.fields
-
-        if fields is not None:
-            assert sample is None
-            assert isinstance(fields, (list, tuple))
-
-            if all(isinstance(f, PPTableField) for f in fields):
-                # fields is a ready list of PPTableField objects
-                assert field_types is None
-                return fields
-
-            # fields is a list of names of fields
-            assert all(isinstance(f, str) for f in fields)
-            fields_names = fields
-        elif sample is not None:
-            assert hasattr(sample, "_fields"), (
-                f"can't create fields list from sample record {sample} "
-                f"(type {str(type(sample))}). The sample is usually a "
-                f"namedtuple and should have a '_fields' attribute")
-            fields_names = sample._fields
-        elif allow_dummy:
-            # it's not possible to detect fileds list, but the table is empty.
-            # create a dummy format - a single column to make table wide enough
-            # for a 'Total 0 records' message
-            fields_names = ['-                              -', ]
-        else:
-            # should not be reachable. sample is None means no records, means
-            # dummy format should be allowed
-            assert False
-
-        # now fields_names is a list of names of fields, in the order as they
-        # are present in actual data record
-        assert isinstance(fields_names, (list, tuple))
-        if field_types is None:
-            field_types = {}
-
-        fields = [
-            PPTableField(
-                name, pos,
-                field_types.get(name, cls._DFLT_FIELD_TYPE)
-            ) for pos, name in enumerate(fields_names)]
-
-        return fields
-
-    def _init_self_with_fmt(self, fmt, other):
-        # final step of construction, to be called from constructor only
-
-        fmt_s_cols, fmt_s_recs, fmt_s_twidths = self._fmt_str_split(fmt)
-
-        # part 1: format of visible columns
-        self._set_fmt_cols(fmt_s_cols, other)
-
-        # part 2: format of visible rows
-        try:
-            self._set_fmt_vis_recs(fmt_s_recs, other)
-        except ValueError as err:
-            raise ValueError(
-                f"Invalid specification of numbers of visible lines: "
-                f"'{fmt_s_recs}'. Expected 'n_first:n_last' or '*' or empty str."
-            ) from err
-
-        # part 3: total width of the table
-        # not implemented yet
-        _ = fmt_s_twidths
-
     def _get_fmt_str(self):
         # create the 'fmt' string which describes self.
 
@@ -651,12 +1016,14 @@ class PPTableFormat:
         parts.append(",".join(c.to_fmt_str() for c in self.columns))
 
         # 2. numbers of visible lines
-        if self.ns_are_default:
-            parts.append("")
-        elif self.n_first is None or self.n_last is None:
-            parts.append("*")
+        if self.any_lines_skipped is None or self.any_lines_skipped is True:
+            if self.limit_flines is None or self.limit_llines is None:
+                parts.append("*")
+            else:
+                parts.append(f"{self.limit_flines}:{self.limit_llines}")
         else:
-            parts.append(f"{self.n_first}:{self.n_last}")
+            # no lines skipped, no need to include these limits into fmt
+            parts.append("")
 
         # 3. format max table width
         # not implemented
@@ -665,67 +1032,6 @@ class PPTableFormat:
             parts.pop()
 
         return ";".join(parts)
-
-    def _set_fmt_cols(self, fmt_s_cols, other):
-        # apply part 1 (visible columns) of 'fmt' to self.
-        if fmt_s_cols == "":
-            if other is not None:
-                # clone columns form the other
-                self.columns = [c.clone() for c in other.columns]
-                return
-            else:
-                fmt_s_cols = "*"
-
-        if fmt_s_cols == "*":
-            # default: show all columns
-            self.columns = [
-                PPTableColumn(
-                    f.name, f.field_type, None, False,
-                    f.rec_attr_pos, f.min_width, f.max_width,
-                ) for f in self.fields]
-            return
-
-        self.columns = [
-            PPTableColumn.from_fmt_str(part.strip(), self.fields_by_name)
-            for part in fmt_s_cols.split(",")
-        ]
-
-    def _set_fmt_vis_recs(self, fmt_s_recs, other):
-        # apply part 2 (records limits) of 'fmt' to self.
-        if fmt_s_recs == "":
-            if other is not None:
-                self.n_first = other.n_first
-                self.n_last = other.n_last
-                self.ns_are_default = other.ns_are_default
-            else:
-                self.n_first = 20
-                self.n_last = 10
-                self.ns_are_default = True
-        elif fmt_s_recs == "*":
-            self.n_first = None
-            self.n_last = None
-            self.ns_are_default = False
-        else:
-            # "20:10" - show 20 first recs and 15 last recs
-            parts = [x.strip() for x in fmt_s_recs.split(':')]
-            if len(parts) != 2:
-                raise ValueError(f"{len(parts)} parts")
-            self.n_first, self.n_last = [int(x) for x in parts]
-            self.ns_are_default = False
-
-    @staticmethod
-    def _fmt_str_split(fmt_str):
-        # constructor helper: split 'fmt' string into parts
-        if fmt_str is None:
-            fmt_str = ";;"
-        parts = fmt_str.split(';')
-        if len(parts) > 3:
-            raise ValueError(f"Invalid fmt string '{fmt_str}'")
-
-        while len(parts) < 3:
-            parts.append("")  # "" format means "no need to change anything"
-
-        return parts
 
 
 class PPTable(PPObj):
@@ -762,42 +1068,52 @@ class PPTable(PPObj):
             self, records, *,
             header=None,
             footer=None,
-
             fmt=None,
             fmt_obj=None,
             fields=None,
-            sample=None,
-            field_types=None,
+            fields_types=None,
     ):
-        """PPTable constructor.
+        """Constructor of PPTable object - this object prints table.
 
         Arguments:
-        - records: list of records (record is a tuple of values, corresponding
-          to a row of the table)
-        - header: (optional), str or ColoredText. Description of the table, will
-            be prited as header. Special values:
-            - None (default) - description will be created automatically
-            - "" - description will not be created and printed
-        - footer: (optional), str or ColoredText. Table footer. Special values:
-            - None (default) - footer will be created automatically
-            - "" - footer will not be created and printed.
+        - records: list of objects, containig data for table rows. All the
+            objects must have similar structure (it may be a simple list or
+            tuple of values or something more complex)
+        - header, footer: (optional) text for header and footer of the table
 
-        Arguments for PPTableFormat:
-        - fmt, fmt_obj, fields, fields, sample, field_types: correspond to
-          arguments of PPTableFormat constructor. Check doc of
-          ak.ppobj.PPTableFormat for more details.
+        All other arguments are optional, they describe table format: columns
+        of the table and fields (objects describing how to get a value from record
+        object and possible ways to format it); each column refers to some field.
+        - fmt: (optional) string, describing columns of the table. Check
+            PPTableFormat doc for more details.
+        - fmt_obj: (optional) PPTableFormat object
+        - fields: (optional) list of names of fileds in a record, or list
+            of PPTableField objects
+        - fields_types: (optional) dictionary {field_name: PPTableFieldType}.
+
+        Combinations of arguments used in common scenarios:
+
+        PPTable(
+            records,
+            fmt="field_a, field_b",  # names of fields for visible columns
+            fields=["field_1", ...],  # correspondence of fields to values in record
+            fields_types={...}, # PPTableFieldType for those fields, for which
+                                # default field type does not work
+        )
+
+        PPTable(
+            records,
+            fmt="field_a<-value_path, ...",  # to be used if records have
+                                             # complex structure
+            fields_types={...},
+        )
+
+        Check doc of PPTableFormat for more detailed description of fmt string.
         """
         self.records = records
-        self.r = records
+        self.r = self.records
 
-        # try to use first record as a sample record to create a list of fields
-        if fmt_obj is None and fields is None and sample is None and records:
-            sample = records[0]
-
-        self._ppt_fmt = PPTableFormat(
-            fmt,
-            other=fmt_obj, fields=fields, sample=sample, field_types=field_types,
-            allow_dummy=not records)
+        self._ppt_fmt = self._init_format(fmt, fmt_obj, fields, fields_types)
 
         if header is None:
             header = "some table"
@@ -815,13 +1131,64 @@ class PPTable(PPObj):
             'WARN': ColorFmt('RED'),
         })
 
+    def _init_format(self, fmt, fmt_obj, fields, fields_types):
+        # part of PPTable constructor.
+        # depending on arguments choose apropriate way to create PPTableFormat
+        fields_types_dict = {} if fields_types is None else fields_types
+
+        if fmt_obj is not None:
+            assert fields is None
+            assert fields_types is None
+            assert fmt is None
+            return PPTableFormat.mk_by_other(None, fmt_obj)
+
+        parsed_fmt = PPTableFormat._parse_fmt(fmt)
+
+        if fields is not None:
+            assert fmt_obj is None
+            assert not parsed_fmt.contains_fields_info()
+            if all(isinstance(fn, str) for fn in fields):
+                return PPTableFormat.mk_by_fields_names(
+                    parsed_fmt, fields, fields_types_dict)
+            else:
+                assert all(isinstance(f, PPTableField) for f in fields)
+                assert fields_types is None
+                return PPTableFormat.mk_by_fields(parsed_fmt, fields)
+
+        if parsed_fmt.contains_fields_info():
+            assert fields is None
+            return PPTableFormat.mk_by_extended_fmt(parsed_fmt, fields_types_dict)
+
+        sample_record = self.records[0] if self.records else None
+
+        if hasattr(sample_record, '_fields'):
+            # very good, sample record contains explicit names of fields
+            # (probably it is a namedtuple)
+            return PPTableFormat.mk_by_fields_names(
+                parsed_fmt, sample_record._fields, fields_types_dict)
+
+        if parsed_fmt.cols_are_explicit():
+            # no info about fields names. But we know what columns the table
+            # is expected to have. If columns correspond to record (or there
+            # is no records at all) - let's create fields based on columns
+            return PPTableFormat.mk_by_fmt(
+                parsed_fmt, sample_record, fields_types_dict)
+
+        # columns are not specified
+        if sample_record:
+            return PPTableFormat.mk_auto_columns_names(
+                parsed_fmt, sample_record)
+
+        # table is empty and there is no information about it's columns.
+        return PPTableFormat.mk_dummy_empty(parsed_fmt)
+
     def set_fmt(self, fmt):
         """Specify fmt - a string which describes format of the table.
 
         Method returns self - so that in python console the modified table be
         printed out immediately.
         """
-        self._ppt_fmt = PPTableFormat(fmt, other=self._ppt_fmt)
+        self._ppt_fmt = PPTableFormat.mk_by_other(fmt, other=self._ppt_fmt)
         return self
 
     def _get_fmt(self):
@@ -848,19 +1215,21 @@ class PPTable(PPObj):
         table_lines = []
         break_line = self._ServiceLine()
         skipped_recs_line = self._ServiceLine()
-        break_by_attrs = [col.rec_attr_pos for col in columns if col.break_by]
-        if self.records:
-            prev_rec = self.records[0]
-            table_lines.append(prev_rec)
-            for rec in self.records[1:]:
-                if any(rec[x] != prev_rec[x] for x in break_by_attrs):
-                    table_lines.append(break_line)
-                table_lines.append(rec)
-                prev_rec = rec
+        break_by_fields = [col.field for col in columns if col.break_by]
+        prev_break_by_values = None
+        for rec in self.records:
+            cur_break_by_values = [
+                field.fetch_value(rec) for field in break_by_fields]
+            if (prev_break_by_values is not None and
+                prev_break_by_values != cur_break_by_values
+               ):
+                table_lines.append(break_line)
+            table_lines.append(rec)
+            prev_break_by_values = cur_break_by_values
 
         # check if some records should be hided because of record numbers limits
-        n_first = self._ppt_fmt.n_first
-        n_last = self._ppt_fmt.n_last
+        n_first = self._ppt_fmt.limit_flines
+        n_last = self._ppt_fmt.limit_llines
         if (n_first is not None
             and n_last is not None
             and len(table_lines) > n_first + n_last + 1
@@ -878,6 +1247,7 @@ class PPTable(PPObj):
         else:
             # show all records
             n_skipped = 0
+        self._ppt_fmt.any_lines_skipped = n_skipped > 0
 
         # calculate actual widths of table columns
         # process only columns w/o specified width
@@ -894,10 +1264,8 @@ class PPTable(PPObj):
             if isinstance(rec, self._ServiceLine):
                 continue
             for i, col in enumerate(cols):
-                value = rec[col.rec_attr_pos]
                 desired_widths[i] = max(
-                    desired_widths[i], col.field_type.get_cell_text_len(
-                        value, col.fmt_modifier))
+                    desired_widths[i], col.get_cell_text_len(rec))
 
         for desired_width, col in zip(desired_widths, cols):
             col.width = min(
@@ -962,10 +1330,7 @@ class PPTable(PPObj):
     def _make_table_line(self, record, columns, sep, palette):
         # create ColoredText - representaion of a single record in table
         line = sep + sep.join(
-            col.field_type.make_cell_text(
-                record[col.rec_attr_pos],  # value
-                col.fmt_modifier,
-                col.width, palette)
+            col.make_cell_text(record, palette)
             for col in columns
         ) + sep
         return line
