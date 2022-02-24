@@ -15,20 +15,29 @@ class MCallerMetaHttpMethod:
     # methods decorated with this decorator
     _MAKE_BM_NOTES_METHOD = '_make_bm_notes_http'
 
-    __slots__ = 'auth_type', 'components'
+    __slots__ = 'auth_types', 'components'
 
-    def __init__(self, auth_type, components=None):
-        self.auth_type = auth_type
+    def __init__(self, auth_types, components=None):
+        if auth_types is None or isinstance(auth_types, str):
+            self.auth_types = [auth_types, ]
+        else:
+            self.auth_types = auth_types
         self.components = components
         if isinstance(self.components, str):
             self.components = [self.components]
 
 
-def method_http(auth_type, components=None):
+def method_http(auth_types, components=None):
     """decorator to mark method of MCallerHttp as a 'wrapper' around http request.
 
     Arguments:
-    - auth_type: expected auth type of the http connection (*)
+    - auth_types: expected auth type of the http connection (*). May be one of
+        the following values or a collection of them:
+        - None: method can be called via connection with no authentication
+        - 'basic': can be called via basic-auth connection
+        - 'client': can be called via client-auth connection
+        - 'token': can be called via token-auth connection
+        (See ak.conn_http.RequestAdapter-derived classes for more details)
     - components: names of the external components (**)
 
     Notes (*)(**):
@@ -41,20 +50,20 @@ def method_http(auth_type, components=None):
     MCallerHttp will check if it can provide connection to one of the components
     expected by the method. Depending on chosen component some prefix may be added
     to request path.
-      If auth type of connetion does not match method's 'auth_type' a warning
+      If auth type of connetion does not match method's 'auth_types' a warning
     will be issued, (but it is still possible to call methods with 'incorrect'
     authorization - f.e. for test purposes).
     """
 
-    if callable(auth_type) and components is None:
-        # decorator was used w/o parameters. auth_type is actually a
+    if callable(auth_types) and components is None:
+        # decorator was used w/o parameters. auth_types is actually a
         # method to decorate
-        method = auth_type
+        method = auth_types
         dec = method_http(None, None)
         return dec(method)
 
     def decorator(method):
-        method._mcaller_meta = MCallerMetaHttpMethod(auth_type, components)
+        method._mcaller_meta = MCallerMetaHttpMethod(auth_types, components)
         return method
 
     return decorator
@@ -71,7 +80,7 @@ class MCallerHttp(MCaller):
             'componentA': "/path/prefix/for/componentA",
         }
 
-        @method_http('bauth', 'componentA')
+        @method_http('basic', 'componentA')
         def get_example(self):
             conn = self.get_conn()
             return conn.post("path/for/this/method", data=some_data)
@@ -161,7 +170,7 @@ class MCallerHttp(MCaller):
         # decorated with 'method_http')
         assert hasattr(bound_method, '_mcaller_meta')
         method_meta = bound_method._mcaller_meta
-        for attr in ['auth_type', 'components']:
+        for attr in ['auth_types', 'components']:
             # '_make_bm_notes_http' must have been specified in method_meta,
             # so method_meta must have these attributes
             assert hasattr(method_meta, attr)
@@ -170,17 +179,10 @@ class MCallerHttp(MCaller):
             return BoundMethodNotes(
                 False, self._NA_COLOR('<n/a>'), "object has no 'http_conn' attribute")
 
-        auth_descr = ""
-        if isinstance(method_meta.auth_type, (list, tuple)):
-            auth_ok = self.http_conn.auth_type in method_meta.auth_type
-            auth_descr = (
-                f"wrong connection auth type "
-                f"('{self.http_conn.auth_type}' not in '{method_meta.auth_type}')")
-        else:
-            auth_ok = self.http_conn.auth_type == method_meta.auth_type
-            auth_descr = (
-                f"wrong connection auth type "
-                f"('{self.http_conn.auth_type}' != '{method_meta.auth_type}')")
+        auth_ok = self.http_conn.auth_type in method_meta.auth_types
+        auth_descr = (
+            f"wrong connection auth type "
+            f"('{self.http_conn.auth_type}' not in '{method_meta.auth_types}')")
 
         component_ok = True
         component_problem_descr = ""

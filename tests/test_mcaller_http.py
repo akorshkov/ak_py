@@ -33,7 +33,7 @@ class TestMCallerHttp(unittest.TestCase):
     class MethodsCollection2(MCallerHttp):
         """Another collection of several http wrappers."""
 
-        @method_http("bauth")
+        @method_http("basic")
         def call_it_another(self, param, arg):
             """sample http wrapper method."""
             conn = self.get_conn()
@@ -205,6 +205,46 @@ class TestMCallerHttp(unittest.TestCase):
             self.assertTrue(hasattr(x, service_method))
             self.assertNotIn(service_method, hdoc_obj)
 
+    def test_hdoc_auth_types_filtering(self):
+        """Test 'h' command reporting methods with different auth types."""
+        class MyHttpCaller(MCallerHttp):
+            """Collection of several http methods."""
+            @method_http
+            def m1_no_auth(self):
+                """method w/o explicitely specified auth type"""
+                pass
+
+            @method_http(None)
+            def m2_no_auth_explicit(self):
+                """method with explicitely specified None auth type"""
+                pass
+
+            @method_http('basic')
+            def m3_bauth(self):
+                """Method with basic auth type."""
+                pass
+
+            @method_http([None, 'basic'])
+            def m4_bauth_or_no_auth(self):
+                """method with basic or no auth"""
+                pass
+
+        h = HCommand()._make_help_text
+
+        caller_no_auth = MyHttpCaller("https://some.address.fun")
+        obj_descr = h(caller_no_auth)
+        self.assertIn('m1_no_auth', obj_descr)
+        self.assertIn('m2_no_auth_explicit', obj_descr)
+        self.assertNotIn('m3_bauth', obj_descr)
+        self.assertIn('m4_bauth_or_no_auth', obj_descr)
+
+        caller_bauth = caller_no_auth.clone(
+            BAuthConn.Adapter('my_name', 'my_password'))
+        obj_descr = h(caller_bauth)
+        self.assertNotIn('m1_no_auth', obj_descr)
+        self.assertNotIn('m2_no_auth_explicit', obj_descr)
+        self.assertIn('m3_bauth', obj_descr)
+        self.assertIn('m4_bauth_or_no_auth', obj_descr)
 
 class TestMCallerHttpMultipleComponents(unittest.TestCase):
     """Test http mcaller method which can call different components."""
@@ -212,7 +252,7 @@ class TestMCallerHttpMultipleComponents(unittest.TestCase):
     class MethodsCollection(MCallerHttp):
         """Collection of several http wrappers."""
 
-        @method_http("bauth", ["my_server", "my_server_frontend"])
+        @method_http("basic", ["my_server", "my_server_frontend"])
         def call_it(self, arg):
             """Simulate situation, that 'my_server' component provides some,
             api method, but it is available via frontend api gateway also.
