@@ -18,16 +18,30 @@ class SqlFilterCondition:
     SUPPORTED_OPS = [
         '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']
 
+    PLACEHOLDER_TYPE_QUESTION, PLACEHOLDER_TYPE_PERCENT_S = 0, 1
+
     # to be used when constructing WHERE cluase
     _SQL_CLAUSES = {
-        '=': ' = ?',
-        '!=': ' != ?',
-        'IN': ' IN ',
-        'NOT IN': ' NOT IN ',
-        'IS NULL': ' IS NULL',
-        'IS NOT NULL': ' IS NOT NULL',
-        'LIKE': ' LIKE ?',
-        'NOT LIKE': ' NOT LIKE ?',
+        PLACEHOLDER_TYPE_QUESTION: {
+            '=': ' = ?',
+            '!=': ' != ?',
+            'IN': ' IN ',
+            'NOT IN': ' NOT IN ',
+            'IS NULL': ' IS NULL',
+            'IS NOT NULL': ' IS NOT NULL',
+            'LIKE': ' LIKE ?',
+            'NOT LIKE': ' NOT LIKE ?',
+        },
+        PLACEHOLDER_TYPE_PERCENT_S: {
+            '=': ' = %s',
+            '!=': ' != %s',
+            'IN': ' IN ',
+            'NOT IN': ' NOT IN ',
+            'IS NULL': ' IS NULL',
+            'IS NOT NULL': ' IS NOT NULL',
+            'LIKE': ' LIKE %s',
+            'NOT LIKE': ' NOT LIKE %s',
+        },
     }
 
     def __init__(self, field_name, op, value):
@@ -86,27 +100,28 @@ class SqlFilterCondition:
 
         return cls(field_name, op, value)
 
-    def make_text_update_values(self, values_list):
+    def make_text_update_values(self, values_list, placeholders_type):
         """Prepare part of WHERE condition; append necessary values to the list."""
         assert isinstance(values_list, list)
+        sql_clauses = self._SQL_CLAUSES[placeholders_type]
         if self.op in ('=', '!='):
             values_list.append(self.value)
-            sql = self.field_name + self._SQL_CLAUSES[self.op]
+            sql = self.field_name + sql_clauses[self.op]
         elif self.op in ('IN', 'NOT IN'):
             assert isinstance(self.value, (list, tuple))
             if self.value:
                 values_list.extend(self.value)
-                sql = (self.field_name + self._SQL_CLAUSES[self.op] + "(" +
+                sql = (self.field_name + sql_clauses[self.op] + "(" +
                        ", ".join("?" for _ in self.value) + ")")
             else:
                 # special case: list of lossible values is empty
                 sql = "0" if self.op == 'IN' else "1"
         elif self.op in ('LIKE', 'NOT LIKE'):
             values_list.append(self.value)
-            sql = self.field_name + self._SQL_CLAUSES[self.op]
+            sql = self.field_name + sql_clauses[self.op]
         else:
             assert self.op in ('IS NULL', 'IS NOT NULL')
-            sql = self.field_name + self._SQL_CLAUSES[self.op]
+            sql = self.field_name + sql_clauses[self.op]
 
         return sql
 
@@ -154,6 +169,14 @@ class SqlMethod:
     def _execute(self, conn, args, kwargs):
         # Execute sql request, and yield result records (or scalars)
 
+        # autodetect sql placeholders format
+        # probably there shoud be a better way. temporary solution.
+        conn_type_name = str(type(conn))
+        if 'mysql.connector' in conn_type_name:
+            placeholders_type = SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
+        else:
+            placeholders_type = SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
+
         order_by_clause = kwargs.pop('_order_by', self.default_order_by)
         as_scalars = kwargs.pop('_as_scalars', self.default_as_scalars)
 
@@ -168,7 +191,8 @@ class SqlMethod:
         req_params = []
         if filters:
             sql += " WHERE " + " AND ".join(
-                f.make_text_update_values(req_params) for f in filters)
+                f.make_text_update_values(req_params, placeholders_type)
+                for f in filters)
         if order_by_clause is not None:
             sql += " ORDER BY " + order_by_clause
 
