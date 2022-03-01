@@ -44,7 +44,8 @@ class SqlMethodT:
     """SqlMethod which returns PPrintable PPTable object."""
 
     def __init__(
-            self, sql_request, params_names=None, record_name=None, *,
+            self, sql_select_from, *,
+            order_by=None, record_name=None,
             header=None, footer=None, fmt=None, fields_types={}):
         """Create SqlMethodT - sql method which returns pretty-printable PPTable.
 
@@ -52,11 +53,12 @@ class SqlMethodT:
         has two groups of arguments: SqlMethod-related and PPTable-format-related.
 
         SqlMethod-related arguments:
-        - sql_request: either SqlMethod or a simple SQL string.
-        - params_names: argument for SqlMethod constructor, can be specified
-          only if sql_request is not SqlMethod. Check doc of SqlMethod constructor.
+        - sql_select_from: either SqlMethod or a simple SQL string.
+        - order_by: default value of "ORDER BY ..." part of sql request string.
+            (can be specified only if sql_select_from is not an SqlMethod)
         - record_name: argument for SqlMethod constructor, can be specified
-          only if sql_request is not SqlMethod. Check doc of SqlMethod constructor.
+          only if sql_select_from is not SqlMethod. Check doc of SqlMethod
+          constructor.
 
         By default result table has all the columns corresponding to sql records.
         Format of the result table may be modified with following args:
@@ -66,12 +68,13 @@ class SqlMethodT:
         - fmt, fields_types: optional table format specifications.
           Check ak.ppobj.PPTableFormat for more details
         """
-        if isinstance(sql_request, SqlMethod):
-            assert params_names is None
+        if isinstance(sql_select_from, SqlMethod):
             assert record_name is None
-            self.sql_request = sql_request
+            self.sql_mtd = sql_select_from
         else:
-            self.sql_request = SqlMethod(sql_request, params_names, record_name)
+            self.sql_mtd = SqlMethod(
+                sql_select_from=sql_select_from,
+                order_by=order_by, record_name=record_name)
 
         self.field_names = None  # list of names of attributes of selected records.
                                  # names are unique, available only after the
@@ -88,16 +91,34 @@ class SqlMethodT:
         self._ppt_footer = footer
 
     def list(self, conn, *args, **kwargs):
-        """Execute sql request, return PPTable with results."""
-        records = self.sql_request.list(conn, *args, **kwargs)
+        """Execute sql request, return PPTable with results.
+
+        Arguments are the same as arguments of ak.SqlMethod.all method:
+        - conn: datanbase connection object (the one with cursor() method)
+        - args: filter conditions for WHERE clause (*)
+        - kwargs: filter conditions for where clause (**). Special kwargs:
+            - '_as_scalars': if True then return not records, but first elemets
+            - '_order_by': text for "ORDER BY' clause.
+
+        (*) filter condition may be:
+            - SqlFilterCondition object
+            - ("table.column", operation, value) - check doc of SqlFilterCondition
+                for more details
+            - ("table.column", value) - same as ("table.column", "=", value)
+
+        (**) name=value kwarg is interpreted as ("name", "=", value) filter condition
+        """
+        records = self.sql_mtd.list(conn, *args, **kwargs)
         return self._mk_datatable(records)
 
     def one_or_none(self, conn, *args, **kwargs):
         """Execute sql request, return single record or None.
 
         Raise ValueError if more than one record was selected.
+
+        Check doc of 'all' method for detailed description of arguments.
         """
-        records = self.sql_request.list(conn, *args, **kwargs)
+        records = self.sql_mtd.list(conn, *args, **kwargs)
         if len(records) > 1:
             raise ValueError(f"{len(records)} records selected")
         return self._mk_datatable(records)
@@ -106,8 +127,10 @@ class SqlMethodT:
         """Execute sql request, return single record or None.
 
         Raise ValueError if more than one record was selected.
+
+        Check doc of 'all' method for detailed description of arguments.
         """
-        records = self.sql_request.list(conn, *args, **kwargs)
+        records = self.sql_mtd.list(conn, *args, **kwargs)
         if len(records) != 1:
             raise ValueError(f"{len(records)} records selected")
         return self._mk_datatable(records)
@@ -130,8 +153,8 @@ class SqlMethodT:
         # it's posible to finich init only after first request executed
         # (only then names of selected fields are available)
 
-        self._record_name = self.sql_request.record_name
-        self.field_names = self._make_unique_names_list(self.sql_request.fields)
+        self._record_name = self.sql_mtd.record_name
+        self.field_names = self._make_unique_names_list(self.sql_mtd.fields)
         if self._ppt_header is None:
             # construct default header
             self._ppt_header = f"{self._record_name} table"

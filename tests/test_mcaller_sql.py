@@ -21,16 +21,15 @@ class TestMCallerSQL(unittest.TestCase):
         """Collection of sql requests wrappers."""
 
         _MTD_SQL_GET_ACCOUNT = SqlMethodT(
-            "SELECT id, name FROM accounts WHERE id = ?;",
-            ['account_id',],
-            'account',
+            "SELECT id, name FROM accounts",
+            record_name='account',
         )
 
         @method_sql
         def get_account(self, account_id):
             """Get account by id."""
             db_conn = self.get_sql_conn()
-            return self._MTD_SQL_GET_ACCOUNT.one(db_conn, account_id)
+            return self._MTD_SQL_GET_ACCOUNT.one(db_conn, id=account_id)
 
     def _make_sample_db_accts(self):
         # create sample sqlite3 db for tests
@@ -90,8 +89,7 @@ class TestMCallerSQL(unittest.TestCase):
             _MTD_SQL_GET_USERS = SqlMethodT(
                 "SELECT users.id AS u_id, users.name, accounts.* FROM users "
                 "JOIN accounts ON users.account_id = accounts.id;",
-                [],
-                "users_dets",  # this is name of the table / record
+                record_name="users_dets",
             )
 
             @method_sql
@@ -138,8 +136,7 @@ class TestMCallerSQL(unittest.TestCase):
             _MTD_SQL_GET_USERS = SqlMethodT(
                 "SELECT users.id AS u_id, users.name, accounts.* FROM users "
                 "JOIN accounts ON users.account_id = accounts.id;",
-                [],
-                "users_dets",  # this is name of the table / record
+                record_name="users_dets",
                 header="CustHeader",
                 # footer="Cust footer", - not implemented
                 fmt="u_id, id:10, name_1:15;*",

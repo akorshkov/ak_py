@@ -51,36 +51,35 @@ class TestSQLMethod(unittest.TestCase):
 
         # test method which selects one record
         account_by_id = SqlMethod(
-            "SELECT id, name, status FROM accounts WHERE id = ?",
-            ['account_id'],
-            'account_record',
+            "SELECT id, name, status FROM accounts",
+            record_name='account_record',
         )
 
         # existing record: 3 ways to call the method should produce same data
-        result = account_by_id.one(db, 1)
+        result = account_by_id.one(db, id=1)
         self.assertEqual(
             ['id', 'name', 'status'], account_by_id.fields,
             ".fileds should contain actual fields names after first call")
         self.assertEqual(1, result.id)
         self.assertEqual("MI6", result.name)
 
-        results = account_by_id.list(db, 1)
+        results = account_by_id.list(db, id=1)
         self.assertEqual(1, len(results))
         self.assertEqual(result, results[0])
 
-        result = account_by_id.one_or_none(db, 1)
+        result = account_by_id.one_or_none(db, id=1)
         self.assertEqual(result, results[0])
 
         # no record
         with self.assertRaises(ValueError) as err:
-            account_by_id.one(db, 10)
+            account_by_id.one(db, id=10)
 
         self.assertIn("not found", str(err.exception))
 
-        results = account_by_id.list(db, 10)
+        results = account_by_id.list(db, id=10)
         self.assertEqual([], results)
 
-        result = account_by_id.one_or_none(db, 10)
+        result = account_by_id.one_or_none(db, id=10)
         self.assertIsNone(result)
 
     def test_sql_select_multiple_records(self):
@@ -89,84 +88,158 @@ class TestSQLMethod(unittest.TestCase):
         db = self._make_sample_db_users()
 
         get_users_by_account = SqlMethod(
-            "SELECT id, name FROM users WHERE account_id = ?",
-            ['account_id'],
-            'account_record',
+            "SELECT id, name FROM users",
+            record_name='account_record',
         )
 
         # test 'no records found' situation
         self.assertEqual(
-            [], get_users_by_account.list(db, 5),
+            [], get_users_by_account.list(db, account_id=5),
             "there are no users with account_id=5 in db")
 
-        self.assertIsNone(get_users_by_account.one_or_none(db, 5))
+        self.assertIsNone(get_users_by_account.one_or_none(db, account_id=5))
 
         with self.assertRaises(ValueError):
-            get_users_by_account.one(db, 5)
+            get_users_by_account.one(db, account_id=5)
 
         # test 'multiple records found' situation
-        users = get_users_by_account.list(db, 1)
+        users = get_users_by_account.list(db, account_id=1)
         self.assertEqual(2, len(users))
 
         with self.assertRaises(ValueError):
-            get_users_by_account.one(db, 1)
+            get_users_by_account.one(db, account_id=1)
 
         with self.assertRaises(ValueError):
-            get_users_by_account.one_or_none(db, 1)
+            get_users_by_account.one_or_none(db, account_id=1)
+
+    def test_as_scalar_option(self):
+        """Test SqlMethod as_scalars option."""
+        db = self._make_sample_db_users()
+
+        # 1. check method, which returns records by default
+        get_users = SqlMethod(
+            "SELECT id, name, account_id FROM users",
+            record_name='user',
+        )
+
+        # 1.1 with method's default as_scalars=False
+        users = get_users.list(db)
+        self.assertEqual(2, len(users))
+        users_by_id = {u.id: u for u in users}
+        self.assertEqual("Arnold", users_by_id[2].name)
+
+        # 1.2 with _as_scalars=True option
+        users_ids = get_users.list(db, _as_scalars=True)
+        self.assertEqual({1, 2}, set(users_ids))
+
+        arnold_id = get_users.one(db, _as_scalars=True, name="Arnold")
+        self.assertEqual(2, arnold_id)
+
+        # 2. check method, which returns scalars by default
+        get_users = SqlMethod(
+            "SELECT id, name, account_id FROM users",
+            record_name='user',
+            as_scalars=True,
+        )
+
+        # 2.1 with method's default as_scalars=True
+        users_ids = get_users.list(db)
+        self.assertEqual({1, 2}, set(users_ids))
+
+        arnold_id = get_users.one(db, name="Arnold")
+        self.assertEqual(2, arnold_id)
+
+        # 2.2 with _as_scalars=False option
+        users = get_users.list(db, _as_scalars=False)
+        self.assertEqual(2, len(users))
+        users_by_id = {u.id: u for u in users}
+        self.assertEqual("Arnold", users_by_id[2].name)
+
 
     def test_arguments_processing(self):
         """Test test arguments and keyword arguments processing."""
 
-        db = sqlite3.connect(":memory:")
-        cur = db.cursor()
-        cur.execute(
-            """CREATE TABLE accounts
-            (id PRIMARY KEY, prop1 INT, prop2 INT, prop3 INT, prop4 INT)
-            """)
-        cur.executemany(
-            "INSERT INTO accounts(id, prop1, prop2, prop3, prop4) "
-            "VALUES (?, ?, ?, ?, ?)",
-            [(1, 10, 20, 30, 40),
-             (2, 100, 200, 300, 400),
-            ])
-
-        db.commit()
+        db = self._make_sample_db_users()
 
         get_accounts_ids = SqlMethod(
-            "SELECT id FROM accounts "
-            "WHERE prop1 = ? AND prop2 = ? AND prop3 = ? AND prop4 = ?",
-            ['arg1', 'arg2', 'arg3', 'arg4'],  # names of filter arguments
-            'account',
+            "SELECT id FROM users ",
+            record_name='user',
+            as_scalars=True,
         )
 
         # try different combinations of list arguments and kwargs
-        account_id = get_accounts_ids.one(db, 10, 20, 30, 40).id
-        self.assertEqual(1, account_id)
+        # 1. no filter conditions
+        recs_ids = get_accounts_ids.list(db)
+        self.assertEqual({1, 2}, set(recs_ids))
 
-        account_id = get_accounts_ids.one(
-            db, arg1=10, arg2=20, arg3=30, arg4=40).id
-        self.assertEqual(1, account_id)
+        # 2. still no filter conditions ('_order_by' is not a filter condition!)
+        recs_ids = get_accounts_ids.list(db, _order_by="account_id, name DESC")
+        self.assertEqual([1, 2], recs_ids)
+        recs_ids = get_accounts_ids.list(db, _order_by="name")
+        self.assertEqual([2, 1], recs_ids)
 
-        account_id = get_accounts_ids.one(db, 10, arg3=30, arg2=20, arg4=40).id
-        self.assertEqual(1, account_id)
+        # 3. filter format, which can be used in very simple cases
+        james_id = get_accounts_ids.one(db, name="James")
+        self.assertEqual(1, james_id)
 
-        # and try different incorrect arguments combinations
-        with self.assertRaises(ValueError) as err:
-            get_accounts_ids.one(db, 10, 20, 30)
-        self.assertIn("invalid number of arguments specified", str(err.exception))
+        # 4. filer in (name, value) format
+        james_id = get_accounts_ids.one(db, ('name', "James"))
+        self.assertEqual(1, james_id)
 
-        with self.assertRaises(ValueError) as err:
-            get_accounts_ids.one(db, 10, 20, 30, 40, 50)
-        self.assertIn("invalid number of arguments specified", str(err.exception))
+        # 5. filer in (name, op, value) format
+        james_id = get_accounts_ids.one(db, ('name', '=', "James"))
+        self.assertEqual(1, james_id)
 
-        with self.assertRaises(ValueError) as err:
-            get_accounts_ids.one(db, 20, 30, arg1=10, arg4=40)
+        # 6. filer 'not equal'
+        arnold_id = get_accounts_ids.one(db, ('name', '!=', "James"))
+        self.assertEqual(2, arnold_id)
 
-        with self.assertRaises(ValueError) as err:
-            get_accounts_ids.one(db, 10, 20, 30, argx=40)
+        # 7. 'IN' filter
+        james_id = get_accounts_ids.one(db, ('name', 'IN', ["James"]))
+        self.assertEqual(1, james_id)
 
-        with self.assertRaises(ValueError) as err:
-            get_accounts_ids.one(db, 10, 20, 30, 40, argx=40)
+        # 8. 'NOT IN' filter
+        arnold_id = get_accounts_ids.one(db, ('name', 'NOT IN', ["James"]))
+        self.assertEqual(2, arnold_id)
+
+        # 9. filter 'IN' empty
+        james_id = get_accounts_ids.one_or_none(db, ('name', 'IN', []))
+        self.assertIsNone(james_id)
+
+        # 10. filter 'NOT IN' empty
+        recs = get_accounts_ids.list(db, ('name', 'NOT IN', []))
+        self.assertEqual(2, len(recs))
+
+        # 11. 'LIKE' filter
+        james_id = get_accounts_ids.one(db, ('name', 'LIKE', "%am%"))
+        self.assertEqual(1, james_id)
+
+        # 12. 'NOT LIKE' filter
+        arnold_id = get_accounts_ids.one(db, ('name', 'NOT LIKE', "%am%"))
+        self.assertEqual(2, arnold_id)
+
+        # to test 'IS NULL' and 'IS NOT NULL' let's create one more record
+        cur = db.cursor()
+        cur.executemany(
+            "INSERT INTO users (id, name, account_id) VALUES (?, ?, ?)",
+            [(3, "Harry", None)])
+        db.commit()
+        recs_ids = get_accounts_ids.list(db, _order_by="id")
+        self.assertEqual([1, 2, 3], recs_ids)
+
+        # 13. filter 'IS NULL'
+        harry_id = get_accounts_ids.one(db, ('account_id', 'IS NULL', None))
+        self.assertEqual(3, harry_id)
+        harry_id = get_accounts_ids.one(db, ('account_id', '=', None))
+        self.assertEqual(3, harry_id)
+        harry_id = get_accounts_ids.one(db, account_id=None)
+        self.assertEqual(3, harry_id)
+
+        # 14. filter 'IS NOT NULL'
+        recs_ids = get_accounts_ids.list(db, ('account_id', 'IS NOT NULL', None))
+        self.assertEqual({1, 2}, set(recs_ids))
+        recs_ids = get_accounts_ids.list(db, ('account_id', '!=', None))
+        self.assertEqual({1, 2}, set(recs_ids))
 
 
 class TestRecordsMMap(unittest.TestCase):

@@ -12,32 +12,138 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class SqlFilterCondition:
+    """Contains information required to construct condition for WHERE clause"""
+
+    SUPPORTED_OPS = [
+        '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']
+
+    # to be used when constructing WHERE cluase
+    _SQL_CLAUSES = {
+        '=': ' = ?',
+        '!=': ' != ?',
+        'IN': ' IN ',
+        'NOT IN': ' NOT IN ',
+        'IS NULL': ' IS NULL',
+        'IS NOT NULL': ' IS NOT NULL',
+        'LIKE': ' LIKE ?',
+        'NOT LIKE': ' NOT LIKE ?',
+    }
+
+    def __init__(self, field_name, op, value):
+        self.field_name = field_name
+        self.op = op.upper()
+        self.value = value
+        # validate that operation and value are compartible, fix operation
+        # if possible
+        if self.op in ('=', '!='):
+            if value is None:
+                self.op = 'IS NULL' if self.op == '=' else 'IS NOT NULL'
+            elif isinstance(value, (list, tuple)):
+                self.op = 'IN' if self.op == '=' else 'NOT IN'
+        elif self.op in ('IN', 'NOT IN'):
+            if not isinstance(value, (list, tuple)):
+                raise ValueError(
+                    f"value {self.value} does not match sql operation {self.op}")
+        elif self.op in ('IS NULL', 'IS NOT NULL'):
+            if value is not None:
+                raise ValueError(
+                    f"value {self.value} does not match sql operation {self.op}")
+        elif self.op in ('LIKE', 'NOT LIKE'):
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"value for '{self.op}' condition is not str but "
+                    f"{type(value)}: {value}")
+        else:
+            raise ValueError(
+                f"unsupported sql operation '{self.op}'. Supported operations "
+                f"are: {self.SUPPORTED_OPS}")
+
+    @classmethod
+    def make(cls, src_obj):
+        """Create SqlFilterCondition - data for a single condition of a WHERE clause.
+
+        Argument:
+        - src_obj: may be:
+            - SqlFilterCondition: object will be returned as is
+            - ("table.column", operation, value): args for SqlFilterCondition
+                constructor
+            - ("table.column", value) - same as ("table.column", "=", value)
+        """
+        if isinstance(src_obj, SqlFilterCondition):
+            return src_obj
+        if not isinstance(src_obj, (list, tuple)):
+            raise ValueError(
+                f"bad argument of type '{type(src_obj)}': {src_obj}")
+        n_arg_items = len(src_obj)
+        if n_arg_items == 3:
+            field_name, op, value = src_obj
+        elif n_arg_items == 2:
+            field_name, value = src_obj
+            op = '='
+        else:
+            raise ValueError(f"Invalid argument '{type(src_obj)}': {src_obj}")
+
+        return cls(field_name, op, value)
+
+    def make_text_update_values(self, values_list):
+        """Prepare part of WHERE condition; append necessary values to the list."""
+        assert isinstance(values_list, list)
+        if self.op in ('=', '!='):
+            values_list.append(self.value)
+            sql = self.field_name + self._SQL_CLAUSES[self.op]
+        elif self.op in ('IN', 'NOT IN'):
+            assert isinstance(self.value, (list, tuple))
+            if self.value:
+                values_list.extend(self.value)
+                sql = (self.field_name + self._SQL_CLAUSES[self.op] + "(" +
+                       ", ".join("?" for _ in self.value) + ")")
+            else:
+                # special case: list of lossible values is empty
+                sql = "0" if self.op == 'IN' else "1"
+        elif self.op in ('LIKE', 'NOT LIKE'):
+            values_list.append(self.value)
+            sql = self.field_name + self._SQL_CLAUSES[self.op]
+        else:
+            assert self.op in ('IS NULL', 'IS NOT NULL')
+            sql = self.field_name + self._SQL_CLAUSES[self.op]
+
+        return sql
+
+
 class SqlMethod:
     """Python wrapper of sql request."""
 
     __slots__ = (
-        'sql_request',
-        'params_names',
+        'sql_select_from',
+        'default_order_by',
+        'default_as_scalars',
         'record_name',
         'fields',
         'rec_type',
     )
 
-    def __init__(self, sql_request, params_names=None, record_name=None):
+    def __init__(self, sql_select_from, *,
+                 order_by=None, record_name=None, as_scalars=False):
         """Create SqlMethod object.
 
         Arguments:
-        - sql_request: the sql request string
-        - params_names: list of names of sql request parameters. These names can be
-            used later, when calling the method. Does not have to match
-            db columns names.
+        - sql_select_from: "SELECT ... FROM ..." part of the sql request string
+        - order_by: default value of "ORDER BY ..." part of sql request string.
+            (it may be overridden when executing this method)
         - record_name: optional name of a namedtuple type of records returned by
             sql request.
+        - as_scalars: if False, method returns records objects (usually
+            namedtuples), overwise - first elements of these records.
+            (it may be overridden when executing this method)
+
+        Note: selects with GROUP BY are not supported yet
         """
-        self.sql_request = sql_request
-        self.params_names = params_names if params_names is not None else []
+        self.sql_select_from = sql_select_from
+        self.default_order_by = order_by
+        self.default_as_scalars = as_scalars
         self.record_name = record_name if record_name is not None else 'record'
-        # named of the fileds of records returned by sql request. These names can
+        # names of the fileds of records returned by sql request. These names can
         # only be created after first sql request is performed.
         self.fields = None
         # type of the returned values. Usually it's an automatically generated
@@ -46,44 +152,46 @@ class SqlMethod:
         self.rec_type = None
 
     def _execute(self, conn, args, kwargs):
-        # Execute sql request, yield result records
-        # rsult records are either tuples or namedtuples
+        # Execute sql request, and yield result records (or scalars)
 
-        # prepare list of arguments for request
-        if len(self.params_names) != len(args) + len(kwargs):
-            raise ValueError(
-                f"invalid number of arguments specified. "
-                f"Expected {self.params_names} ({len(self.params_names)} args), "
-                f"actually received {args} + {kwargs} "
-                f"({len(args)} + {len(kwargs)} = {len(args)+len(kwargs)} args)"
-            )
-        req_params = list(args)
-        for arg_id in range(len(args), len(self.params_names)):
-            arg_name = self.params_names[arg_id]
-            if arg_name not in kwargs:
-                raise ValueError(
-                    f"missing argument #{arg_id} ('{arg_name}'). "
-                    f"Expected args: {self.params_names}. "
-                    f"Actual args: {args} + {kwargs}"
-                )
-            req_params.append(kwargs[arg_name])
+        order_by_clause = kwargs.pop('_order_by', self.default_order_by)
+        as_scalars = kwargs.pop('_as_scalars', self.default_as_scalars)
+
+        # convert remaining kwargs to conditions
+        if kwargs:
+            args = list(args)
+            args.extend(sorted(kwargs.items()))
+
+        filters = [SqlFilterCondition.make(x) for x in args]
+
+        sql = self.sql_select_from
+        req_params = []
+        if filters:
+            sql += " WHERE " + " AND ".join(
+                f.make_text_update_values(req_params) for f in filters)
+        if order_by_clause is not None:
+            sql += " ORDER BY " + order_by_clause
 
         # and execute request
-        logger.debug("SQL request: %s ; params: %s", self.sql_request, req_params)
+        logger.debug("SQL request: %s ; params: %s", sql, req_params)
+        # print(f"'{sql}'", req_params)
         with contextlib.closing(conn.cursor()) as cur:
-            cur.execute(self.sql_request, req_params)
+            cur.execute(sql, req_params)
 
             if self.fields is None:
                 # this is the first time actual request is performed, now we can
                 # find out names of returned fields
                 self._init_record_type(cur)
 
-            if self.rec_type is None:
+            if as_scalars:
+                for row in cur:
+                    yield row[0]
+            elif self.rec_type is None:
                 for row in cur:
                     yield row
             else:
                 for row in cur:
-                    yield self.rec_type._make(row)
+                    yield self.rec_type._make(row)  # namedtuple way
 
     def _init_record_type(self, cur):
         # fill self.fields and self.rec_type during the first sql request
@@ -94,17 +202,38 @@ class SqlMethod:
             logger.debug("can't create namedtuple for sql results: %s", str(err))
 
     def all(self, conn, *args, **kwargs):
-        """Execute sql request, yield result records."""
+        """Execute sql request, yield result records.
+
+        Arguments:
+        - conn: datanbase connection object (the one with cursor() method)
+        - args: filter conditions for WHERE clause (*)
+        - kwargs: filter conditions for where clause (**). Special kwargs:
+            - '_as_scalars': if True then return not records, but first elemets
+            - '_order_by': text for "ORDER BY' clause.
+
+        (*) filter condition may be:
+            - SqlFilterCondition object
+            - ("table.column", operation, value) - check doc of SqlFilterCondition
+                for more details
+            - ("table.column", value) - same as ("table.column", "=", value)
+
+        (**) name=value kwarg is interpreted as ("name", "=", value) filter condition
+        """
         yield from self._execute(conn, args, kwargs)
 
     def list(self, conn, *args, **kwargs):
-        """Execute sql request, return list of result records."""
+        """Execute sql request, return list of result records.
+
+        Check doc of 'all' method for detailed description of arguments.
+        """
         return list(self._execute(conn, args, kwargs))
 
     def one(self, conn, *args, **kwargs):
         """Execute sql request, return single record.
 
         Raise ValueError if not exactly one record was selected.
+
+        Check doc of 'all' method for detailed description of arguments.
         """
         record = self.one_or_none(conn, *args, **kwargs)
         if record is None:
@@ -115,6 +244,8 @@ class SqlMethod:
         """Execute sql request, return single record or None.
 
         Raise ValueError if more than one record was selected.
+
+        Check doc of 'all' method for detailed description of arguments.
         """
         all_records = list(self._execute(conn, args, kwargs))
         if len(all_records) > 1:
