@@ -81,7 +81,7 @@ class CellBool(_CellReader):
 
 
 class CellList(_CellReader):
-    """Gets list of strings value from cell.
+    """Gets 'list of strings' value from cell.
 
     Cell supposed to contain a list of values separated by ',' and/or new line.
     Empty elements are ignored.
@@ -97,6 +97,17 @@ class CellList(_CellReader):
         vals = [item.strip() for item in v.replace('\n', ',').split(',')]
         vals = [item for item in vals if item]
         return vals
+
+
+class CellSet(CellList):
+    """Get 'set of strings' value from cell.
+
+    Similar to CellList, but the result value is set.
+    """
+    def _make_value(self, cell):
+        # xls cell -> set of strings value of the cell
+        vals_list = super()._make_value(cell)
+        return set(vals_list)
 
 
 class _CellRangeReader:
@@ -636,3 +647,5 @@ cell_str = CellStr()
 cell_int = CellInt()
 cell_bool = CellBool()
 cell_list = CellList()
+cell_set = CellSet()
+cell_range_set = CellRangeSet(cell_bool)

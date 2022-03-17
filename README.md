@@ -18,7 +18,11 @@ Installation:
 ```
     pip install --user -e ~/the_location/ak_py/
 ```
-1. Use it:
+3. Install optional dependencies:
+```
+    pip install --user openpyxl
+```
+4. Use it:
 ```
     python
     >>> from ak import color
