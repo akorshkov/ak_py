@@ -32,7 +32,10 @@ class _CellReader:
         """xls cell -> optional string value of the cell"""
         if cell.value in self.none_values:
             return None
-        return self._make_value(cell)
+        try:
+            return self._make_value(cell)
+        except ValueError as err:
+            raise ValueError(f"can't read {type(self)} value from {cell}") from err
 
     def _make_value(self, _cell):
         assert False, "pure virtual"
@@ -239,7 +242,8 @@ class XlsObject:
             f"<{type(self).__name__}"
             f"({self._src_ws_name} {self._anchor_cell_coord}) {self.logic_id}>")
 
-    def get_attr_origin(self, attr_name, range_key=None, *, incl_ws=False):
+    def get_attr_origin(
+            self, attr_name, range_key=None, *, incl_ws=False, strict=True):
         """Return coordinate of the cell(s) corresponding to attribute.
 
         Examples:
@@ -255,6 +259,8 @@ class XlsObject:
         - attr_name: name of attribute
         - range_key: can be specified for ranged attributes
         - incl_ws: if to include worksheet name in returned cell coordinate.
+        - strict: if strict - raise ValueError if specified range_key is not
+            present in the value of ranged attribute. Otherwise - return 'n/a'.
         """
         ws_prefix = f"{self._src_ws_name} " if incl_ws else ""
         origins = self._attrs_origins.get(attr_name)
@@ -291,8 +297,10 @@ class XlsObject:
         val_cell_origin = origins.get(range_key)
 
         if val_cell_origin is None:
-            raise ValueError(
-                f"ranged attribute '{attr_name}' has no key '{range_key}'")
+            if strict:
+                raise ValueError(
+                    f"ranged attribute '{attr_name}' has no key '{range_key}'")
+            val_cell_origin = 'n/a'
 
         return ws_prefix + val_cell_origin
 
@@ -517,7 +525,7 @@ class XlsTableReader:
         self.cells_maps = [
             _ObjScrCellsMap(obj_rrule.attrs_rules) for obj_rrule in self.objs_rrules]
 
-    def iter_table(self, worksheet, *, stop_on="blank all", ladder_table=False):
+    def iter_table(self, worksheet, *, stop_on="blank all", ladder_format=False):
         """Generate tuples of XlsObjects according to self.objs_rrules."""
         titles_processed = False
 
@@ -554,7 +562,7 @@ class XlsTableReader:
                     cells_map.bind_titles_row(
                         cols_names, col_names_ids, known_cols_names)
                 titles_processed = True
-                if ladder_table:
+                if ladder_format:
                     # following info is only necessary pro processing 'ladder' tables
                     first_col_pos = next(
                         (pos for pos, name in enumerate(cols_names) if name),
@@ -566,7 +574,7 @@ class XlsTableReader:
             # but first it may be necessary to prepare the current row.
             # In case of ladder table, current row of cells consists of cells
             # from several excel rows.
-            if ladder_table and first_col_pos is not None:
+            if ladder_format and first_col_pos is not None:
                 if prev_row is None:
                     # this is the first row of data cells.
                     prev_row = row
@@ -603,7 +611,7 @@ class XlsTableReader:
 
 
 def iter_table(worksheet, xls_obj_class, attrs_rules, *,
-               stop_on="blank all", ladder_table=False):
+               stop_on="blank all", ladder_format=False):
     """This method should be used to read data from excel table in most cases.
 
     Arguments:
@@ -618,6 +626,15 @@ def iter_table(worksheet, xls_obj_class, attrs_rules, *,
             'attr1_name': ("*", range_cell_type),
         }
 
+    - stop_on: name of rule, that detects the end of table. One
+        of ("blank all", "blank first")
+
+    - ladder_format: indicates that table is in 'ladder' format: empty cells in
+        first columns indicates same value as in previous row:
+        2000  Jan   01   ...
+              Feb   01   ...
+                    02   ...  <- this line corresponds to 2000 Feb.
+
     Method yields object of xls_obj_class.
     """
     obj_rrules = XlsObjReadRules(xls_obj_class, attrs_rules)
@@ -625,7 +642,7 @@ def iter_table(worksheet, xls_obj_class, attrs_rules, *,
     table_reader = XlsTableReader(obj_rrules)
 
     for (x, ) in table_reader.iter_table(
-        worksheet, stop_on=stop_on, ladder_table=ladder_table,
+        worksheet, stop_on=stop_on, ladder_format=ladder_format,
     ):
         yield x
 

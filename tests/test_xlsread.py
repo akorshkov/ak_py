@@ -227,6 +227,9 @@ class TestXlsTables(unittest.TestCase):
         self.assertEqual("D2", arnold.get_attr_origin('classes', 'history'))
         self.assertEqual("E2", arnold.get_attr_origin('classes', 'cs'))
 
+        self.assertEqual(
+            "n/a", arnold.get_attr_origin('classes', 'philosophy', strict=False))
+
         with self.assertRaises(ValueError) as exc:
             arnold.get_attr_origin('classes', 'philosophy')
 
@@ -465,7 +468,7 @@ class TestXlsTables(unittest.TestCase):
             'year': ("Year", cell_int),
             'month': ("Month", cell_int),
             'day': ("Day", cell_int),
-        }, ladder_table=True)
+        }, ladder_format=True)
 
         self.assertEqual(7, len(objs))
 
