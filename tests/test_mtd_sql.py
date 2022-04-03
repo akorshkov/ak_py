@@ -155,68 +155,68 @@ class TestSQLMethod(unittest.TestCase):
         users_by_id = {u.id: u for u in users}
         self.assertEqual("Arnold", users_by_id[2].name)
 
-
     def test_arguments_processing(self):
         """Test test arguments and keyword arguments processing."""
 
         db = self._make_sample_db_users()
 
-        get_accounts_ids = SqlMethod(
+        get_users_ids = SqlMethod(
             "SELECT id FROM users ",
             record_name='user',
             as_scalars=True,
         )
 
+        james_id = 1
+        arnold_id = 2
+
         # try different combinations of list arguments and kwargs
         # 1. no filter conditions
-        recs_ids = get_accounts_ids.list(db)
+        recs_ids = get_users_ids.list(db)
         self.assertEqual({1, 2}, set(recs_ids))
 
         # 2. still no filter conditions ('_order_by' is not a filter condition!)
-        recs_ids = get_accounts_ids.list(db, _order_by="account_id, name DESC")
+        recs_ids = get_users_ids.list(db, _order_by="account_id, name DESC")
         self.assertEqual([1, 2], recs_ids)
-        recs_ids = get_accounts_ids.list(db, _order_by="name")
+        recs_ids = get_users_ids.list(db, _order_by="name")
         self.assertEqual([2, 1], recs_ids)
 
         # 3. filter format, which can be used in very simple cases
-        james_id = get_accounts_ids.one(db, name="James")
-        self.assertEqual(1, james_id)
+        self.assertEqual(james_id, get_users_ids.one(db, name="James"))
 
         # 4. filer in (name, value) format
-        james_id = get_accounts_ids.one(db, ('name', "James"))
-        self.assertEqual(1, james_id)
+        self.assertEqual(james_id, get_users_ids.one(db, ('name', "James")))
 
         # 5. filer in (name, op, value) format
-        james_id = get_accounts_ids.one(db, ('name', '=', "James"))
-        self.assertEqual(1, james_id)
+        self.assertEqual(james_id, get_users_ids.one(db, ('name', '=', "James")))
 
         # 6. filer 'not equal'
-        arnold_id = get_accounts_ids.one(db, ('name', '!=', "James"))
-        self.assertEqual(2, arnold_id)
+        self.assertEqual(arnold_id, get_users_ids.one(db, ('name', '!=', "James")))
 
         # 7. 'IN' filter
-        james_id = get_accounts_ids.one(db, ('name', 'IN', ["James"]))
-        self.assertEqual(1, james_id)
+        self.assertEqual(james_id, get_users_ids.one(db, ('name', 'IN', ["James"])))
 
         # 8. 'NOT IN' filter
-        arnold_id = get_accounts_ids.one(db, ('name', 'NOT IN', ["James"]))
-        self.assertEqual(2, arnold_id)
+        self.assertEqual(
+            arnold_id, get_users_ids.one(db, ('name', 'NOT IN', ["James"])))
 
         # 9. filter 'IN' empty
-        james_id = get_accounts_ids.one_or_none(db, ('name', 'IN', []))
-        self.assertIsNone(james_id)
+        self.assertIsNone(get_users_ids.one_or_none(db, ('name', 'IN', [])))
 
         # 10. filter 'NOT IN' empty
-        recs = get_accounts_ids.list(db, ('name', 'NOT IN', []))
-        self.assertEqual(2, len(recs))
+        self.assertEqual({1, 2}, set(get_users_ids.list(db, ('name', 'NOT IN', []))))
 
         # 11. 'LIKE' filter
-        james_id = get_accounts_ids.one(db, ('name', 'LIKE', "%am%"))
-        self.assertEqual(1, james_id)
+        self.assertEqual(james_id, get_users_ids.one(db, ('name', 'LIKE', "%am%")))
 
         # 12. 'NOT LIKE' filter
-        arnold_id = get_accounts_ids.one(db, ('name', 'NOT LIKE', "%am%"))
-        self.assertEqual(2, arnold_id)
+        self.assertEqual(
+            arnold_id, get_users_ids.one(db, ('name', 'NOT LIKE', "%am%")))
+
+        # 13. 'static' filter condition
+        self.assertEqual(james_id, get_users_ids.one(db, "id = account_id"))
+        self.assertEqual(
+            james_id, get_users_ids.one(db, "id = account_id", account_id=1))
+        self.assertEqual(arnold_id, get_users_ids.one(db, "id != account_id"))
 
         # to test 'IS NULL' and 'IS NOT NULL' let's create one more record
         cur = db.cursor()
@@ -224,21 +224,20 @@ class TestSQLMethod(unittest.TestCase):
             "INSERT INTO users (id, name, account_id) VALUES (?, ?, ?)",
             [(3, "Harry", None)])
         db.commit()
-        recs_ids = get_accounts_ids.list(db, _order_by="id")
+        harry_id = 3
+        recs_ids = get_users_ids.list(db, _order_by="id")
         self.assertEqual([1, 2, 3], recs_ids)
 
-        # 13. filter 'IS NULL'
-        harry_id = get_accounts_ids.one(db, ('account_id', 'IS NULL', None))
-        self.assertEqual(3, harry_id)
-        harry_id = get_accounts_ids.one(db, ('account_id', '=', None))
-        self.assertEqual(3, harry_id)
-        harry_id = get_accounts_ids.one(db, account_id=None)
-        self.assertEqual(3, harry_id)
+        # 14. filter 'IS NULL'
+        self.assertEqual(
+            harry_id, get_users_ids.one(db, ('account_id', 'IS NULL', None)))
+        self.assertEqual(harry_id, get_users_ids.one(db, ('account_id', '=', None)))
+        self.assertEqual(harry_id, get_users_ids.one(db, account_id=None))
 
-        # 14. filter 'IS NOT NULL'
-        recs_ids = get_accounts_ids.list(db, ('account_id', 'IS NOT NULL', None))
+        # 15. filter 'IS NOT NULL'
+        recs_ids = get_users_ids.list(db, ('account_id', 'IS NOT NULL', None))
         self.assertEqual({1, 2}, set(recs_ids))
-        recs_ids = get_accounts_ids.list(db, ('account_id', '!=', None))
+        recs_ids = get_users_ids.list(db, ('account_id', '!=', None))
         self.assertEqual({1, 2}, set(recs_ids))
 
 

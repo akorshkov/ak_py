@@ -2,6 +2,16 @@
 
 It's quite primitive - it is NOT desined to dynamically create complex sql
 requests. It's a simple wrapper for manually prepared sql requests.
+
+Example:
+records = SqlMethod(
+    "SELECT u.id, u.name, a.status "
+    "FROM users AS u LEFT JOIN accounts AS a "
+    "  ON u.account_id = a.id ",
+    order_by="u.name, u.id",
+).list(
+    db_conn, ("a.status", "=", 5),
+)
 """
 
 from collections import namedtuple
@@ -15,6 +25,8 @@ logger = logging.getLogger(__name__)
 class SqlFilterCondition:
     """Contains information required to construct condition for WHERE clause"""
 
+    __slots__ = ('field_name', 'op', 'value')
+
     SUPPORTED_OPS = [
         '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']
 
@@ -23,6 +35,7 @@ class SqlFilterCondition:
     # to be used when constructing WHERE cluase
     _SQL_CLAUSES = {
         PLACEHOLDER_TYPE_QUESTION: {
+            'PLACEHOLDER': '?',
             '=': ' = ?',
             '!=': ' != ?',
             'IN': ' IN ',
@@ -33,6 +46,7 @@ class SqlFilterCondition:
             'NOT LIKE': ' NOT LIKE ?',
         },
         PLACEHOLDER_TYPE_PERCENT_S: {
+            'PLACEHOLDER': '%s',
             '=': ' = %s',
             '!=': ' != %s',
             'IN': ' IN ',
@@ -50,7 +64,12 @@ class SqlFilterCondition:
         self.value = value
         # validate that operation and value are compartible, fix operation
         # if possible
-        if self.op in ('=', '!='):
+        if self.field_name is None:
+            # special case: it is hardcoded condition which does not require
+            # a value. F.e. "a.parent_id = b.id"
+            assert self.value is None
+            self.op = " " + op + " "
+        elif self.op in ('=', '!='):
             if value is None:
                 self.op = 'IS NULL' if self.op == '=' else 'IS NOT NULL'
             elif isinstance(value, (list, tuple)):
@@ -83,9 +102,13 @@ class SqlFilterCondition:
             - ("table.column", operation, value): args for SqlFilterCondition
                 constructor
             - ("table.column", value) - same as ("table.column", "=", value)
+            - "static condition" - f.e. "table1.id = table2.parent_id"
         """
         if isinstance(src_obj, SqlFilterCondition):
             return src_obj
+        if isinstance(src_obj, str):
+            # static condition, f.e. "table1.id = table2.parent_id"
+            return cls(None, src_obj, None)
         if not isinstance(src_obj, (list, tuple)):
             raise ValueError(
                 f"bad argument of type '{type(src_obj)}': {src_obj}")
@@ -101,10 +124,21 @@ class SqlFilterCondition:
         return cls(field_name, op, value)
 
     def make_text_update_values(self, values_list, placeholders_type):
-        """Prepare part of WHERE condition; append necessary values to the list."""
+        """Prepare part of WHERE condition; append necessary values to the list.
+
+        Arguments:
+        - values_list: the list to append actual arguments values to
+        - placeholders_type: one of
+            SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
+            SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
+
+        Returns sql clause string and appends arguments values to 'values_list'
+        """
         assert isinstance(values_list, list)
         sql_clauses = self._SQL_CLAUSES[placeholders_type]
-        if self.op in ('=', '!='):
+        if self.field_name is None:
+            sql = self.op
+        elif self.op in ('=', '!='):
             values_list.append(self.value)
             sql = self.field_name + sql_clauses[self.op]
         elif self.op in ('IN', 'NOT IN'):
@@ -112,7 +146,8 @@ class SqlFilterCondition:
             if self.value:
                 values_list.extend(self.value)
                 sql = (self.field_name + sql_clauses[self.op] + "(" +
-                       ", ".join("?" for _ in self.value) + ")")
+                       ", ".join(sql_clauses['PLACEHOLDER'] for _ in self.value)
+                       + ")")
             else:
                 # special case: list of lossible values is empty
                 sql = "0" if self.op == 'IN' else "1"
