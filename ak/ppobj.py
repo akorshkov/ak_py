@@ -1382,6 +1382,10 @@ class PPEnumFieldType(PPTableFieldType):
         self._cache_lengths[None] = self._cache_lengths['full']
         super().__init__()
 
+    def val_to_name(self, value) -> str:
+        """Return simple string name of the value."""
+        return self.enum_values[value][0]
+
     def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
         """Returns desired text for a value and alignment."""
 
