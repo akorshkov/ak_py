@@ -12,7 +12,7 @@ from . import hdoc
 class _PPrintCommand:
     """Pretty-print console command.
 
-    If object to print is pretty-printable (instance of ppobj.PPObj),
+    If object to print is pretty-printable (instance of ppobj.PPObjBase),
     the object generates own description. For other objects generic
     PrettyPrinter is used.
     """
@@ -21,7 +21,7 @@ class _PPrintCommand:
         self._pprinter = ppobj.PrettyPrinter()
 
     def __call__(self, obj_to_print):
-        if isinstance(obj_to_print, ppobj.PPObj):
+        if isinstance(obj_to_print, ppobj.PPObjBase):
             for line in obj_to_print.gen_pplines():
                 print(line)
         else:

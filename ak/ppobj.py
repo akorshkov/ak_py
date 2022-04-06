@@ -1,7 +1,7 @@
 """Methods for pretty-printing tables and json-like python objects.
 
 Classes provided by this module:
-- PPJson - pretty-printable json-like structures
+- PPObj - pretty-printable json-like python structures
 - PPTable - pretty-printable 2-D tables
 """
 
@@ -27,15 +27,21 @@ class _PrettyPrinterBase:
 
 
 class PrettyPrinter(_PrettyPrinterBase):
-    """Print json-like objects with color highliting."""
+    """Print json-like python objects with color highliting."""
 
     # dafault colors
     _COLOR_NAME = ColorFmt('GREEN', bold=True)
     _COLOR_NUMBER = ColorFmt('YELLOW')
     _COLOR_KEYWORD = ColorFmt('BLUE', bold=True)
 
+    _CONSTANTS_LITERALS = (
+        {True: 'True', False: 'False', None: 'None'},
+        {True: 'true', False: 'false', None: 'null'},
+    )
+
     def __init__(
             self, *,
+            fmt_json=False,
             color_name=_COLOR_NAME,
             color_number=_COLOR_NUMBER,
             color_keyword=_COLOR_KEYWORD,
@@ -43,6 +49,8 @@ class PrettyPrinter(_PrettyPrinterBase):
         """Create PrettyPrinter for printing json-like objects.
 
         Arguments:
+        - fmt_json: if True generate output in json form, else - in python form.
+            The difference is in value of constans only ('true' vs 'True', etc.)
         - color_name: specifies how keys of dicts are formatted.
         - color_number: specifies how number values are formatted.
         - color_keyword: specifies format for 'True', 'False' and 'None' constants
@@ -53,6 +61,7 @@ class PrettyPrinter(_PrettyPrinterBase):
             colors. Check help(ColorFmt.make) for possible values of these
             arguments.
         """
+        self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
         self._color_name = ColorFmt.make(color_name, use_colors)
         self._color_number = ColorFmt.make(color_number, use_colors)
         self._color_keyword = ColorFmt.make(color_keyword, use_colors)
@@ -161,10 +170,10 @@ class PrettyPrinter(_PrettyPrinterBase):
         # value -> formatted string
         if isinstance(value, str):
             return '"' + value + '"'
+        elif value in (True, False, None):
+            return self._color_keyword(self._consts[value])
         elif isinstance(value, (int, float)):
             return self._color_number(str(value))
-        elif value in (True, False, None):
-            return self._color_keyword(str(value))
         elif isinstance(value, dict):
             assert not value
             return "{}"
@@ -194,7 +203,7 @@ class PrettyPrinter(_PrettyPrinterBase):
             return (3, str(value))
 
 
-class PPObj:
+class PPObjBase:
     """Base class for pretty-printable objects.
 
     PPobj is an object, whose __repr__ method prints (colored) representation
@@ -228,14 +237,15 @@ class PPObj:
 
 
 #########################
-# pretty-printing json-like objects
+# pretty-printing json-like python objects
 
-class PPJson(PPObj):
-    """Pretty-printable object for python json-like structures.
+class PPObj(PPObjBase):
+    """Pretty-printable wrapper for python json-like structures.
 
-    repr of this object prints colored json.
+    repr of this object prints the structure in a pretty-formatted colored form.
     """
 
+    __slots__ = 'r'
     _PPRINTER = PrettyPrinter()
 
     def __init__(self, obj_to_print):
@@ -244,6 +254,14 @@ class PPJson(PPObj):
     def gen_pplines(self) -> Iterator[str]:
         """Generate lines of colored text - repr of the self.r object."""
         yield from self._PPRINTER.gen_pplines(self.r)
+
+
+class PPJson(PPObj):
+    """Pretty-printable wrapper for python json-like structures.
+
+    repr of this object prints the structure as a pretty-formatted colored json.
+    """
+    _PPRINTER = PrettyPrinter(fmt_json=True)
 
 
 #########################
@@ -1034,7 +1052,7 @@ class PPTableFormat:
         return ";".join(parts)
 
 
-class PPTable(PPObj):
+class PPTable(PPObjBase):
     """2-D table.
 
     Provides pretty-printing and simple manipulation on 2-D table

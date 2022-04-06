@@ -17,7 +17,7 @@ console.
 import inspect
 import logging
 from functools import wraps
-from ak.ppobj import PPObj
+from ak.ppobj import PPObjBase
 from ak.color import ColorFmt
 from ak.hdoc import h_doc, BoundMethodNotes
 
@@ -118,7 +118,7 @@ class _Meta_MethodsCaller(type):
         return decorated_method_body
 
 
-class PPMehod(PPObj):
+class PPMehod(PPObjBase):
     """Pretty-printable object with custom pprint method.
 
     The _pprint method may be either a usual method or generator,

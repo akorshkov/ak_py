@@ -3,7 +3,7 @@
 import unittest
 
 from ak.mcaller import method_attrs, MCaller, PPMehod
-from ak.ppobj import PPJson
+from ak.ppobj import PPObj
 
 
 class TestMCallerClass(unittest.TestCase):
@@ -21,7 +21,7 @@ class TestMCallerClass(unittest.TestCase):
                 To check that it is properly decorated.
                 """
                 mtd_meta = self.get_mcaller_meta()
-                return PPJson({
+                return PPObj({
                     "arg": arg, "val": self.val,
                     "auth": mtd_meta.properties['auth']})
 

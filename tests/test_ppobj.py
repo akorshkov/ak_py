@@ -7,9 +7,9 @@ from ak.color import ColoredText
 from ak.ppobj import PrettyPrinter
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 
+
 #########################
 # Test json-like objects PrettyPrinter
-
 
 class TestPrettyPrinter(unittest.TestCase):
     """Test PrettyPrinter"""
@@ -52,6 +52,23 @@ class TestPrettyPrinter(unittest.TestCase):
             3: None
         })
         self.assertIn("ccc", s)
+
+    def test_pprint_in_joson_fmt(self):
+        """Test pprinter in json mode: result string should be colored valid json.
+
+        (well, it will be a valid json after color sequences are removed)
+
+        """
+        pp = PrettyPrinter(fmt_json=True).get_pptext
+
+        s = pp({
+            "n": None,
+            "t": True,
+            "f": False,
+        })
+        self.assertIn("null", s)
+        self.assertIn("true", s)
+        self.assertIn("false", s)
 
 
 #########################
