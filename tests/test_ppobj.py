@@ -24,6 +24,9 @@ class TestPrettyPrinter(unittest.TestCase):
         self.assertIn("some_name", s)
         self.assertIn("42", s)
 
+        plain_text = ColoredText.strip_colors(s)
+        self.assertIn('"a": 1', plain_text)
+
     def test_printing_notjson(self):
         """Test that PrettyPrinter can handle not-json objects."""
         pp = PrettyPrinter().get_pptext

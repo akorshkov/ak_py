@@ -9,9 +9,9 @@ from typing import Iterator
 from ak import utils
 from ak.color import ColorFmt, ColoredText, Palette
 
+
 #########################
 # generic pretty-printing
-
 
 class _PrettyPrinterBase:
     # Interface of PrettyPrinter object
@@ -170,7 +170,7 @@ class PrettyPrinter(_PrettyPrinterBase):
         # value -> formatted string
         if isinstance(value, str):
             return '"' + value + '"'
-        elif value in (True, False, None):
+        elif any(value is keyword for keyword in [None, True, False]):
             return self._color_keyword(self._consts[value])
         elif isinstance(value, (int, float)):
             return self._color_number(str(value))
@@ -1402,7 +1402,7 @@ class PPEnumFieldType(PPTableFieldType):
 
     def val_to_name(self, value) -> str:
         """Return simple string name of the value."""
-        return self.enum_values[value][0]
+        return self.enum_values.get(value, self.enum_missing_value)[0]
 
     def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
         """Returns desired text for a value and alignment."""
