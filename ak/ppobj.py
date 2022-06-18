@@ -834,7 +834,7 @@ class PPTableFormat:
         - mk_dummy_empty
         """
         self.fields = fields
-        self.columns = [c.clone() for c in columns]
+        self.columns = [c.clone() for c in columns]  # [PPTableColumn, ]
         self.limit_flines = limit_flines
         self.limit_llines = limit_llines
         # indicates if the table (which ownes this format object) has more lines
@@ -988,6 +988,13 @@ class PPTableFormat:
         """
         fields_names = ['-                              -', ]
         return cls.mk_by_fields_names(fmt, fields_names, {})
+
+    def remove_columns(self, columns_names):
+        """Remove columns from table."""
+        self.columns = [
+            c for c in self.columns
+            if c.name not in columns_names
+        ]
 
     @staticmethod
     def _parse_fmt(fmt):
@@ -1249,6 +1256,15 @@ class PPTable(PPObjBase):
         return self._ppt_fmt
 
     fmt = property(_get_fmt, set_fmt)
+
+    def remove_columns(self, columns_names):
+        """Remove columns from table.
+
+        Arguments:
+        - columns_names: list of names of columns to remove. (values not
+            equal to name of any column are accepted but ignored).
+        """
+        self._ppt_fmt.remove_columns(columns_names)
 
     def gen_pplines(self) -> Iterator[str]:
         # implementation of PrettyPrinter functionality

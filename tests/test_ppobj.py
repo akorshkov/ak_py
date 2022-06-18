@@ -344,6 +344,34 @@ class TestPPTable(unittest.TestCase):
             ],
         )
 
+    def test_remove_columns(self):
+        """Test 'remove columns' functionality."""
+
+        # 0. prepare the table for experiments
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            fmt="id:5,id:10,  level:11,name:15, level:20",
+        )
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'id', 'level', 'name', 'level'],
+            cols_widths=[5, 10, 11, 15, 20],
+        )
+
+        # 1. remove some columns by name
+        table.remove_columns({'level', 'invalid_column'})
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'id', 'name'],
+            cols_widths=[5, 10, 15],
+        )
+
     def test_lines_limits(self):
         """Check lines limits are reported correctly """
         records = [
