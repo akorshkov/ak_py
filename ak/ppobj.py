@@ -126,11 +126,43 @@ class PrettyPrinter(_PrettyPrinterBase):
                     self._colorp_simple_value(item) for item in obj_to_print
                 ]
                 scr_len = sum(len(chunk) for chunk in chunks) + 2 * len(chunks)
-                oneline_fmt = offset + scr_len < 200
+                oneline_fmt = not chunks or offset + scr_len < 200
                 if oneline_fmt:
+                    # print the list in one line
                     yield "[" + ", ".join(str(c) for c in chunks) + "]"
-                    return
+                else:
+                    # print the list in several lines (but each line may
+                    # contain several values)
+                    yield "["
+                    yield "\n"
+                    prefix = " " * (offset + 2)
+                    len_yielded = 0
+                    is_first_in_line = True
+                    for i, chunk in enumerate(chunks):
+                        if is_first_in_line:
+                            yield prefix
+                            len_yielded = offset + 2
+                        yield str(chunk)
+                        len_yielded += len(chunk)
+                        is_first_in_line = False
+                        if i == len(chunks) - 1:
+                            # last element of the list
+                            yield "\n"
+                            break
+                        else:
+                            yield ","
+                            len_yielded += 1
 
+                        if len_yielded < 150:
+                            yield " "
+                            len_yielded += 1
+                        else:
+                            # finish current line
+                            yield "\n"
+                            len_yielded = 0
+                            is_first_in_line = True
+                    # all items printed, new line started
+                    yield " " * offset + "]"
             # print object in multiple lines
             else:
                 prefix = " " * (offset + 2)

@@ -56,11 +56,36 @@ class TestPrettyPrinter(unittest.TestCase):
         })
         self.assertIn("ccc", s)
 
+    def test_ppobj_long_list(self):
+        """Test pretty-printing a very long list of items."""
+        pp = PrettyPrinter().get_pptext
+        s = pp({
+            "items": [
+                {
+                    "name": "x1",
+                    "oitems": [
+                        "aaaaaaa", "bbbbbbbb", "ccccccc", "ddddddd",
+                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
+                        "iiiiiii", "jjjjjjjj", "kkkkkkk", "lllllll",
+                        "zzzzzzz", 101, 201, 301
+                    ],
+                    "status": 1,
+                    "isActive": True,
+                }
+            ],
+        })
+        self.assertIn("zzzzzzz", s)
+        self.assertIn("101", s)
+
     def test_pprint_in_joson_fmt(self):
         """Test pprinter in json mode: result string should be colored valid json.
 
         (well, it will be a valid json after color sequences are removed)
-
         """
         pp = PrettyPrinter(fmt_json=True).get_pptext
 
