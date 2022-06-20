@@ -315,6 +315,16 @@ class _HttpConnBase:
 
         self.descr = " ".join(part for part in _parts() if part is not None)
 
+    def get_address(self):
+        """Get the address of this connection.
+
+        The returned address is the address specified during the connection construction.
+        So it may (or may not) contain port/path information.
+        """
+        if hasattr(self.parent_conn, 'address'):
+            return self.parent_conn.address
+        return self.parent_conn.get_address()
+
     def add_adapter(self, adapter):
         """Add adapter to self.
 

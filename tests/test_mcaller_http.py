@@ -4,7 +4,7 @@ import unittest
 
 import base64
 
-from ak.conn_http import HttpConn, BAuthConn
+from ak.conn_http import BAuthConn
 from ak.hdoc import HCommand
 from ak.mcaller_http import MCallerHttp, method_http
 
