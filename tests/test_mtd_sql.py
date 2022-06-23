@@ -240,6 +240,10 @@ class TestSQLMethod(unittest.TestCase):
         recs_ids = get_users_ids.list(db, ('account_id', '!=', None))
         self.assertEqual({1, 2}, set(recs_ids))
 
+        # 16. dummy filter (does not filter anything)
+        self.assertEqual(james_id, get_users_ids.one(db, None, ('name', '=', "James")))
+        self.assertEqual(james_id, get_users_ids.one(db, None, name="James"))
+
 
 class TestRecordsMMap(unittest.TestCase):
     """Test SqlMethod.records_mmap method.

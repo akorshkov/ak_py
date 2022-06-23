@@ -806,7 +806,7 @@ class PPTableFormat:
 
     2. record limits example:
 
-        "10-15" - if number of records is more that 26, only 10 first and
+        "10:15" - if number of records is more that 26, only 10 first and
           15 last records will be displayed.
 
     3. not implemented.

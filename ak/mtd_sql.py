@@ -220,7 +220,7 @@ class SqlMethod:
             args = list(args)
             args.extend(sorted(kwargs.items()))
 
-        filters = [SqlFilterCondition.make(x) for x in args]
+        filters = [SqlFilterCondition.make(x) for x in args if x is not None]
 
         sql = self.sql_select_from
         req_params = []
@@ -275,6 +275,8 @@ class SqlMethod:
             - ("table.column", operation, value) - check doc of SqlFilterCondition
                 for more details
             - ("table.column", value) - same as ("table.column", "=", value)
+            - None - dummy value, ignored (presence of None argument does not affect
+                sql query)
 
         (**) name=value kwarg is interpreted as ("name", "=", value) filter condition
         """
