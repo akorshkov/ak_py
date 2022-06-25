@@ -4,6 +4,7 @@ import unittest
 from collections import namedtuple
 
 from ak.color import ColoredText
+from ak import ppobj
 from ak.ppobj import PrettyPrinter
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 
@@ -104,7 +105,9 @@ class TestPrettyPrinter(unittest.TestCase):
 
 def verify_table_format(
         testcase, table,
+        has_header=False,
         cols_names=None,
+        n_extra_title_lines=None,
         n_body_lines=None,
         cols_widths=None,
         contains_text=None,
@@ -143,11 +146,14 @@ def verify_table_format(
         f"first line of a table should be a separator line::\n{table}")
 
     header_part = text_lines[separator_lines_ids[0]+1:separator_lines_ids[1]]
-    testcase.assertIn(
-        len(header_part), (1, 2),
-        "header part of table should consist of optional header line "
-        "and column names line")
-    column_names_line = header_part[-1]
+    col_names_line_id = 1 if has_header else 0
+    testcase.assertGreater(
+        len(header_part), col_names_line_id,
+        f"header part of table should consist of optional table name line, "
+        f"column names line, and optional additional column titles. "
+        f"(for this table has_header = {has_header}")
+
+    column_names_line = header_part[col_names_line_id]
 
     actual_n_body_lines = separator_lines_ids[2] - separator_lines_ids[1] - 1
 
@@ -372,6 +378,35 @@ class TestPPTable(unittest.TestCase):
             cols_widths=[5, 10, 15],
         )
 
+    def test_multi_line_titles(self):
+        """Test PPTable with multi-line column titles."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            title_records=[
+                ('iddescr', 'll', 'nnnn'),
+                (555, 777, None),
+            ],
+            fmt="id,id:10,  level,name:1-10, level:20",
+        )
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'id', 'level', 'name', 'level'],
+            cols_widths=[
+                7,  # len of title line 'iddescr'
+                10,  # explicit value from fmt
+                5,  # len of column name 'level'
+                6,  # len of value 'Arnold'
+                20,  # explicit value from fmt
+            ],
+            contains_text=['iddescr', 'll', 'nnnn', '555', '777'],
+        )
+
     def test_lines_limits(self):
         """Check lines limits are reported correctly """
         records = [
@@ -523,7 +558,7 @@ class TestPPTable(unittest.TestCase):
                 else:
                     text = fmt(str(value) + " " + fmt_modifier)
 
-                return text, True  # align_left
+                return text, ppobj.ALIGN_LEFT
 
             def is_fmt_modifier_ok(self, fmt_modifier):
                 """Verify 'fmt_modifier' is acceptable by this Field Type.
@@ -602,6 +637,7 @@ class TestPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
+            has_header=True,
             cols_names=['id', 'level', 'name'],
             n_body_lines=4,  # all 4 records expected to be visible
             contains_text="My Table",  # begining of the header must be present
@@ -805,6 +841,7 @@ class TestPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
+            has_header=True,
             # ugly single column name used by dummy format of empty table
             cols_names=['-                              -'],
             n_body_lines = 0,

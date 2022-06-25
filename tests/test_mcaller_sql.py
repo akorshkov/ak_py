@@ -6,6 +6,7 @@ import sqlite3
 
 from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
+from ak import ppobj
 from ak.ppobj import PPTableFieldType, PPTable
 
 from .test_ppobj import verify_table_format
@@ -109,6 +110,7 @@ class TestMCallerSQL(unittest.TestCase):
 
         verify_table_format(
             self, users,
+            has_header=True,
             n_body_lines=2,
             cols_names=['u_id', 'name', 'id', 'name_1'],
             contains_text=[
@@ -126,7 +128,7 @@ class TestMCallerSQL(unittest.TestCase):
                 """adds some text to a value """
                 fmt = palette.get_color("NUMBER")
                 text = fmt(str(value) + " custom descr")
-                return text, True  # align_left
+                return text, ppobj.ALIGN_LEFT
 
         custom_field_type = CustomFieldType()
 
@@ -159,6 +161,7 @@ class TestMCallerSQL(unittest.TestCase):
         # applied to the result table: only columns specified in fmt are printed
         verify_table_format(
             self, users,
+            has_header=True,
             n_body_lines=2,
             cols_names=['u_id', 'id', 'name_1'],
             contains_text=[

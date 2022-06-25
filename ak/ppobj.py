@@ -10,6 +10,10 @@ from ak import utils
 from ak.color import ColorFmt, ColoredText, Palette
 
 
+ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
+CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
+
+
 #########################
 # generic pretty-printing
 
@@ -312,20 +316,37 @@ class PPTableFieldType:
         self.min_width = min_width
         self.max_width = max_width
 
-    def get_cell_text_len(self, value, fmt_modifier):
-        """Calculate length of text representation of the value.
+    def get_cell_text_len_for_row_type(self, value, fmt_modifier, cell_type) -> int:
+        if cell_type == CELL_TYPE_TITLE:
+            return self.get_title_cell_text_len(value, fmt_modifier)
+        return self.get_cell_text_len(value, fmt_modifier)
+
+    def get_cell_text_len(self, value, fmt_modifier) -> int:
+        """Calculate length of text representation of the value (for usual cell)
 
         This implementation is general, but not efficient. Override in
         derived classes to avoid construction of ColoredText objects - usually
         it is not required to find out text length.
         """
-        # caluculate text length w/o constructing ColoredText object for the cell
-        # return len(str(value))
-        text, _ = self.make_desired_text(value, fmt_modifier, self._DUMMY_PALETTE)
-        return len(ColoredText.strip_colors(str(text)))
+        text, _ = self.make_desired_text(
+            value, fmt_modifier, self._DUMMY_PALETTE)
+        return len(text)
 
-    def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
-        """Returns desired text for a value and alignment.
+    def get_title_cell_text_len(self, value, fmt_modifier):
+        text, _ = self.make_desired_title_cell_text(
+            value, fmt_modifier, self._DUMMY_PALETTE)
+        return len(text)
+
+    def make_desired_text_for_row_type(
+            self, value, fmt_modifier, cell_type, palette) -> (ColoredText, int):
+        """value -> desired text and alignment for table row of specified type."""
+        if cell_type == CELL_TYPE_TITLE:
+            return self.make_desired_title_cell_text(value, fmt_modifier, palette)
+        return self.make_desired_text(value, fmt_modifier, palette)
+
+    def make_desired_text(
+            self, value, fmt_modifier, palette) -> (ColoredText, int):
+        """value -> desired text and alignment for usual (not title) table row.
 
         Actual text may be truncated (hence different from desired text)
 
@@ -338,21 +359,37 @@ class PPTableFieldType:
                 f"Specified fmt_modifier: '{fmt_modifier}'")
         if isinstance(value, (int, float)):
             syntax_name = "NUMBER"
-            align_left = False
+            align = ALIGN_RIGHT
         elif value in (True, False, None):
             syntax_name = "KEYWORD"
-            align_left = False
+            align = ALIGN_RIGHT
         else:
             syntax_name = None
-            align_left = True
+            align = ALIGN_LEFT
         fmt = palette.get_color(syntax_name)
         text = fmt(str(value))
-        return text, align_left
+        return text, align
 
-    def make_cell_text(self, value, fmt_modifier, width, palette) -> ColoredText:
+    def make_desired_title_cell_text(
+            self, value, _fmt_modifier, palette) -> (ColoredText, int):
+        """value -> desired text and alignment for title table row."""
+
+        # values for column title cells are fetched from so called title records
+        # which have same structure as usual records.
+        # but these values supposed to be just strings, that is some description of
+        # column. It is not a enum or uuid - it makes no need to format these values
+        # using fmt_modifier.
+        str_val = str(value) if value else ""
+        fmt = palette.get_color('NAME')
+        text = fmt(str_val)
+        return text, ALIGN_CENTER
+
+    def make_cell_text(
+            self, value, fmt_modifier, cell_type, width, palette) -> ColoredText:
         """value -> ColoredText having exactly specified width."""
-        text, align_left = self.make_desired_text(value, fmt_modifier, palette)
-        return self._fit_to_width(text, width, align_left, palette)
+        text, align = self.make_desired_text_for_row_type(
+            value, fmt_modifier, cell_type, palette)
+        return self.fit_to_width(text, width, align, palette)
 
     def _verify_fmt_modifier(self, fmt_modifier):
         # Raise exc if 'fmt_modifier' is not compatible with this field type.
@@ -373,17 +410,39 @@ class PPTableFieldType:
             f"(specified format modifier: '{fmt_modifier}')")
 
     @staticmethod
-    def _fit_to_width(text, width, align_left, palette) -> ColoredText:
-        # add spaces or truncate the text so that resulting screen length of
-        # ColoredText is exactly 'width' characters.
+    def fit_to_width(text, width, align, palette) -> ColoredText:
+        """text -> ColorText of exactly specified width.
+
+        Arguments:
+        - text: either string or ColoredText
+        - width: desired width of result
+        - align: pbobj.ALIGN_LEFT or pbobj.ALIGN_CENTER or pbobj.ALIGN_RIGHT
+        - palette: ak.color.Palette. (In case the text does not fit into width
+            it is not simply truncated, but modified - palette is required to
+            get a color to be used to indicate modifications)
+
+        Examples:
+        'short'            -> colored 'short    '  or '    short'
+        'very long text'   -> colored 'very l...'
+        """
         assert width >= 0
         filler_len = width - len(text)
         if filler_len == 0:
             return text  # lucky, the text has exactly necessary length
         if filler_len > 0:
-            filler = palette.get_color(None)(' '*filler_len)
-            if align_left:
+            filler_color = palette.get_color(None)
+            if align == ALIGN_CENTER:
+                left_filer_len = filler_len // 2
+                right_filler_len = filler_len - left_filer_len
+                return (
+                    filler_color(' '*left_filer_len) +
+                    text +
+                    filler_color(' '*right_filler_len)
+                )
+            filler = filler_color(' '*filler_len)
+            if align == ALIGN_LEFT:
                 return text + filler
+            assert align == ALIGN_RIGHT
             return filler + text
         # text is longer than necessary. It will be truncated.
         # "some long text" -> "some lo..."
@@ -719,7 +778,7 @@ class PPTableColumn:
             whenever the value of this column changes.
         - min_width, max_width: limits for column width.
         """
-        self.field = field
+        self.field = field  # PPTableField
         self.name = name
 
         self.field.field_type._verify_fmt_modifier(fmt_modifier)
@@ -741,22 +800,30 @@ class PPTableColumn:
             self.max_width,
         )
 
-    def get_cell_text_len(self, record):
+    def get_cell_text_len(self, record, cell_type):
         """Get desired cell length for this value.
 
         (Actual cell may be shorter or longer).
         """
         value = self.field.fetch_value(record)
-        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier)
+        return self.field.field_type.get_cell_text_len_for_row_type(
+            value, self.fmt_modifier, cell_type)
 
-    def make_cell_text(self, record, palette):
-        """Make text for a cell.
+    def make_cell_text(self, record, palette, cell_type):
+        """Fetch value from record and make text for a cell.
 
         Length of created text is exactly self.width.
         """
         value = self.field.fetch_value(record)
+        return self.make_cell_text_by_value(value, palette, cell_type)
+
+    def make_cell_text_by_value(self, value, palette, cell_type):
+        """Make text for a cell.
+
+        Length of created text is exactly self.width.
+        """
         return self.field.field_type.make_cell_text(
-            value, self.fmt_modifier, self.width, palette)
+            value, self.fmt_modifier, cell_type, self.width, palette)
 
     def to_fmt_str(self):
         """Create fmt string - human readable and editable descr of self."""
@@ -1098,22 +1165,6 @@ class PPTable(PPObjBase):
     of data (such as results of sql query).
     """
 
-    class _ServiceCells(PPTableFieldType):
-        # used to format columns name cells, etc.
-        def make_title_text(self, value, width, palette) -> ColoredText:
-            """Is used to format columns names cells and table title"""
-            assert isinstance(value, str), f"{value} is {type(value)}"
-            fmt = palette.get_color("NAME")
-            return self._fit_to_width(fmt(value), width, True, palette)
-
-        def make_summary_text(self, summary, width, palette) -> ColoredText:
-            """Is used to format table summary"""
-            assert isinstance(summary, (str, ColoredText))
-            if not isinstance(summary, ColoredText):
-                fmt = palette.get_color(None)
-                summary = fmt(summary)
-            return self._fit_to_width(summary, width, True, palette)
-
     class _ServiceLine:
         # contents of a 'service' line of a printed table - line, which
         # doesn't correspond to any record (f.e. empty 'break by' line)
@@ -1128,24 +1179,29 @@ class PPTable(PPObjBase):
             fmt=None,
             fmt_obj=None,
             fields=None,
+            title_records=None,
             fields_types=None,
     ):
         """Constructor of PPTable object - this object prints table.
+
+        Some terminology:
+        - column: visible column in a table
+        - field: possible source of values for the column; describs how to get a
+            value from record object and possible ways to format it
 
         Arguments:
         - records: list of objects, containig data for table rows. All the
             objects must have similar structure (it may be a simple list or
             tuple of values or something more complex)
         - header, footer: (optional) text for header and footer of the table
-
-        All other arguments are optional, they describe table format: columns
-        of the table and fields (objects describing how to get a value from record
-        object and possible ways to format it); each column refers to some field.
         - fmt: (optional) string, describing columns of the table. Check
             PPTableFormat doc for more details.
         - fmt_obj: (optional) PPTableFormat object
         - fields: (optional) list of names of fileds in a record, or list
             of PPTableField objects
+        - title_records: (optional) list of objects which have format similar to
+            elements of 'records' argument, but contain not information for
+            multi-line titles
         - fields_types: (optional) dictionary {field_name: PPTableFieldType}.
 
         Combinations of arguments used in common scenarios:
@@ -1171,14 +1227,13 @@ class PPTable(PPObjBase):
         self.r = self.records
 
         self._ppt_fmt = self._init_format(fmt, fmt_obj, fields, fields_types)
+        self.title_records = title_records or []
 
-        if header is None:
-            header = "some table"
-        self._header = header
+        self.header = header
 
         if footer is None:
             footer = f"Total {len(self.records)} records"
-        self._footer = footer
+        self._footer = ColoredText(footer)
 
         self.palette = Palette({
             'TBL_BORDER': ColorFmt('GREEN'),
@@ -1188,7 +1243,7 @@ class PPTable(PPObjBase):
             'WARN': ColorFmt('RED'),
         })
 
-    def _init_format(self, fmt, fmt_obj, fields, fields_types):
+    def _init_format(self, fmt, fmt_obj, fields, fields_types) -> PPTableFormat:
         # part of PPTable constructor.
         # depending on arguments choose apropriate way to create PPTableFormat
         fields_types_dict = {} if fields_types is None else fields_types
@@ -1315,63 +1370,67 @@ class PPTable(PPObjBase):
             n_skipped = 0
         self._ppt_fmt.any_lines_skipped = n_skipped > 0
 
-        # calculate actual widths of table columns
-        # process only columns w/o specified width
+        # calculate actual widths of table columns (col.width)
         for col in columns:
-            if col.min_width == col.max_width:
-                col.width = col.min_width
-            else:
-                col.width = min(
-                    col.max_width, max(col.min_width, len(col.name)))
+            col.width = min(col.max_width, max(col.min_width, len(col.name)))
 
-        cols = [col for col in columns if col.min_width != col.max_width]
-        desired_widths = [len(col.name) for col in cols]
-        for rec in table_lines:
-            if isinstance(rec, self._ServiceLine):
-                continue
-            for i, col in enumerate(cols):
-                desired_widths[i] = max(
-                    desired_widths[i], col.get_cell_text_len(rec))
-
-        for desired_width, col in zip(desired_widths, cols):
-            col.width = min(
-                col.max_width, max(col.min_width, desired_width))
+        for cell_type, recs_generator in [
+            (CELL_TYPE_TITLE, self.title_records),
+            (CELL_TYPE_BODY, (
+                rec for rec in table_lines if not isinstance(rec, self._ServiceLine))),
+        ]:
+            for rec in recs_generator:
+                for col in columns:
+                    if col.width < col.max_width:
+                        col.width = max(
+                            col.width,
+                            min(col.max_width, col.get_cell_text_len(rec, cell_type))
+                        )
+                if all(col.width == col.max_width for col in columns):
+                    break
 
         table_width = sum(col.width for col in columns) + len(columns) + 1
 
         border_color = self.palette.get_color("TBL_BORDER")
         sep = border_color('|')
-        service_cells_formatter = self._ServiceCells()
 
         # contents of service lines can be created now
         break_line.line_text = sep + " "*(table_width - 2) + sep
-        skipped_recs_line.line_text = sep + service_cells_formatter.make_summary_text(
+        skipped_recs_line.line_text = sep + PPTableFieldType.fit_to_width(
             self.palette.get_color("WARN")("... ") +
             self.palette.get_color(None)(f"{n_skipped} records skipped"),
             table_width - 2,
-            self.palette,
-        ) + sep
+            ALIGN_LEFT,
+            self.palette) + sep
 
         # 1. make first border line
         border_line = border_color(
             "".join("+" + "-"*col.width for col in columns) + '+')
         yield border_line
 
-        # 2. table title
-        if self._header:
-            line = sep + service_cells_formatter.make_title_text(
-                self._header,
+        # 2. table header (name)
+        if self.header:
+            line = sep + PPTableFieldType.fit_to_width(
+                self.palette.get_color("NAME")(self.header),
                 table_width - 2,
+                ALIGN_LEFT,
                 self.palette) + sep
             yield line
 
         # 3. column names
         line = sep + sep.join(
-            service_cells_formatter.make_title_text(
-                col.name, col.width, self.palette)
-            for col in columns
+            col.make_cell_text_by_value(
+                col.name,
+                self.palette,
+                CELL_TYPE_TITLE,
+            ) for col in columns
         ) + sep
         yield line
+
+        for title_rec in self.title_records:
+            # multi-line column titles
+            yield self._make_table_line(
+                title_rec, columns, sep, self.palette, CELL_TYPE_TITLE)
 
         # 4. one more border_line
         yield border_line
@@ -1381,22 +1440,24 @@ class PPTable(PPObjBase):
             if isinstance(tl, self._ServiceLine):
                 yield tl.line_text
             else:
-                yield self._make_table_line(tl, columns, sep, self.palette)
+                yield self._make_table_line(
+                    tl, columns, sep, self.palette, CELL_TYPE_BODY)
 
         # 6. final border line
         yield border_line
 
         # 7. summary line
         if self._footer:
-            yield service_cells_formatter.make_summary_text(
+            yield PPTableFieldType.fit_to_width(
                 self._footer,
                 table_width,
+                ALIGN_LEFT,
                 self.palette)
 
-    def _make_table_line(self, record, columns, sep, palette):
+    def _make_table_line(self, record, columns, sep, palette, cell_type):
         # create ColoredText - representaion of a single record in table
         line = sep + sep.join(
-            col.make_cell_text(record, palette)
+            col.make_cell_text(record, palette, cell_type)
             for col in columns
         ) + sep
         return line
@@ -1452,8 +1513,9 @@ class PPEnumFieldType(PPTableFieldType):
         """Return simple string name of the value."""
         return self.enum_values.get(value, self.enum_missing_value)[0]
 
-    def make_desired_text(self, value, fmt_modifier, palette) -> (ColoredText, bool):
-        """Returns desired text for a value and alignment."""
+    def make_desired_text(
+            self, value, fmt_modifier, palette) -> (ColoredText, int):
+        """value -> desired text and alignment"""
 
         # prepare and cache cell text for a enum value
         # cache is prepared for all supported format modifiers
@@ -1487,7 +1549,8 @@ class PPEnumFieldType(PPTableFieldType):
             if value is None:
                 # special case: cell will not contain enum's value and name,
                 # but a single None
-                text_ang_alignment = super().make_desired_text(value, None, palette)
+                text_ang_alignment = super().make_desired_text(
+                    value, None, palette)
                 by_fmt_cache['val'][value] = text_ang_alignment
                 by_fmt_cache['name'][value] = text_ang_alignment
                 by_fmt_cache['full'][value] = text_ang_alignment
@@ -1496,7 +1559,8 @@ class PPEnumFieldType(PPTableFieldType):
             val_len = max(self.max_val_len, len(str(value)))
 
         # 'val' format
-        val_text, align = super().make_desired_text(value, None, palette)
+        val_text, align = super().make_desired_text(
+            value, None, palette)
         by_fmt_cache['val'][value] = (val_text, align)
 
         # 'name' format
@@ -1511,10 +1575,11 @@ class PPEnumFieldType(PPTableFieldType):
             # align 'value' portion of the text to right
             prefix_pad = " " * pad_len
         full_text = ColoredText(prefix_pad, val_text, " ", name_text)
-        by_fmt_cache['full'][value] = (full_text, True)
+        by_fmt_cache['full'][value] = (full_text, ALIGN_LEFT)
 
     def get_cell_text_len(self, value, fmt_modifier):
         """Calculate length of text representation of the value."""
+
         by_val_lenghs = self._cache_lengths.get(fmt_modifier, None)
         if by_val_lenghs is None:
             self._verify_fmt_modifier(fmt_modifier)
