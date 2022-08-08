@@ -75,7 +75,7 @@ class SqlFilterCondition:
             elif isinstance(value, (list, tuple)):
                 self.op = 'IN' if self.op == '=' else 'NOT IN'
         elif self.op in ('IN', 'NOT IN'):
-            if not isinstance(value, (list, tuple)):
+            if not isinstance(value, (list, tuple, set)):
                 raise ValueError(
                     f"value {self.value} does not match sql operation {self.op}")
         elif self.op in ('IS NULL', 'IS NOT NULL'):
@@ -142,7 +142,7 @@ class SqlFilterCondition:
             values_list.append(self.value)
             sql = self.field_name + sql_clauses[self.op]
         elif self.op in ('IN', 'NOT IN'):
-            assert isinstance(self.value, (list, tuple))
+            assert isinstance(self.value, (list, tuple, set))
             if self.value:
                 values_list.extend(self.value)
                 sql = (self.field_name + sql_clauses[self.op] + "(" +
