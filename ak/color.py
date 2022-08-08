@@ -114,6 +114,14 @@ class ColoredText:
 
         return self
 
+    @classmethod
+    def strip_colors(cls, text: str) -> str:
+        """Colorer-formatted string -> same string w/o coloring."""
+        if cls._SEQ_RE is None:
+            cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
+
+        return re.sub(cls._SEQ_RE, "", text)
+
     def __add__(self, other):
         """Concatenate color text objects"""
         result = ColoredText(self)
@@ -271,6 +279,18 @@ class ColoredText:
 
         return ColoredText(*new_chunks)
 
+    def fixed_len(self, desired_len):
+        """Return new ColoredText which has specified length.
+
+        Result is either truncated or padded with spaces original.
+        """
+        len_diff = desired_len - len(self)
+        if len_diff < 0:
+            return self[:desired_len]
+        if len_diff > 0:
+            return self + " "*len_diff
+        return self
+
     def _get_chunk_pos(self, position):
         # position of visible character -> (chunk_id, char_pos_in_chunk)
         # (None, None) is returned if position is out of range
@@ -305,14 +325,6 @@ class ColoredText:
         # make a new _ColoredChunk with specified text and format sequences
         # same as in orig_chunk
         return cls._ColoredChunk(orig_chunk.c_prefix, new_text, orig_chunk.c_suffix)
-
-    @classmethod
-    def strip_colors(cls, text: str) -> str:
-        """Colorer-formatted string -> same string w/o coloring."""
-        if cls._SEQ_RE is None:
-            cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
-
-        return re.sub(cls._SEQ_RE, "", text)
 
 
 class Palette:
@@ -419,6 +431,9 @@ class ColorFmt:
 
         Arguments:
             most arguments are self-explained.
+            - color: one of ['BLACK', 'RED', 'GREEN', 'YELLOW', 'BLUE', 'MAGENTA',
+                'CYAN', 'WHITE', None]
+                None - does not change color
             - use_effects: if False, all other arguments are ignored and
                 created object is 'dummy' - it does not add any effects to text.
         """

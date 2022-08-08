@@ -94,6 +94,7 @@ class TestColorFmt(unittest.TestCase):
 class TestColoredTextProperties(unittest.TestCase):
 
     def test_nocolor_text(self):
+        """Test ColoredText which does not have any effect."""
         raw_text = 'text'
         nocolor_text = ColorFmt(None)(raw_text)
 
@@ -341,6 +342,24 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual(empty_text, empty_text[1:10])
         self.assertEqual(empty_text, empty_text[10:1])
         self.assertEqual(empty_text, empty_text[1:-1])
+
+    def test_fixed_len_method(self):
+        """Test ColoredText.fixed_len method"""
+        t = ColorFmt('RED')("123") + ColorFmt('BLUE')("456")
+
+        # get longer result
+        result = t.fixed_len(10)
+        self.assertEqual(10, len(result))
+        self.assertEqual(
+            t.plain_text(), "123456", "original object should not be modified")
+        self.assertEqual(result.plain_text(), "123456    ")
+
+        # get shorted result
+        result = t.fixed_len(5)
+        self.assertEqual(5, len(result))
+        self.assertEqual(
+            t.plain_text(), "123456", "original object should not be modified")
+        self.assertEqual(result.plain_text(), "12345")
 
     def test_strip_colors(self):
         """test method which removes color sequences from string."""
