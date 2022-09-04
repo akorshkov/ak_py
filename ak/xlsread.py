@@ -243,7 +243,7 @@ class XlsObject:
             f"({self._src_ws_name} {self._anchor_cell_coord}) {self.logic_id}>")
 
     def get_attr_origin(
-            self, attr_name, range_key=None, *, incl_ws=False, strict=True):
+            self, attr_name, range_key=None, *, incl_ws=False, strict=True) -> str:
         """Return coordinate of the cell(s) corresponding to attribute.
 
         Examples:

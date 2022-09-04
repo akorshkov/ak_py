@@ -21,6 +21,7 @@ Installation:
 3. Install optional dependencies:
 ```
     pip install --user openpyxl
+    pip install --user mysql-connector-python
 ```
 4. Use it:
 ```
