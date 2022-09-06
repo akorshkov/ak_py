@@ -46,6 +46,9 @@ class _MockedGitCommit:
         self.committed_date = self._BASE_TIME + self.iid * 47 + random.randint(0, 40)
         self.author = _MockedAuthor(random.choice(self._AUTHORS))
 
+    def __str__(self):
+        return f"MockedCommit({self.iid} {self.hexsha[:11]} {self.message})"
+
 
 class _MockedGitRef:
     # part of MockedGitRepo
@@ -213,11 +216,11 @@ class TestRepo(unittest.TestCase):
         # logs_configure(5)
         component_1_git_repo = MockedGitRepo(
             "branch: origin/master",
-            "100<-20, 40| BUG-77|tags: build_4304_release_10_250_success ",
-#            "100<-20, 40| BUG-77",
-            "  20<-10   | BUG-2525|tags: build_4303_release_10_250_success",
-            "40         | Some Commit",
-            "10         | Initial Commit",
+            "50 | BUG-444",
+            "40 | BUG-333|tags: build_4304_release_10_250_success ",
+            "30 | BUG-222|tags: build_4303_release_10_250_success",
+            "20 | BUG-111",
+            "10 | Initial Commit",
             name="component_1",
         )
 
@@ -225,5 +228,36 @@ class TestRepo(unittest.TestCase):
             'comp_1': ProjectRepo('comp_1', component_1_git_repo),
         })
 
-        reports_data = repos.make_reports_data("BUG-2525")
+        # 1. no matching commits - empty report
+        reports_data = repos.make_reports_data("BUG-xxx")
+        self.assertEqual(1, len(reports_data))
+        cmpnt_name, rgraph = reports_data[0]
+        self.assertEqual("comp_1", cmpnt_name)
+        # self.assertEqual(0, len(rgraph.branches), "empty report expected")
+        self.assertEqual(0, len(rgraph.rcommits), "empty report expected")
+
+        # 2. single commit matches, it is included into a build in next commit
+        reports_data = repos.make_reports_data("BUG-111")
+
+        _, rgraph = reports_data[0]
+        rbranch = rgraph.branches[0]
+        self.assertEqual("master", rbranch.branch_name)
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assertEqual(1, len(rbuilds))
+        rbuild = rbuilds[0]
+        self.assertEqual((10, 250, 4303, 4303), rbuild.build_num.as_tuple())
+
+        # 3. single commit matches, it is included into a build in same commit
+        reports_data = repos.make_reports_data("BUG-222")
+        #repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assertEqual(1, len(rgraph.branches))
+        rbranch = rgraph.branches[0]
+        self.assertEqual("master", rbranch.branch_name)
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assertEqual(1, len(rbuilds))
+        rbuild = rbuilds[0]
+        self.assertEqual((10, 250, 4303, 4303), rbuild.build_num.as_tuple())
+
         #repos.print_prepared_reports(reports_data)

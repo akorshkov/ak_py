@@ -329,6 +329,11 @@ class RBranch:
             return None
         return self.rbuilds[max(self.rbuilds.keys())]
 
+    def get_rbuilds_list(self):
+        return [
+            self.rbuilds[iid]
+            for iid in sorted(self.rbuilds.keys())]
+
     def __str__(self):
         return f"RBranch<{self.branch_name}>"
 
@@ -386,6 +391,9 @@ class RGraph:
             self.selected_explicitely = selected_explicitely
             self.relevant_cmpnts = relevant_cmpnts  # {repo_name, }
             self.rc_parents = []
+
+        def __str__(self):
+            return f"_NodeAccumdat({self.commit}, selected: {self.selected_explicitely})"
 
     class _ComponentVersionsMap:
         # info about report-related versions of component repo
@@ -743,6 +751,7 @@ class RGraph:
                 br_cache.rbuilds_ancestors,
                 repo_cache.prev_branches_builds,
             )
+            contains_new_commits = accumdat.selected_explicitely or rcommits_in_build
             buildnums = repo_cache.builds_detector.get_builds_numbers(accumdat.commit)
             components_bumps = self._make_bumps_info(
                 accumdat.commit, accumdat.relevant_cmpnts, parent_rbuilds,
@@ -758,8 +767,8 @@ class RGraph:
             # build commit is relevant for report in three cases:
             is_rbuild = (
                 # 1. it contains any new report-related commits
-                rcommits_in_build
-                # 2. it contains bumps of relevant componants vers
+                contains_new_commits
+                # 2. it contains bumps of relevant components
                 or non_trivial_bumps_present
                 # 3. there are several previous relevant builds - that means
                 # relevant sub-branches are now merged. Each commit included into
@@ -790,9 +799,12 @@ class RGraph:
         if is_rbuild:
             assert new_rcommit is not None
             assert buildnums is not None
+            if accumdat.selected_explicitely:
+                rcommits_in_build[new_rcommit.iid] = new_rcommit
             new_rbuild = RBuild(
                 new_rcommit, parent_rbuilds, rcommits_in_build, components_bumps)
             new_rbuild.iid = new_rcommit.iid
+            self.brcommits[new_rbuild.iid] = new_rbuild
         else:
             new_rbuild = None
 
@@ -838,7 +850,7 @@ class RGraph:
                     # we already know build parents of this commit
                     dfs_sp[-1] -= 1
                     continue
-                # still not have enough info about cur_commit. Need to analise parents
+                # still not enough info about cur_commit. Need to analyze parents
                 dfs_stack.append(cur_commit)
                 dfs_sp.append(len(cur_commit.parents) - 1)
                 continue
@@ -863,7 +875,7 @@ class RGraph:
 
             parent_rbuilds = {rbuild.iid: rbuild for rbuild in _iter_parent_rbuilds()}
 
-            # parent_rbuilds may contain some unnecessary items. Some build commits
+            # parent_rbuilds may contain unnecessary items. Some build commits
             # may be already included into other build commits
             while True:
                 extra_bcs = {
@@ -1639,9 +1651,7 @@ class ReposCollection:
                 if not br.rbuilds:
                     continue
                 print(f"------- {br.branch_name}")
-                # print(f"    n_rbuilds: {len(br.rbuilds)}")
-                for build_iid in sorted(br.rbuilds.keys()):
-                    rbuild = br.rbuilds[build_iid]
+                for rbuild in br.get_rbuilds_list():
                     print(f"-- {rbuild.build_num}")
                     for comp_name, bump in rbuild.bumps_info.items():
                         print(f"----  {comp_name} : {bump}")
