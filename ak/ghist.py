@@ -213,6 +213,12 @@ class BuildNumData(Comparable):
 
     @classmethod
     def mk_fake_not_built(cls):
+        """Make predefined number for fake "not-yet-built" build."""
+        return cls(8888, 8888, 8888, 8888, "")
+
+    @classmethod
+    def mk_fake_not_merged(cls):
+        """Make predefined number for fake "not-yet-merged" build."""
         return cls(9999, 9999, 9999, 9999, "")
 
     def __str__(self):
@@ -294,7 +300,12 @@ class RBuild:
                          # corresponds to some RCommit and in this case it has
                          # same iid.
         self.build_type = build_type
-        self.build_num = rcommit.build_num if rcommit else None
+        if rcommit is not None:
+            self.build_num = rcommit.build_num
+        elif build_type == self.FAKE_NOT_MERGED:
+            self.build_num = BuildNumData.mk_fake_not_merged()
+        else:
+            assert False
         self.rcommit = rcommit  # RCommit
         self.parent_rbuilds = parent_rbuilds  # {iid: RBuild}
         self.bumps_info = bumps_info  # {repo_name: ComponentBump}
@@ -439,8 +450,8 @@ class RGraph:
         self.brcommits = {}  # {iid: RBuild} - all build commits
         # RBuild are registered with the same id's as corresponding RCommit's
         # Fake RBuild do not correspond to any RCommit, so they are reristered
-        # with negative id's
-        self._brcommits_counter = -1
+        # with id's which would not collide with rcommits ids
+        self._brcommits_counter = 1_000_000_000
 
         # get release branches
         branches_data = list(self.repo.iter_release_branches())
@@ -493,6 +504,12 @@ class RGraph:
                     else min(ts, self.min_rbuild_timestamp))
                 self.bn_map[k] = (rbranch, rbuild)
 
+        self.branches = [
+            br
+            for br in self.branches[::-1]  # reverse, so that 'master' is first
+            if br.rbuilds  # skip branches if there is nothing to report in them
+        ]
+
     def _read_branch(
             self, branch_name, ref_name,
             search_predicate, prev_branch,
@@ -509,7 +526,7 @@ class RGraph:
         # - RBranch
         # - bn_map: {(major, minor, patch, build) -> RBuild}
 
-        # logger.debug("read branch %s %s", self.repo.name, branch_name)
+        logger.debug("read branch %s %s", self.repo.name, branch_name)
 
         bn_map = {}
         cur_branch_rbuilds = {}  # idmap of RBuild objects in current branch
@@ -667,7 +684,7 @@ class RGraph:
         not_merged_rcommits = {
             iid: rcommit
             for iid, rcommit in all_commits_prev_branch.items()
-            if iid not in all_commits_in_this_branch
+            if rcommit.is_explicit and iid not in all_commits_in_this_branch
         }
         ###################  !!!!!!
         #if all_commits_prev_branch:
@@ -703,7 +720,7 @@ class RGraph:
                 None, parent_rbuilds, not_merged_rcommits, pending_cmpnts_bumps,
                 build_type=RBuild.FAKE_NOT_MERGED)
             rbuild.iid = self._brcommits_counter
-            self._brcommits_counter -= 1
+            self._brcommits_counter += 1
             cur_branch_rbuilds[rbuild.iid] = rbuild
 
         branch_rcommits = RBranch(
@@ -1197,7 +1214,7 @@ class ProjectRepo:
                 yield ref.name, branch_name, bn
 
     def _read_saved_build_numbers_from_file(self, blob, path):
-        assert False, "Implement this method in derived class!"
+        assert False, f"Implement this method in '{type(self)}'!"
 
     #########################
     # methods for processing info about builds associated with commits
@@ -1640,8 +1657,6 @@ class ReposCollection:
             print(f"====== {repo_name} =======")
             for br in branches:
                 # br is RBranch
-                if not br.rbuilds:
-                    continue
                 print(f"------- {br.branch_name}")
                 for rbuild in br.get_rbuilds_list():
                     print(f"-- {rbuild.build_num}")

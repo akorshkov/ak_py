@@ -3,6 +3,7 @@
 ghist module fetches and reports history of commits and builds for specified bug(s).
 """
 import unittest
+import io
 from hashlib import sha1
 import random
 
@@ -23,6 +24,31 @@ class _MockedAuthor:
         self.name = name
 
 
+class _MockedBlob:
+    # mock git blob
+    def __init__(self, contents):
+        self.hexsha = sha1(contents.encode()).hexdigest()
+        self.data = contents.encode() if isinstance(contents, str) else contents
+
+    @property
+    def data_stream(self):
+        return io.BytesIO(self.data)
+
+
+class _MockedTree:
+    # mock of git.commit.tree
+    def __init__(self, files_contents):
+        self.files_in_tree = {
+            path: _MockedBlob(contents)
+            for path, contents in files_contents.items()
+        }
+
+    def __truediv__(self, path):
+        # mock "git.commit.tree / path" operation.
+        # returns blob (actually _MockedBlob)
+        return self.files_in_tree[path]
+
+
 class _MockedGitCommit:
     # mocked git commit object
     _AUTHORS = [
@@ -31,7 +57,7 @@ class _MockedGitCommit:
     ]
     _BASE_TIME = random.randint(10000, 20000) * 86400
 
-    def __init__(self, intid, parents, message, tags, repo_name):
+    def __init__(self, intid, parents, message, tags, tree, repo_name):
         self.intid = intid  # integer id, should be unique within a repo
         s = f"{self.intid:05}"
 
@@ -40,6 +66,7 @@ class _MockedGitCommit:
         self.hexsha = hs[:1] + s[-5:] + hs[6:]
         self.parents = parents  # [_MockedGitCommit, ]
         self.message = message
+        self.tree = _MockedTree(tree)
 
         # note: actual git.commit object does not have 'tags' attribute
         self.tags = tags
@@ -119,6 +146,7 @@ class MockedGitRepo:
 
         # parse the commits descriptions
         prev_commit = None
+        extra_lines = []  # used in case if commit description takes several lines
         for descr_line in reversed(commits_descr):
             descr_line = descr_line.strip()
             if not descr_line:
@@ -131,7 +159,14 @@ class MockedGitRepo:
                 assert ref_name not in self.refs
                 self.refs[ref_name] = _MockedGitRef(ref_name, prev_commit)
                 continue
-            commit = self._mk_commit(descr_line, prev_commit)
+            if descr_line.startswith("-->"):
+                extra_lines.append(descr_line[3:])
+                continue
+
+            # create new commit from description lines
+            full_descr = descr_line + "|" + "|".join(reversed(extra_lines))
+            extra_lines = []
+            commit = self._mk_commit(full_descr, prev_commit)
             assert commit.intid not in self.all_commits, (
                 f"duplicate commit intid: {commit.intid}")
             self.all_commits[commit.intid] = commit
@@ -186,6 +221,7 @@ class MockedGitRepo:
         # get other attributes
         message = None
         tags = None
+        tree = {}
 
         for chunk in chunks[1:]:
             if not chunk:
@@ -196,6 +232,18 @@ class MockedGitRepo:
                     f"duplicate 'tags:' section in commit descr: {commit_descr}")
                 tags = [t.strip() for t in chunk[5:].split(',')]
                 continue
+            if chunk.startswith('file:'):
+                tree_descr_chunks = chunk.split(':')
+                assert len(tree_descr_chunks) == 3, (
+                    f"unexpected file contents description: '{chunk}'. "
+                    f"Expected format: 'file:path/to/file:contents of the file'")
+                _, path, contents = tree_descr_chunks
+                path = path.strip()
+                assert path not in tree, (
+                    f"commit description '{commit_descr}' contains duplicate "
+                    f"contents for file '{path}'")
+                tree[path] = contents
+                continue
             # this is message
             assert message is None, (
                 f"commit descr '{commit_descr} contains duplicate 'message'"
@@ -205,7 +253,7 @@ class MockedGitRepo:
         assert message is not None, (
             f"message is not specified in commit descr: {commit_descr}")
 
-        return _MockedGitCommit(intid, parents, message, tags, self.name)
+        return _MockedGitCommit(intid, parents, message, tags, tree, self.name)
 
 
 class CommitsCheckerMixin:
@@ -280,13 +328,7 @@ class CommitsCheckerMixin:
 #########################
 # Test simple scenarios with a single repo
 
-class DemoRepoCollection(ReposCollection):
-    _REPOS_TYPES = {
-        'comp_1': ProjectRepo,
-    }
-
-
-class TestRepo(unittest.TestCase, CommitsCheckerMixin):
+class TestSingleRepoSingleBranch(unittest.TestCase, CommitsCheckerMixin):
     """Tests on primitive setup: one repo, linear history of commits."""
 
     @classmethod
@@ -302,8 +344,16 @@ class TestRepo(unittest.TestCase, CommitsCheckerMixin):
             name="component_1",
         )
 
+        class Comp1Repo(ProjectRepo):
+            pass
+
+        class DemoRepoCollection(ReposCollection):
+            _REPOS_TYPES = {
+                'comp_1': Comp1Repo,
+            }
+
         cls.repos = DemoRepoCollection({
-            'comp_1': ProjectRepo('comp_1', component_1_git_repo),
+            'comp_1': Comp1Repo('comp_1', component_1_git_repo),
         })
         # logs_configure(5)
 
@@ -362,7 +412,7 @@ class TestRepo(unittest.TestCase, CommitsCheckerMixin):
             self.assert_branches_list(rgraph, ['master', ])
             rbranch = rgraph.branches[0]
             rbuilds = rbranch.get_rbuilds_list()
-            self.assert_buildnums(rbuilds, ["9999.9999.9999", ])
+            self.assert_buildnums(rbuilds, ["8888.8888.8888", ])
             rbuild = rbuilds[0]
             self.assert_commits_list(rbuild, [expected_commit_id, ])
 
@@ -376,7 +426,262 @@ class TestRepo(unittest.TestCase, CommitsCheckerMixin):
         rbranch = rgraph.branches[0]
         rbuilds = rbranch.get_rbuilds_list()
         self.assert_buildnums(
-            rbuilds, ["9999.9999.9999", "10.250.4304", "10.250.4303", ])
+            rbuilds, ["8888.8888.8888", "10.250.4304", "10.250.4303", ])
         self.assert_commits_list(rbuilds[0], [50, 40])
         self.assert_commits_list(rbuilds[1], [30, ])
         self.assert_commits_list(rbuilds[2], [20, 10])
+
+
+class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
+    """One repo several branches."""
+
+    @classmethod
+    def setUpClass(cls):
+        component_1_git_repo = MockedGitRepo(
+            "branch: origin/master",  # ---- branch
+            "340 | BUG-777",
+            "330<-230, 320| merge",
+            "320<-220| branch out |tags: build_4500_master_success",
+            "--> file:VERSION:10.270|",
+            "branch: origin/release/10.260",  # ---- branch
+            "240<-230, 140| merge|tags: build_4445_release_10_260_success",
+            "230 | BUG-333|tags: build_4444_release_10_260_success",
+            "225 | BUG-666",
+            "220<-120 | first commit after branch",
+            "branch: origin/release/10.250",  # ---- branch
+            "150 | BUG-555",
+            "140 | BUG-444",
+            "130 | BUG-333|tags: build_4304_release_10_250_success ",
+            "120 | BUG-222|tags: build_4303_release_10_250_success",
+            "110 | BUG-111",
+            "15  | Initial Commit",
+            name="component_1",
+        )
+
+        class Comp1Repo(ProjectRepo):
+            _SAVED_BUILD_NUM_SOURCES = ["VERSION", ]
+
+            def _read_saved_build_numbers_from_file(self, blob, path):
+                data = blob.data_stream.read().decode().strip()
+                nums = [int(chunk) for chunk in data.split('.')]
+                if len(nums) == 2:
+                    nums.append(None)
+                return nums
+
+        class DemoRepoCollection(ReposCollection):
+            _REPOS_TYPES = {
+                'comp_1': Comp1Repo,
+            }
+
+        cls.repos = DemoRepoCollection({
+            'comp_1': Comp1Repo('comp_1', component_1_git_repo),
+        })
+        # logs_configure(5)
+
+    def test_report_111(self):
+        """Verify data for 'BUG-111' report."""
+        reports_data = self.repos.make_reports_data("BUG-111")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(rgraph, ["master", "release/10.260", "release/10.250"])
+
+        # check branch release/10.250
+        rbranch = rgraph.branches[2]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.250.4303", ])
+        self.assert_commits_list(rbuilds[0], [110, ])
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.260.4444", ])
+        self.assert_commits_list(rbuilds[0], [110, ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.270.4500", ])
+        self.assert_commits_list(rbuilds[0], [110, ])
+
+    def test_report_222(self):
+        """Verify data for 'BUG-222' report."""
+        reports_data = self.repos.make_reports_data("BUG-222")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(rgraph, ["master", "release/10.260", "release/10.250"])
+
+        # check branch release/10.250
+        rbranch = rgraph.branches[2]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.250.4303", ])
+        self.assert_commits_list(rbuilds[0], [120, ])
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.260.4444", ])
+        self.assert_commits_list(rbuilds[0], [120, ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.270.4500", ])
+        self.assert_commits_list(rbuilds[0], [120, ])
+
+    def test_report_333(self):
+        """Verify data for 'BUG-333' report."""
+        reports_data = self.repos.make_reports_data("BUG-333")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(
+            rgraph, ["master", "release/10.260", "release/10.250"])
+
+        # check branch release/10.250
+        rbranch = rgraph.branches[2]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.250.4304", ])
+        self.assert_commits_list(rbuilds[0], [130, ])
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.260.4445", "10.260.4444"])
+        self.assert_commits_list(rbuilds[0], [130, ])
+        self.assert_commits_list(rbuilds[1], [230, ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["9999.9999.9999", "8888.8888.8888"])
+        self.assert_commits_list(
+            rbuilds[0], [130, ],
+            "commit 130 merged into 10.260 by commit 240 and not merged into master")
+        self.assert_commits_list(rbuilds[1], [230, ])
+
+    def test_report_444(self):
+        """Verify data for 'BUG-444' report."""
+        reports_data = self.repos.make_reports_data("BUG-444")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(
+            rgraph, ["master", "release/10.260", "release/10.250"])
+
+        # check branch release/10.250
+        rbranch = rgraph.branches[2]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["8888.8888.8888", ])
+        self.assert_commits_list(rbuilds[0], [140, ])
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.260.4445", ])
+        self.assert_commits_list(rbuilds[0], [140, ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["9999.9999.9999", ])
+        self.assert_commits_list(rbuilds[0], [140, ])
+
+    def test_report_555(self):
+        """Verify data for 'BUG-555' report."""
+        reports_data = self.repos.make_reports_data("BUG-555")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(
+            rgraph, ["master", "release/10.260", "release/10.250"])
+
+        # check branch release/10.250
+        rbranch = rgraph.branches[2]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["8888.8888.8888", ])
+        self.assert_commits_list(rbuilds[0], [150, ])
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["9999.9999.9999", ])
+        self.assert_commits_list(rbuilds[0], [150, ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["9999.9999.9999", ])
+        self.assert_commits_list(rbuilds[0], [150, ])
+
+    def test_report_666(self):
+        """Verify data for 'BUG-666' report."""
+        reports_data = self.repos.make_reports_data("BUG-666")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(
+            rgraph, ["master", "release/10.260"])
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["10.260.4444", ])
+        self.assert_commits_list(rbuilds[0], [225, ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["8888.8888.8888", ])
+        self.assert_commits_list(rbuilds[0], [225, ])
+
+    def test_report_777(self):
+        """Verify data for 'BUG-777' report."""
+        reports_data = self.repos.make_reports_data("BUG-777")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(rgraph, ["master", ])
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["8888.8888.8888", ])
+        self.assert_commits_list(rbuilds[0], [340, ])
+
+    def test_report_all_bugs(self):
+        """Verify data for all bugs 'BUG' report."""
+        reports_data = self.repos.make_reports_data("BUG")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(
+            rgraph, ["master", "release/10.260", "release/10.250"])
+
+        # check branch release/10.250
+        rbranch = rgraph.branches[2]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["8888.8888.8888", "10.250.4304", "10.250.4303"])
+        self.assert_commits_list(rbuilds[0], [150, 140])  # not built
+        self.assert_commits_list(rbuilds[1], [130, ])  # build 10.250.4304
+        self.assert_commits_list(rbuilds[2], [120, 110])  # build 10.250.4303
+
+        # check branch release/10.260
+        rbranch = rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["9999.9999.9999", "10.260.4445", "10.260.4444"])
+        self.assert_commits_list(rbuilds[0], [150])  # not merged
+        self.assert_commits_list(rbuilds[1], [140, 130])  # 10.260.4445
+        self.assert_commits_list(rbuilds[2], [230, 225, 120, 110])  # 10.260.4444
+
+        # check branch master
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["9999.9999.9999", "8888.8888.8888", "10.270.4500"])
+        self.assert_commits_list(rbuilds[0], [150, 140, 130])  # not merged
+        self.assert_commits_list(rbuilds[1], [340, 230, 225])  # not built
+        self.assert_commits_list(rbuilds[2], [120, 110])  # 10.270.4500
