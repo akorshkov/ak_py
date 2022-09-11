@@ -211,6 +211,10 @@ class BuildNumData(Comparable):
         self.build = build
         self.branch_str = branch_str
 
+    @classmethod
+    def mk_fake_not_built(cls):
+        return cls(9999, 9999, 9999, 9999, "")
+
     def __str__(self):
         if self.patch == self.build:
             return f"{self.major}.{self.minor}.{self.patch}"
@@ -302,6 +306,13 @@ class RBuild:
     def __repr__(self):
         return str(self)
 
+    def get_printable_rcommits(self):
+        """Return properly sorted list of RCommit's to be printed in report."""
+        return [
+            rcommit
+            for rcommit in sorted(self.rcommits.values(), key=lambda c: -c.iid)
+            if rcommit.is_explicit]
+
 
 class RBranch:
     """Info about report-related commits in some branch"""
@@ -330,9 +341,13 @@ class RBranch:
         return self.rbuilds[max(self.rbuilds.keys())]
 
     def get_rbuilds_list(self):
+        """Get sorted list of RBuild's in this branch.
+
+        RBuild's a sorted, latest is the first.
+        """
         return [
             self.rbuilds[iid]
-            for iid in sorted(self.rbuilds.keys())]
+            for iid in sorted(self.rbuilds.keys(), reverse=True)]
 
     def __str__(self):
         return f"RBranch<{self.branch_name}>"
@@ -547,7 +562,9 @@ class RGraph:
                 # ==== create RCommit's from accumdat ========
                 new_rcommit, new_rbuild, buildnums, parent_rbuilds = self._make_rcommits(
                     cur_accumdat,
-                    components_versions_maps, repo_cache, br_cache)
+                    components_versions_maps, repo_cache, br_cache,
+                    is_head_commit=cur_accumdat.commit.hexsha == head_commit.hexsha,
+                )
 
                 # ==== register RCommit in misc caches =======
                 if new_rcommit is None:
@@ -626,34 +643,7 @@ class RGraph:
         result_accumdata = dfs_accumdata.pop()
         assert result_accumdata.commit is None
 
-        # ==== prepare fake "not-built-yet" build info =======
-        # the fake rbuild (if required) will be based on head_commit
-
-        # The only case when there is no neeed to even check if the fake is
-        # required is if the head commit of the branch is build commit.
-        # In this case it is processed already
-        fake_not_required = (
-            len(result_accumdata.rc_parents) == 1
-            and result_accumdata.rc_parents[0].iid in cur_branch_rbuilds
-            and result_accumdata.rc_parents[0].commit.hexsha == head_commit.hexsha
-        )
-
-        if not fake_not_required:
-            result_accumdata.commit = head_commit
-            new_rcommit, new_rbuild, _buildnums, _parent_rbuilds = self._make_rcommits(
-                result_accumdata,
-                components_versions_maps, repo_cache, br_cache,
-                is_fake=True,
-            )
-
-            if new_rbuild is not None:
-                assert new_rcommit is not None
-                assert new_rcommit.commit.hexsha == head_commit.hexsha
-                comm_hex = new_rcommit.commit.hexsha
-                repo_cache.selected_commits[comm_hex] = new_rcommit
-                cur_branch_rbuilds[new_rbuild.iid] = new_rbuild
-
-        # ==== prepare fake "not-merged-yet" build indo ======
+        # ==== prepare fake "not-merged-yet" build info ======
         all_commits_prev_branch = {
             iid: commit
             for rbuild in prev_branch.rbuilds.values()
@@ -702,7 +692,7 @@ class RGraph:
                 cmpnt_incl_rbuild = cmpnt_prev_bump.to_rbuild
                 cmpnt_incl_buildnum = cmpnt_prev_bump.to_buildnum
                 cmpnt_rbranch, _ = components_versions_maps[repo_name].bn_map[
-                    cmpnt_incl_rbuild.as_tuple()]
+                    cmpnt_incl_rbuild.build_num.as_tuple()]
                 latest_cmpnt_rbuild = cmpnt_rbranch.get_latest_rbuild()
                 pending_cmpnts_bumps[repo_name] = ComponentBump(
                     [cmpnt_incl_buildnum], latest_cmpnt_rbuild.build_num,
@@ -712,7 +702,7 @@ class RGraph:
             rbuild = RBuild(
                 None, parent_rbuilds, not_merged_rcommits, pending_cmpnts_bumps,
                 build_type=RBuild.FAKE_NOT_MERGED)
-            rbuild.iif = self._brcommits_counter
+            rbuild.iid = self._brcommits_counter
             self._brcommits_counter -= 1
             cur_branch_rbuilds[rbuild.iid] = rbuild
 
@@ -725,7 +715,7 @@ class RGraph:
 
     def _make_rcommits(
             self, accumdat, components_versions_maps, repo_cache, br_cache, *,
-            is_fake=False,
+            is_head_commit,
     ):
         # create RCommit and RBuild objects from data accumulated from
         # git commits graph (if necessary)
@@ -744,7 +734,7 @@ class RGraph:
         is_build_commit = repo_cache.builds_detector.is_build_commit(accumdat.commit)
         # even if the commit is build-commit, it still may be not relevant for
         # report. Check if it relevant
-        if is_build_commit:
+        if is_build_commit or is_head_commit:
             rcommits_in_build, parent_rbuilds = self._find_new_rcommits_in_build(
                 accumdat.rc_parents,
                 br_cache.rcommits_bparents,
@@ -753,11 +743,13 @@ class RGraph:
             )
             contains_new_commits = accumdat.selected_explicitely or rcommits_in_build
             buildnums = repo_cache.builds_detector.get_builds_numbers(accumdat.commit)
+            if is_head_commit and not buildnums:
+                buildnums = [BuildNumData.mk_fake_not_built(), ]
             components_bumps = self._make_bumps_info(
                 accumdat.commit, accumdat.relevant_cmpnts, parent_rbuilds,
                 components_versions_maps,
                 repo_cache.components_versions_cache,
-            ) # {}  # {repo_name: ComponentBump}
+            )  # {repo_name: ComponentBump}
 
             non_trivial_bumps_present = any(
                 not bump.is_trivial()
@@ -1655,8 +1647,8 @@ class ReposCollection:
                     print(f"-- {rbuild.build_num}")
                     for comp_name, bump in rbuild.bumps_info.items():
                         print(f"----  {comp_name} : {bump}")
-                    rcommits = sorted(rbuild.rcommits.values(), key=lambda c: -c.iid)
-                    for rc in rcommits:
+                    for rc in rbuild.get_printable_rcommits():
+                        #print("....", rcommits)
                         print(rp.descr_commit(rc.commit))
 
 

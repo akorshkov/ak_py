@@ -25,14 +25,17 @@ class _MockedAuthor:
 
 class _MockedGitCommit:
     # mocked git commit object
-    _AUTHORS = ["V. Arnold", "Arnold Sh."]
+    _AUTHORS = [
+        "V. Arnold", "Arnold Sh.", "Richard Feynman", "J. Morrison",
+        "Norris, Chuck", "Elieser Yudkowsky",
+    ]
     _BASE_TIME = random.randint(10000, 20000) * 86400
 
-    def __init__(self, iid, parents, message, tags, repo_name):
-        self.iid = iid  # integer id, should be unique within a repo
-        s = f"{self.iid:05}"
+    def __init__(self, intid, parents, message, tags, repo_name):
+        self.intid = intid  # integer id, should be unique within a repo
+        s = f"{self.intid:05}"
 
-        # generate hexhsa unique, repeatable and indicating iid of commit
+        # generate hexhsa unique, repeatable and indicating intid of commit
         hs = sha1((repo_name + s).encode()).hexdigest()
         self.hexsha = hs[:1] + s[-5:] + hs[6:]
         self.parents = parents  # [_MockedGitCommit, ]
@@ -43,11 +46,14 @@ class _MockedGitCommit:
 
         # following attributes are used for printing out results
         # and do not affect report structure.
-        self.committed_date = self._BASE_TIME + self.iid * 47 + random.randint(0, 40)
+        self.committed_date = self._BASE_TIME + self.intid * 47 + random.randint(0, 40)
         self.author = _MockedAuthor(random.choice(self._AUTHORS))
 
     def __str__(self):
-        return f"MockedCommit({self.iid} {self.hexsha[:11]} {self.message})"
+        return f"MockedCommit({self.intid} {self.hexsha[:11]} {self.message})"
+
+    def __repr__(self):
+        return str(self)
 
 
 class _MockedGitRef:
@@ -126,9 +132,9 @@ class MockedGitRepo:
                 self.refs[ref_name] = _MockedGitRef(ref_name, prev_commit)
                 continue
             commit = self._mk_commit(descr_line, prev_commit)
-            assert commit.iid not in self.all_commits, (
-                f"duplicate commit iid: {commit.iid}")
-            self.all_commits[commit.iid] = commit
+            assert commit.intid not in self.all_commits, (
+                f"duplicate commit intid: {commit.intid}")
+            self.all_commits[commit.intid] = commit
             if commit.tags is not None:
                 for tag in commit.tags:
                     tag_ref_name = "refs/tags/" + tag
@@ -139,11 +145,11 @@ class MockedGitRepo:
 
         # finalise parents of commits
         for commit in self.all_commits.values():
-            for iid in commit.parents:
-                assert iid in self.all_commits, (
-                    f"commit #{commit.iid} has unknown parent {iid}")
+            for intid in commit.parents:
+                assert intid in self.all_commits, (
+                    f"commit #{commit.intid} has unknown parent {intid}")
             commit.parents = [
-                self.all_commits[iid] for iid in commit.parents]
+                self.all_commits[intid] for intid in commit.parents]
 
         self.remotes = {'origin': _MockedGitRemote(self, 'origin')}
         self.commits_by_hexsha = {
@@ -169,13 +175,13 @@ class MockedGitRepo:
         chunks = [c.strip() for c in commit_descr.split('|')]
         assert len(chunks) > 1, f"invalid commit descr '{commit_descr}'"
 
-        # chunk 0: iid and parents
+        # chunk 0: intid and parents
         id_chunks = chunks[0].split('<-', 1)
-        iid = int(id_chunks[0])
+        intid = int(id_chunks[0])
         if len(id_chunks) == 2:
             parents = [int(x) for x in id_chunks[1].split(',')]
         else:
-            parents = [prev_commit.iid, ] if prev_commit is not None else []
+            parents = [prev_commit.intid, ] if prev_commit is not None else []
 
         # get other attributes
         message = None
@@ -199,7 +205,76 @@ class MockedGitRepo:
         assert message is not None, (
             f"message is not specified in commit descr: {commit_descr}")
 
-        return _MockedGitCommit(iid, parents, message, tags, self.name)
+        return _MockedGitCommit(intid, parents, message, tags, self.name)
+
+
+class CommitsCheckerMixin:
+    """Helper methods for testing report data based on MockedGitRepo."""
+
+    def assert_branches_list(self, rgraph, expected_branches_names, message=None):
+        """Verify that RGraph contains branches with specified names"""
+        actual_branches_list = [
+            rbranch.branch_name for rbranch in rgraph.branches]
+        self.assertEqual(expected_branches_names, actual_branches_list, message)
+
+    def assert_buildnums(self, rbuilds_list, expected_buildnums, message=None):
+        """Verify that RBranch contains info about specified build numbers.
+
+        Arguments:
+        - rbuilds_list: [RBuild, ]
+        - expected_buildnums: list of srings like ["10.250.4303", ...]
+        """
+        actual_buildnums = [str(b.build_num) for b in rbuilds_list]
+        self.assertEqual(expected_buildnums, actual_buildnums, message)
+
+    def assert_rbuild_commits(self, rbuild, expected_intids_set, message=None):
+        """Check commits included into RBuild.
+
+        It is supposed that 'rbuild' is a part of report generated on
+        test repo MockedGitRepo; commit objects in this repo have
+        unique attribute 'intid'.
+
+        Arguments:
+        - rbuild: RBuild object, part of generated report
+        - expected_intids_set: {int, }
+        """
+        actual_commits_intids = {
+            rc.commit.intid for rc in rbuild.rcommits.values()}
+        if actual_commits_intids != expected_intids_set:
+            extra_intids = actual_commits_intids - expected_intids_set
+            missing_intids = expected_intids_set - actual_commits_intids
+            msg = f"Unexpected set of commits in rbuild: \n" + "\n".join(
+                str(rbuild.rcommits[iid].commit)
+                for iid in sorted(rbuild.rcommits.keys(), reverse=True))
+            if extra_intids:
+                msg += f"\n extra ids: {extra_intids}"
+            if missing_intids:
+                msg += f"\n missing ids: {missing_intids}"
+            if message is not None:
+                msg += f"\n {message}"
+            raise AssertionError(msg)
+
+    def assert_commits_list(self, rbuild, expected_intids_list, message=None):
+        """Test list of printable commits included into RBuild.
+
+        It is supposed that 'rbuild' is a part of report generated on
+        test repo MockedGitRepo; commit objects in this repo have
+        unique attribute 'intid'.
+
+        Arguments:
+        - rbuild: RBuild object, part of generated report
+        - expected_intids_list: [int, ]
+        """
+        printable_commits = rbuild.get_printable_rcommits()
+        actual_commits_intids = [
+            rc.commit.intid for rc in printable_commits]
+        if actual_commits_intids != expected_intids_list:
+            msg = f"Unexpected list of printable commits in rbuild: \n" + "\n".join(
+                str(rc.commit) for rc in printable_commits)
+            if message is not None:
+                msg += f"\n {message}"
+            self.assertEqual(
+                actual_commits_intids, expected_intids_list, msg)
 
 
 #########################
@@ -211,53 +286,97 @@ class DemoRepoCollection(ReposCollection):
     }
 
 
-class TestRepo(unittest.TestCase):
-    def test_simple(self):
-        # logs_configure(5)
+class TestRepo(unittest.TestCase, CommitsCheckerMixin):
+    """Tests on primitive setup: one repo, linear history of commits."""
+
+    @classmethod
+    def setUpClass(cls):
         component_1_git_repo = MockedGitRepo(
             "branch: origin/master",
-            "50 | BUG-444",
-            "40 | BUG-333|tags: build_4304_release_10_250_success ",
-            "30 | BUG-222|tags: build_4303_release_10_250_success",
-            "20 | BUG-111",
-            "10 | Initial Commit",
+            "50 | BUG-555",
+            "40 | BUG-444",
+            "30 | BUG-333|tags: build_4304_release_10_250_success ",
+            "20 | BUG-222|tags: build_4303_release_10_250_success",
+            "10 | BUG-111",
+            "5  | Initial Commit",
             name="component_1",
         )
 
-        repos = DemoRepoCollection({
+        cls.repos = DemoRepoCollection({
             'comp_1': ProjectRepo('comp_1', component_1_git_repo),
         })
+        # logs_configure(5)
 
-        # 1. no matching commits - empty report
-        reports_data = repos.make_reports_data("BUG-xxx")
+    def test_empty_report(self):
+        """Test empty report: no report-related commits found."""
+        reports_data = self.repos.make_reports_data("BUG-xxx")
+        #self.repos.print_prepared_reports(reports_data)
+
         self.assertEqual(1, len(reports_data))
         cmpnt_name, rgraph = reports_data[0]
         self.assertEqual("comp_1", cmpnt_name)
         # self.assertEqual(0, len(rgraph.branches), "empty report expected")
         self.assertEqual(0, len(rgraph.rcommits), "empty report expected")
 
-        # 2. single commit matches, it is included into a build in next commit
-        reports_data = repos.make_reports_data("BUG-111")
+    def test_single_commit_built_later(self):
+        """Single commit matches, included in build based on different commit."""
+        reports_data = self.repos.make_reports_data("BUG-111")
+        # self.repos.print_prepared_reports(reports_data)
 
         _, rgraph = reports_data[0]
+        self.assert_branches_list(rgraph, ['master', ])
         rbranch = rgraph.branches[0]
-        self.assertEqual("master", rbranch.branch_name)
         rbuilds = rbranch.get_rbuilds_list()
-        self.assertEqual(1, len(rbuilds))
+        self.assert_buildnums(rbuilds, ["10.250.4303", ])
         rbuild = rbuilds[0]
-        self.assertEqual((10, 250, 4303, 4303), rbuild.build_num.as_tuple())
 
-        # 3. single commit matches, it is included into a build in same commit
-        reports_data = repos.make_reports_data("BUG-222")
-        #repos.print_prepared_reports(reports_data)
+        commits_intids_in_build = {rc.commit.intid for rc in rbuild.rcommits.values()}
+        self.assert_rbuild_commits(
+            rbuild, {10, 20},
+            "commit 10 - explicitely selected, commit 20 - build, which includes it")
+        self.assert_commits_list(rbuild, [10, ], "only commit 10 is printable")
+
+    def test_single_commit_built_immediately(self):
+        """Single commit matches, included in build based on same commit."""
+        reports_data = self.repos.make_reports_data("BUG-222")
+        # self.repos.print_prepared_reports(reports_data)
 
         _, rgraph = reports_data[0]
-        self.assertEqual(1, len(rgraph.branches))
+        self.assert_branches_list(rgraph, ['master', ])
         rbranch = rgraph.branches[0]
-        self.assertEqual("master", rbranch.branch_name)
         rbuilds = rbranch.get_rbuilds_list()
-        self.assertEqual(1, len(rbuilds))
+        self.assert_buildnums(rbuilds, ["10.250.4303", ])
         rbuild = rbuilds[0]
-        self.assertEqual((10, 250, 4303, 4303), rbuild.build_num.as_tuple())
+        self.assert_commits_list(rbuild, [20, ], "only commit 20 matches")
 
-        #repos.print_prepared_reports(reports_data)
+    def test_commit_not_built(self):
+        """Single commit matches, not included into builds yet."""
+        for pattern, expected_commit_id in [
+            ("BUG-444", 40),
+            ("BUG-555", 50),
+        ]:
+            reports_data = self.repos.make_reports_data(pattern)
+            # self.repos.print_prepared_reports(reports_data)
+
+            _, rgraph = reports_data[0]
+            self.assert_branches_list(rgraph, ['master', ])
+            rbranch = rgraph.branches[0]
+            rbuilds = rbranch.get_rbuilds_list()
+            self.assert_buildnums(rbuilds, ["9999.9999.9999", ])
+            rbuild = rbuilds[0]
+            self.assert_commits_list(rbuild, [expected_commit_id, ])
+
+    def test_report_multiple_commits(self):
+        """Multiple commits in report; multiple builds."""
+        reports_data = self.repos.make_reports_data("BUG")
+        # self.repos.print_prepared_reports(reports_data)
+
+        _, rgraph = reports_data[0]
+        self.assert_branches_list(rgraph, ['master', ])
+        rbranch = rgraph.branches[0]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["9999.9999.9999", "10.250.4304", "10.250.4303", ])
+        self.assert_commits_list(rbuilds[0], [50, 40])
+        self.assert_commits_list(rbuilds[1], [30, ])
+        self.assert_commits_list(rbuilds[2], [20, 10])
