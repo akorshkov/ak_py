@@ -1350,10 +1350,19 @@ class ProjectRepo:
             try:
                 components_in_file = cache[blob.hexsha]
             except KeyError:
-                components_in_file = self.read_components_from_file(v_file_path, blob)
+                components_in_file = {
+                    cmpnt: BuildNumData(patch, major, minor, patch, "")
+                    for cmpnt, (major, minor, patch)
+                    in self.read_components_from_file(v_file_path, blob).items()
+                }
                 cache[blob.hexsha] = components_in_file
 
-            assert all(c in components_in_file for c in cmps)
+            missing_components = [c for c in cmps if c not in components_in_file]
+            assert not missing_components, (
+                f"info about versions of components {missing_components} not "
+                f"found in file '{v_file_path}'. Check implementation of "
+                f"method 'read_components_from_file' in {type(self)}")
+
             known_componens.update(components_in_file)
 
         cache[commit.hexsha] = known_componens
@@ -1361,6 +1370,7 @@ class ProjectRepo:
 
     def read_components_from_file(self, v_file_path, blob):
         # to be implemented in derived classes
+        # should return {'component_name': (major, minor, patch)}
         return {}
 
     #########################

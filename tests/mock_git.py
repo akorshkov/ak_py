@@ -29,7 +29,8 @@ class _MockedBlob:
 
 class _MockedTree:
     # mock of git.commit.tree
-    def __init__(self, files_contents):
+    def __init__(self, files_contents, commit_descr):
+        self._commit_descr = commit_descr  # for debug only
         self.files_in_tree = {
             path: _MockedBlob(contents)
             for path, contents in files_contents.items()
@@ -38,7 +39,12 @@ class _MockedTree:
     def __truediv__(self, path):
         # mock "git.commit.tree / path" operation.
         # returns blob (actually _MockedBlob)
-        return self.files_in_tree[path]
+        try:
+            return self.files_in_tree[path]
+        except KeyError as err:
+            raise KeyError(
+                f"file '{path}' not exists in commit: {self._commit_descr}"
+            ) from err
 
 
 class _MockedGitCommit:
@@ -58,7 +64,7 @@ class _MockedGitCommit:
         self.hexsha = hs[:1] + s[-5:] + hs[6:]
         self.parents = parents  # [_MockedGitCommit, ]
         self.message = message
-        self.tree = _MockedTree(tree)
+        self.tree = _MockedTree(tree, str(self))
 
         # note: actual git.commit object does not have 'tags' attribute
         self.tags = tags
@@ -130,9 +136,9 @@ class MockedGitRepo:
 
         Example:
             'branch: origin/master',
-            '100<-20, 40| BUG-77|tags: build_4304_release_10_250_success ',
-            '--> file:VERSION:10.270|',
-            '--> file:DEPENDS:{"component_a": "3.5.1", "component_b": "10.7.1"}|',
+            '100<-20, 40| BUG-77|tags: build_4304_release_10_250_success|',
+            '--> |file:VERSION:10.270',
+            '--> |file:DEPENDS:{"component_a": "3.5.1", "component_b": "10.7.1"}',
             '  20<-10   | BUG-2525  |tags: build_4303_release_10_250_success',
             '40         | Some Commit',
             '10         | Initial Commit',
@@ -163,7 +169,7 @@ class MockedGitRepo:
                 continue
 
             # create new commit from description lines
-            full_descr = descr_line + "|" + "|".join(reversed(extra_lines))
+            full_descr = descr_line + "".join(reversed(extra_lines))
             extra_lines = []
             commit = self._mk_commit(full_descr, prev_commit)
             assert commit.intid not in self.all_commits, (
@@ -232,7 +238,7 @@ class MockedGitRepo:
                 tags = [t.strip() for t in chunk[5:].split(',')]
                 continue
             if chunk.startswith('file:'):
-                tree_descr_chunks = chunk.split(':')
+                tree_descr_chunks = chunk.split(':', 2)
                 assert len(tree_descr_chunks) == 3, (
                     f"unexpected file contents description: '{chunk}'. "
                     f"Expected format: 'file:path/to/file:contents of the file'")

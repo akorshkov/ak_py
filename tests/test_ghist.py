@@ -3,6 +3,7 @@
 ghist module fetches and reports history of commits and builds for specified bug(s).
 """
 import unittest
+import json
 
 from ak.ghist import ProjectRepo, ReposCollection
 from ak.logtools import logs_configure
@@ -97,6 +98,23 @@ class StdTestRepo(ProjectRepo):
         if len(nums) == 2:
             nums.append(None)
         return nums
+
+    def read_components_from_file(self, v_file_path, blob):
+        """Read components versions from mocked blob.
+
+        File contents is expected to be json like:
+        '{"cmpnt": "10.120.2010", "other_cmpnt": "2.3.5"}'
+        """
+        assert v_file_path == 'DEPENDS'  # this 'file' is used in test repos
+        d = json.load(blob.data_stream)
+        result = {}
+        for cmpnt, version_str in d.items():
+            nn = version_str.split('.')
+            assert len(nn) == 3, (
+                f"component {cmpnt}: invalid version '{version_str}'")
+            major_minor_patch = [int(n) for n in nn]
+            result[cmpnt] = major_minor_patch
+        return result
 
 
 #########################
@@ -213,7 +231,7 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
             "340 | BUG-177",
             "330<-230, 320| merge",
             "320<-220| branch out |tags: build_4500_master_success",
-            "--> file:VERSION:10.270|",
+            "--> |file:VERSION:10.270|",
             "branch: origin/release/10.260",  # ---- branch
             "240<-230, 140| merge|tags: build_4445_release_10_260_success",
             "230 | BUG-133|tags: build_4444_release_10_260_success",
@@ -446,3 +464,53 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
         self.assert_commits_list(rbuilds[0], [150, 140, 130])  # not merged
         self.assert_commits_list(rbuilds[1], [340, 230, 225])  # not built
         self.assert_commits_list(rbuilds[2], [120, 110])  # 10.270.4500
+
+
+class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
+    """Case with two repositories: one is component of the other."""
+
+    @classmethod
+    def setUpClass(cls):
+        # component repo
+        master_repo = MockedGitRepo(
+            'branch: origin/master',  # ---- branch
+            '290<-190|some commit',
+            '--> |file:DEPENDS:{"cmpnt": "10.130.3090"}',
+            'branch: origin/release/5.4',  # ---- branch
+            '190|build 20|tags: build_20_release_5_4_success',
+            '--> |file:DEPENDS:{"cmpnt": "10.120.2020"}',
+            '120|build 10|tags: build_10_release_5_4_success',
+            '--> |file:DEPENDS:{"cmpnt": "10.120.2010"}',
+            name="master",
+        )
+
+        cmpnt_repo = MockedGitRepo(
+            'branch: origin/master',  # ---- branch
+            '990 | final_build |tags: build_3090_release_10_130_success',
+            '--> |file:VERSION:10.130|',
+            'branch: origin/release/10.120',  # ---- branch
+            '110 | BUG-211 |tags: build_2020_release_10_120_success',
+            '100 | some build |tags: build_2010_release_10_120_success',
+            name="cmpnt",
+        )
+
+        class MassterProjectRepo(StdTestRepo):
+            _COMPONENTS_VERSIONS_LOCATIONS = {
+                'cmpnt': 'DEPENDS',
+            }
+
+        class DemoRepoCollection2(ReposCollection):
+            _REPOS_TYPES = {
+                'master': MassterProjectRepo,
+                'cmpnt': StdTestRepo,
+            }
+
+        cls.repos = DemoRepoCollection2({
+            'master': MassterProjectRepo('master', master_repo),
+            'cmpnt': StdTestRepo('cmpnt', cmpnt_repo),
+        })
+
+    def test_report_211(self):
+        """BUG-211 - present in both components, included into builds"""
+        reports_data = self.repos.make_reports_data("BUG-211")
+        self.repos.print_prepared_reports(reports_data)
