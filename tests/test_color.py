@@ -2,7 +2,7 @@
 
 import unittest
 
-from ak.color import ColoredText, ColorFmt, ColorBytes
+from ak.color import ColoredText, ColorFmt, ColorBytes, Palette
 
 
 class TestColorFmt(unittest.TestCase):
@@ -377,6 +377,25 @@ class TestColoredTextProperties(unittest.TestCase):
 
         stripped_colored_str = ColoredText.strip_colors(colored_str)
         self.assertEqual(plain_str, stripped_colored_str)
+
+
+class TestPalette(unittest.TestCase):
+    """Test Palette functionality."""
+
+    def test_palette(self):
+        palatte = Palette({
+            'style_1': ColorFmt('GREEN'),
+            'style_2': ColorFmt('BLUE'),
+        })
+
+        t0 = palatte.get_color('style_1')("test text")
+        t1 = palatte['style_1']("test text")
+
+        self.assertEqual(t0, t1)
+
+        # unknown style does not raise error
+        t2 = palatte['unknown_style']("test text")
+        self.assertEqual("test text", str(t2))
 
 
 class TestColorFmtBytes(unittest.TestCase):

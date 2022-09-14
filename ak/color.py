@@ -331,6 +331,11 @@ class Palette:
     """Simple mapping 'syntax_name' -> ColorFmt"""
 
     def __init__(self, colors, use_colors=True):
+        """Create simple dictionary {syntax_type: ColorFmt}.
+
+        Example:
+            Palette({'syntax1': ColorFmt('RED'), 'syntax2': ColorFmt('BLUE')})
+        """
         self.colors = colors.copy()
         self.use_colors = use_colors
 
@@ -342,6 +347,10 @@ class Palette:
             return no_effects_fmt
 
         return self.colors.get(syntax_name, no_effects_fmt)
+
+    def __getitem__(self, index):
+        """same behavior as get_color method"""
+        return self.get_color(index)
 
 
 class ColorSequences:
