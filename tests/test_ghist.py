@@ -432,7 +432,7 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
     def test_report_all_bugs(self):
         """Verify data for all bugs 'BUG' report."""
         reports_data = self.repos.make_reports_data("BUG")
-        # self.repos.print_prepared_reports(reports_data)
+        self.repos.print_prepared_reports(reports_data)
 
         _, rgraph = reports_data[0]
         self.assert_branches_list(
@@ -475,13 +475,13 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         master_repo = MockedGitRepo(
             'branch: origin/master',  # ---- branch
             '290<-190|some commit',
-            '--> |file:DEPENDS:{"cmpnt": "10.130.3090"}',
+            '--> |file:DEPENDS:{"proj_lib": "10.130.3090"}',
             'branch: origin/release/5.4',  # ---- branch
             '190|build 20|tags: build_20_release_5_4_success',
-            '--> |file:DEPENDS:{"cmpnt": "10.120.2020"}',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2020"}',
             '120|build 10|tags: build_10_release_5_4_success',
-            '--> |file:DEPENDS:{"cmpnt": "10.120.2010"}',
-            name="master",
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2010"}',
+            name="c_master",
         )
 
         cmpnt_repo = MockedGitRepo(
@@ -491,26 +491,63 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
             'branch: origin/release/10.120',  # ---- branch
             '110 | BUG-211 |tags: build_2020_release_10_120_success',
             '100 | some build |tags: build_2010_release_10_120_success',
-            name="cmpnt",
+            name="proj_lib",
         )
 
         class MassterProjectRepo(StdTestRepo):
             _COMPONENTS_VERSIONS_LOCATIONS = {
-                'cmpnt': 'DEPENDS',
+                'proj_lib': 'DEPENDS',
             }
 
         class DemoRepoCollection2(ReposCollection):
             _REPOS_TYPES = {
-                'master': MassterProjectRepo,
-                'cmpnt': StdTestRepo,
+                'c_master': MassterProjectRepo,
+                'proj_lib': StdTestRepo,
             }
 
         cls.repos = DemoRepoCollection2({
-            'master': MassterProjectRepo('master', master_repo),
-            'cmpnt': StdTestRepo('cmpnt', cmpnt_repo),
+            'c_master': MassterProjectRepo('c_master', master_repo),
+            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo),
         })
 
     def test_report_211(self):
         """BUG-211 - present in both components, included into builds"""
+        # 'BUG-211' is included into two builds in proj_lib:
+        # 10.120.2020 and 10.130.3090
+        #
+        # c_master repo has two branches: release/5.4 and master
+        # release/5.4 contains proj_lib==10.120.2020
+        # master contains proj_lib==10.130.3090, but it's not in build yet
+        # logs_configure(5)
         reports_data = self.repos.make_reports_data("BUG-211")
+        rgraphs_by_name = {
+            repo_name: rgraph for repo_name, rgraph in reports_data}
         self.repos.print_prepared_reports(reports_data)
+
+        self.assertEqual({'c_master', 'proj_lib'}, rgraphs_by_name.keys())
+
+        # test is mostly interested in structure of report for c_master
+        # but first make sure component data is as expected
+        c_lib_rgraph = rgraphs_by_name['proj_lib']
+        self.assert_branches_list(
+            c_lib_rgraph, ["master", "release/10.120"])
+        self.assert_buildnums(
+            c_lib_rgraph.branches[1].get_rbuilds_list(),  # release/10.120
+            ["10.120.2020", ])
+        self.assert_buildnums(
+            c_lib_rgraph.branches[0].get_rbuilds_list(),  # master
+            ["10.130.3090", ])
+
+        # now to c_master. It does not contain any commits explicitely
+        # related to report topic, only bumps of component proj_lib
+        c_master_rgraph = rgraphs_by_name['c_master']
+        self.assert_branches_list(
+            c_master_rgraph, ["master", "release/5.4"])
+
+        # check c_master release/5.4
+        rbranch = c_master_rgraph.branches[1]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["5.4.20", ],
+            "only this build contains bump of proj_lib to report-related "
+            "version 10.120.2020")
