@@ -5,7 +5,7 @@ ghist module fetches and reports history of commits and builds for specified bug
 import unittest
 import json
 
-from ak.ghist import ProjectRepo, ReposCollection
+from ak.ghist import ProjectRepo, ReposCollection, BuildNumData
 from ak.logtools import logs_configure
 
 from .mock_git import MockedGitRepo
@@ -90,14 +90,15 @@ class StdTestRepo(ProjectRepo):
     """Standard Project repo to be used in tests."""
     _SAVED_BUILD_NUM_SOURCES = ["VERSION", ]
 
-    def _read_saved_build_numbers_from_file(self, blob, path):
+    def _read_saved_build_num_from_file(self, blob, path):
         # reads major.minor.build from file.
         # build part is optional.
         data = blob.data_stream.read().decode().strip()
         nums = [int(chunk) for chunk in data.split('.')]
         if len(nums) == 2:
             nums.append(None)
-        return nums
+        major, minor, patch = nums
+        return BuildNumData(major, minor, patch)
 
     def read_components_from_file(self, v_file_path, blob):
         """Read components versions from mocked blob.

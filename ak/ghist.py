@@ -207,28 +207,52 @@ class BuildNumData(Comparable):
     Purpose of objects of this class is to keep (possibly incomplete) information
     related to build number.
     """
-    def __init__(self, build, major, minor, patch, branch_str):
+    __slots__ = 'major', 'minor', 'patch', 'build', 'branch_str', 'version_name'
+
+    def __init__(
+            self, major, minor, patch, *,
+            build=None, branch_str=None, version_name=None):
+        """Construct BuildNumData.
+
+        Arguments:
+        - major, minor, patch: integers, standard parts of build number
+        - build: if not specified it is considered equal to patch.
+            Build numbers "10.20.30-30" and "10.20.30" are considered identical.
+        - branch_str: optional name of branch from where the build was created
+        - version_name: optional name of version. If specified, the build number
+            would look like "C22.10-4.5.71".
+        """
         self.major = major
         self.minor = minor
         self.patch = patch
-        self.build = build
+        self.build = build if build is not None else self.patch
         self.branch_str = branch_str
+        self.version_name = version_name
 
     @classmethod
     def mk_fake_not_built(cls):
         """Make predefined number for fake "not-yet-built" build."""
-        return cls(8888, 8888, 8888, 8888, "")
+        return cls(8888, 8888, 8888)
 
     @classmethod
     def mk_fake_not_merged(cls):
         """Make predefined number for fake "not-yet-merged" build."""
-        return cls(9999, 9999, 9999, 9999, "")
+        return cls(9999, 9999, 9999)
+
+    def is_fake_not_built(self):
+        """Check if build number corresponds to fake 'not-yet-built' build."""
+        return all(x == 8888 for x in (self.major, self.minor, self.patch))
+
+    def is_fake_not_merged(self):
+        """Check if build number corresponds to fake 'not-yet-merged' build."""
+        return all(x == 9999 for x in (self.major, self.minor, self.patch))
 
     def __str__(self):
+        v_name = "" if self.version_name is None else f"{self.version_name}-"
         if self.patch == self.build:
-            return f"{self.major}.{self.minor}.{self.patch}"
+            return v_name + f"{self.major}.{self.minor}.{self.patch}"
         else:
-            return f"{self.major}.{self.minor}.{self.patch}-{self.build}"
+            return v_name + f"{self.major}.{self.minor}.{self.patch}-{self.build}"
 
     def __repr__(self):
         return self.__str__()
@@ -713,6 +737,9 @@ class RGraph:
             for repo_name in head_relevant_cmpnts:
                 cmpnt_prev_bump = prev_rbuild.bumps_info[repo_name]
                 cmpnt_incl_rbuild = cmpnt_prev_bump.to_rbuild
+                if cmpnt_incl_rbuild is None:
+                    # !!!!!!!!
+                    continue
                 cmpnt_incl_buildnum = cmpnt_prev_bump.to_buildnum
                 cmpnt_rbranch, _ = components_versions_maps[repo_name].bn_map[
                     cmpnt_incl_rbuild.build_num.as_tuple()]
@@ -730,6 +757,7 @@ class RGraph:
             rbuild.iid = self._brcommits_counter
             self._brcommits_counter += 1
             cur_branch_rbuilds[rbuild.iid] = rbuild
+        # ==== done with fake "not-merged-yet" build info ====
 
         branch_rcommits = RBranch(
             branch_name, result_accumdata.rc_parents, cur_branch_rbuilds)
@@ -1221,7 +1249,7 @@ class ProjectRepo:
                 bn = BranchName(ref.name)
                 yield ref.name, branch_name, bn
 
-    def _read_saved_build_numbers_from_file(self, blob, path):
+    def _read_saved_build_num_from_file(self, blob, path):
         assert False, f"Implement this method in '{type(self)}'!"
 
     #########################
@@ -1247,9 +1275,9 @@ class ProjectRepo:
             return None
 
         return BuildNumData(
-            int(m.group('build')),
             None, None, None, # major, minor, patch
-            m.group('branch'),
+            build=int(m.group('build')),
+            branch_str=m.group('branch'),
         )
 
     def guess_major_minor_build_by_tag_substr(self, tag_substr):
@@ -1262,8 +1290,11 @@ class ProjectRepo:
             return int(m.group('major')), int(m.group('minor'))
         return None, None
 
-    def get_saved_build_number(self, commit, cache):
-        """Get build number saved in sources.
+    def get_saved_build_number(self, commit, cache) -> BuildNumData:
+        """Get build number info saved in a file in commit.
+
+        Returns BuildNumData. It should be treated not as an actual build number
+        but as a container of known attributes.
 
         Returned build number is NOT a build number this commit is included into.
         If build number if saved in component source files, than build is triggered
@@ -1290,21 +1321,22 @@ class ProjectRepo:
                 continue
 
             if blob.hexsha in cache:
-                build_numbers = cache[blob.hexsha]
-                cache[commit.hexsha] = build_numbers
-                return build_numbers
+                build_num = cache[blob.hexsha]
+                cache[commit.hexsha] = build_num
+                return build_num
 
             try:
-                build_numbers = self._read_saved_build_numbers_from_file(
+                build_num = self._read_saved_build_num_from_file(
                     blob, local_path)
+                assert isinstance(build_num, BuildNumData)  # !!!!!!!!!
             except ValueError as err:
                 problems_descrs.append(str(err))
                 continue
 
-            cache[blob.hexsha] = build_numbers
-            cache[commit.hexsha] = build_numbers
+            cache[blob.hexsha] = build_num
+            cache[commit.hexsha] = build_num
 
-            return build_numbers
+            return build_num
 
         # failed to read build info from any sources
         logger.debug(
@@ -1315,9 +1347,10 @@ class ProjectRepo:
                 for local_path, err in zip(
                     self._SAVED_BUILD_NUM_SOURCES, problems_descrs)
             ))
-        build_numbers = ('?', '?', '?')
-        cache[commit.hexsha] = build_numbers
-        return build_numbers
+        major, minor, patch = ('?', '?', '?')
+        build_num = BuildNumData(major, minor, patch)
+        cache[commit.hexsha] = build_num
+        return build_num
 
     #########################
     # methods for processing components versions
@@ -1359,7 +1392,7 @@ class ProjectRepo:
                 components_in_file = cache[blob.hexsha]
             except KeyError:
                 components_in_file = {
-                    cmpnt: BuildNumData(patch, major, minor, patch, "")
+                    cmpnt: BuildNumData(major, minor, patch)
                     for cmpnt, (major, minor, patch)
                     in self.read_components_from_file(v_file_path, blob).items()
                 }
@@ -1545,7 +1578,7 @@ class RepoBuildsByTagDetector(RepoBuildsDetector):
             return
         # need to get build numbers from files
         try:
-            major, minor, _ = self.project_repo.get_saved_build_number(
+            fs_buildnum_data = self.project_repo.get_saved_build_number(
                 commit, self.cache)
         except ValueError as err:
             raise ValueError(
@@ -1553,11 +1586,40 @@ class RepoBuildsByTagDetector(RepoBuildsDetector):
                 f"commit '{commit.hexsha}'."
             ) from err
 
-        parsed_bt.major = major
-        parsed_bt.minor = minor
+        parsed_bt.major = fs_buildnum_data.major
+        parsed_bt.minor = fs_buildnum_data.minor
         if parsed_bt.patch is None:
             parsed_bt.patch = parsed_bt.build
         assert parsed_bt.is_finalized(), f"'{parsed_bt}' is not finalized"
+
+
+class RepoBuildsBySavedBuildNumDetector(RepoBuildsDetector):
+    """Detect build commit by info saved in a file.
+
+    For example version is saved in a file 'current_version' in simple
+    text like '10.250.43'. Usually new build is created when this version is
+    bumped. It may be not true sometimes, but this is best guess we can do.
+
+    In order to use this detector the project repo must implement
+    get_saved_build_number method (or specify _SAVED_BUILD_NUM_SOURCES and
+    implement _read_saved_build_num_from_file method).
+    """
+    def __init__(self, project_repo):
+        self.project_repo = project_repo
+        self.cache = {}
+
+    def is_build_commit(self, commit):
+        """ !!!! """
+        cur_saved_build_num = self.get_builds_numbers(commit)[0]
+        return all(
+            cur_saved_build_num != self.get_builds_numbers(c)[0]
+            for c in commit.parents
+        )
+
+    def get_builds_numbers(self, commit):
+
+        # there is only one
+        return [self.project_repo.get_saved_build_number(commit, self.cache), ]
 
 
 class ReposCollection:
@@ -1678,14 +1740,15 @@ class ReportPrinter:
 
     def __init__(self):
         self.palette = Palette({
-            'REPO': ColorFmt('MAGENTA', bold=True),
+            'REPO': ColorFmt('CYAN', bold=True),
             'BRANCH': ColorFmt('GREEN', bold=True),
             'HASH': ColorFmt('YELLOW'),
             'HASH_NOT_MERGED': ColorFmt(None),
             'COMMIT_TIME': ColorFmt('BLUE'),
             'COMMIT_NAME': ColorFmt('GREEN'),
             'VERSION': ColorFmt('CYAN'),
-            'FAKE_HEAD': ColorFmt('RED'),
+            'VER_NOT_BUILT': ColorFmt('RED'),
+            'VER_NOT_MERGED': ColorFmt('RED'),
         })
 
     def gen_report(self, report_data):
@@ -1697,40 +1760,54 @@ class ReportPrinter:
         """
         for repo_name, rgraph in report_data:
             branches = rgraph.branches
-            yield ColoredText("== repo ") + self.palette.get_color(
-                'REPO')(repo_name) + " =="
+            yield ""
+            yield ColoredText("==== repo ") + self.palette['REPO'](repo_name) + " ===="
             for rbranch in branches:
                 yield from self._gen_branch_report(repo_name, rbranch, 0)
 
 
-    def _gen_branch_report(self, repo_name, rbranch, level):
+    def _gen_branch_report(self, repo_name, rbranch, offset):
         yield (
-            self._mk_offset(level) +
-            self.palette.get_color('REPO')(repo_name) + " " +
-            self.palette.get_color('BRANCH')(rbranch.branch_name) + ":")
+            self._mk_offset(offset) +
+            self.palette['REPO'](repo_name) + " " +
+            self.palette['BRANCH'](rbranch.branch_name) + ":")
         for rbuild in rbranch.get_rbuilds_list():
-            yield from self._gen_rbuild_descr(rbuild, level+1)
+            yield from self._gen_rbuild_descr(rbuild, offset+1)
 
 
-    def _gen_rbuild_descr(self, rbuild, level):
+    def _gen_rbuild_descr(self, rbuild, offset):
         # !!!!!
-        yield (
-            self._mk_offset(level) +
-            self.palette.get_color('VERSION')(str(rbuild.build_num))
-        )
+
+        commits_merged = True
+        # prepare build title line
+        build_num = rbuild.build_num
+        if build_num.is_fake_not_built():
+            build_title = self.palette['VER_NOT_BUILT']("- not built -")
+        elif build_num.is_fake_not_merged():
+            build_title = self.palette['VER_NOT_MERGED']("- not merged -")
+            commits_merged = False
+        else:
+            build_title = self.palette['VERSION'](str(rbuild.build_num))
+        build_title = self._mk_offset(offset) + build_title
+
+        if rbuild.rcommit is not None:
+            commit = rbuild.rcommit.commit
+            t_time = datetime.fromtimestamp(commit.committed_date).isoformat(sep=' ')
+            build_title += f" ({t_time})"
+        yield build_title
+
         for comp_name, bump in rbuild.bumps_info.items():
-            yield from self._gen_bump_descr(comp_name, bump, level+1)
-            #yield f"----  {comp_name} : {bump}"
+            yield from self._gen_bump_descr(comp_name, bump, offset+1)
         for rc in rbuild.get_printable_rcommits():
-            yield from self.gen_commit_descr(rc.commit, level+1)
+            yield from self.gen_commit_descr(rc.commit, commits_merged, offset+1)
 
-    def _gen_bump_descr(self, comp_name, bump, level):
+    def _gen_bump_descr(self, comp_name, bump, offset):
         # !!!!!
-        bump_versions_descr = self.palette.get_color('VERSION')(str(bump.to_buildnum))
+        bump_versions_descr = self.palette['VERSION'](str(bump.to_buildnum))
         if bump.from_build_nums:
             bump_versions_descr += "<-"
             if len(bump.from_build_nums) == 1:
-                bump_versions_descr += self.palette.get_color('VERSION')(
+                bump_versions_descr += self.palette['VERSION'](
                     str(bump.from_build_nums[0]))
             else:
                 bump_versions_descr += "["
@@ -1738,25 +1815,23 @@ class ReportPrinter:
                     str(bn) for bn in bump.from_build_nums)
                 bump_versions_descr += "]"
         yield (
-            self._mk_offset(level+1) +
-            self.palette.get_color('REPO')(comp_name) + "=" +
-            bump_versions_descr)
+            self._mk_offset(offset+1) +
+            self.palette['REPO'](comp_name) + "=" + bump_versions_descr)
 
-
-    def gen_commit_descr(self, commit, level, merged=True):
-        t_hexsha = self.palette.get_color('HASH' if merged else 'HASH_NOT_MERGED')(
+    def gen_commit_descr(self, commit, merged, offset):
+        t_hexsha = self.palette['HASH' if merged else 'HASH_NOT_MERGED'](
             commit.hexsha[:11])
-        t_time = self.palette.get_color('COMMIT_TIME')(
+        t_time = self.palette['COMMIT_TIME'](
             datetime.fromtimestamp(commit.committed_date).isoformat(sep=' '))
-        t_name = self.palette.get_color('COMMIT_NAME')(
+        t_name = self.palette['COMMIT_NAME'](
             commit.author.name).fixed_len(18)
         t_message = commit.message.split('\n')[0].strip()
 
-        yield ColoredText("  "*level) + ColoredText(" ").join((
+        yield ColoredText("  "*offset) + ColoredText(" ").join((
             t_hexsha, t_time, t_name, t_message))
 
-    def _mk_offset(self, level):
-        return ColoredText("  "*level)
+    def _mk_offset(self, offset):
+        return ColoredText("  "*offset)
 
 
 
