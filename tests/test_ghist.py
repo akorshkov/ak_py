@@ -3,6 +3,7 @@
 ghist module fetches and reports history of commits and builds for specified bug(s).
 """
 import unittest
+import logging
 import json
 
 from ak.ghist import ProjectRepo, ReposCollection, BuildNumData
@@ -23,14 +24,17 @@ class CommitsCheckerMixin:
             rbranch.branch_name for rbranch in rgraph.branches]
         self.assertEqual(expected_branches_names, actual_branches_list, message)
 
-    def assert_buildnums(self, rbuilds_list, expected_buildnums, message=None):
-        """Verify that RBranch contains info about specified build numbers.
+    def assert_buildnums(self, builds_list, expected_buildnums, message=None):
+        """Check numbers of builds in builds_list.
 
         Arguments:
-        - rbuilds_list: [RBuild, ]
+        - builds_list: [RBuild, ] or [BuildNumData, ]
         - expected_buildnums: list of srings like ["10.250.4303", ...]
         """
-        actual_buildnums = [str(b.build_num) for b in rbuilds_list]
+        if builds_list and hasattr(builds_list[0], 'build_num'):
+            actual_buildnums = [str(b.build_num) for b in builds_list]
+        else:
+            actual_buildnums = [str(b) for b in builds_list]
         self.assertEqual(expected_buildnums, actual_buildnums, message)
 
     def assert_rbuild_commits(self, rbuild, expected_intids_set, message=None):
@@ -433,7 +437,7 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
     def test_report_all_bugs(self):
         """Verify data for all bugs 'BUG' report."""
         reports_data = self.repos.make_reports_data("BUG")
-        self.repos.print_prepared_reports(reports_data)
+        # self.repos.print_prepared_reports(reports_data)
 
         _, rgraph = reports_data[0]
         self.assert_branches_list(
@@ -470,18 +474,56 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
     """Case with two repositories: one is component of the other."""
 
-    @classmethod
-    def setUpClass(cls):
+    def setUp(eslf):
+        # processing of repos here logs warnings. Disable it.
+        logging.disable(logging.CRITICAL)
+
+    def tearDown(eslf):
+        logging.disable(logging.NOTSET)
+
+    def test_component_bumps_reporting(self):
+        """Test miscelaneous scenarios of component bumps."""
+        # 'BUG-211' is included into two builds in proj_lib:
+        # 10.120.2020 and 10.130.3090
+        #
+        # c_master repo has two branches: release/5.4 and master
+        # release/5.4 contains proj_lib==10.120.2020
+        # master contains proj_lib==10.130.3090, but it's not in build yet
+        # logs_configure(5)
         # component repo
         master_repo = MockedGitRepo(
-            'branch: origin/master',  # ---- branch
-            '290<-190|some commit',
-            '--> |file:DEPENDS:{"proj_lib": "10.130.3090"}',
-            'branch: origin/release/5.4',  # ---- branch
-            '190|build 20|tags: build_20_release_5_4_success',
-            '--> |file:DEPENDS:{"proj_lib": "10.120.2020"}',
+            'branch: origin/master',  # ---- branch master
+            '990<-10|branch master head',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2019"}',
+            'branch: origin/release/5.7',  # ---- branch 5.7
+            '490|branch 5.7 head - not a build',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2019"}',
+            '480<-10|build 5.7.77',
+            '--> |tags:build_77_release_5_7_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2019"}',
+            'branch: origin/release/5.6',  # ---- branch 5.6
+            '390<-10|branch 5.6 head',
+            '--> |tags:build_67_release_5_6_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2019"}',
+            'branch: origin/release/5.5',  # ---- branch 5.5
+            '290<-10|branch 5.5 head',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2010"}',
+            'branch: origin/release/5.4',  # ---- branch 5.4
+            '128|head of branch',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2018"}',
+            '127|build 17|tags: build_17_release_5_4_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2017"}',
+            '124|build 14|tags: build_14_release_5_4_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2014"}',
+            '121|build 11|tags: build_11_release_5_4_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2011"}',
             '120|build 10|tags: build_10_release_5_4_success',
             '--> |file:DEPENDS:{"proj_lib": "10.120.2010"}',
+            'branch: origin/release/5.3',  # -- branch 5.3
+            '90|build 5|tags: build_5_release_5_3_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.120.2010"}',
+            '10|build 3|tags: build_3_release_5_3_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.110.2020"}',
             name="c_master",
         )
 
@@ -490,7 +532,14 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
             '990 | final_build |tags: build_3090_release_10_130_success',
             '--> |file:VERSION:10.130|',
             'branch: origin/release/10.120',  # ---- branch
-            '110 | BUG-211 |tags: build_2020_release_10_120_success',
+            '190 | BUG-211 g |tags: build_2019_release_10_120_success',
+            '180 | BUG-211 f |tags: build_2018_release_10_120_success',
+            '160 | BUG-211 e |tags: build_2016_release_10_120_success',
+            '150 | BUG-211 d |tags: build_2015_release_10_120_success',
+            '140 | no bug    |tags: build_2014_release_10_120_success',
+            '130 | BUG-211 c |tags: build_2013_release_10_120_success',
+            '120 | BUG-211 b |tags: build_2012_release_10_120_success',
+            '110 | BUG-211 a |tags: build_2011_release_10_120_success',
             '100 | some build |tags: build_2010_release_10_120_success',
             name="proj_lib",
         )
@@ -506,24 +555,16 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
                 'proj_lib': StdTestRepo,
             }
 
-        cls.repos = DemoRepoCollection2({
+        repos = DemoRepoCollection2({
             'c_master': MassterProjectRepo('c_master', master_repo),
             'proj_lib': StdTestRepo('proj_lib', cmpnt_repo),
         })
 
-    def test_report_211(self):
-        """BUG-211 - present in both components, included into builds"""
-        # 'BUG-211' is included into two builds in proj_lib:
-        # 10.120.2020 and 10.130.3090
-        #
-        # c_master repo has two branches: release/5.4 and master
-        # release/5.4 contains proj_lib==10.120.2020
-        # master contains proj_lib==10.130.3090, but it's not in build yet
-        # logs_configure(5)
-        reports_data = self.repos.make_reports_data("BUG-211")
+        # repos prepared
+        reports_data = repos.make_reports_data("BUG-211")
         rgraphs_by_name = {
             repo_name: rgraph for repo_name, rgraph in reports_data}
-        self.repos.print_prepared_reports(reports_data)
+        # repos.print_prepared_reports(reports_data)
 
         self.assertEqual({'c_master', 'proj_lib'}, rgraphs_by_name.keys())
 
@@ -534,7 +575,10 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
             c_lib_rgraph, ["master", "release/10.120"])
         self.assert_buildnums(
             c_lib_rgraph.branches[1].get_rbuilds_list(),  # release/10.120
-            ["10.120.2020", ])
+            [
+                "10.120.2019", "10.120.2018", "10.120.2016",
+                "10.120.2015", "10.120.2013", "10.120.2012", "10.120.2011",
+            ])
         self.assert_buildnums(
             c_lib_rgraph.branches[0].get_rbuilds_list(),  # master
             ["10.130.3090", ])
@@ -543,12 +587,93 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         # related to report topic, only bumps of component proj_lib
         c_master_rgraph = rgraphs_by_name['c_master']
         self.assert_branches_list(
-            c_master_rgraph, ["master", "release/5.4"])
+            c_master_rgraph,
+            ["master", "release/5.7", "release/5.6", "release/5.4"],
+            "branches release/5.3 and release/5.5 do not contain any "
+            "report-related builds of proj_lib component",
+        )
+        br_by_name = c_master_rgraph.get_rbranches_by_name()
 
-        # check c_master release/5.4
-        rbranch = c_master_rgraph.branches[1]
+        # check branch release/5.4 ===================================
+        #
+        # This branch contains several builds:
+        # 5.4.10 - NOT reported:
+        #   includes proj_lib=10.120.2010 which is not report-related
+        # 5.4.11 - reported:
+        #   includes proj_lib=10.120.2011
+        # 5.4.14 - reported:
+        #   includes proj_lib=10.120.2014 - it is not report related itself
+        #   but bump brings proj_lib=10.120.2012 and proj_lib=10.120.2013
+        # 5.4.17 - NOT reported:
+        #   includes proj_lib=10.120.2017 - info about this build is missing
+        # 8888.8888.8888 - not built - reported:
+        #   includes 10.120.2018
+        # 9999.9999.9999 - not merged - reported:
+        #   includes 10.120.2019
+        rbranch = br_by_name["release/5.4"]
         rbuilds = rbranch.get_rbuilds_list()
         self.assert_buildnums(
-            rbuilds, ["5.4.20", ],
-            "only this build contains bump of proj_lib to report-related "
-            "version 10.120.2020")
+            rbuilds, ["9999.9999.9999", "8888.8888.8888", "5.4.14", "5.4.11"],
+        )
+
+        # bump in "5.4.11"
+        bump = rbuilds[3].bumps['proj_lib']
+        self.assertEqual("10.120.2011", str(bump.to_buildnum))
+        self.assert_buildnums([], bump.from_build_nums)
+
+        # bump in "5.4.14"
+        bump = rbuilds[2].bumps['proj_lib']
+        self.assertEqual("10.120.2014", str(bump.to_buildnum))
+        self.assert_buildnums(bump.from_build_nums, ["10.120.2011"])
+
+        # bump in "not built" build
+        bump = rbuilds[1].bumps['proj_lib']
+        self.assertEqual("10.120.2018", str(bump.to_buildnum))
+        self.assert_buildnums(bump.from_build_nums, ["10.120.2014"])
+
+        # bump in "not merged" build
+        bump = rbuilds[0].bumps['proj_lib']
+        self.assertEqual("10.120.2019", str(bump.to_buildnum))
+        self.assert_buildnums(bump.from_build_nums, ["10.120.2018"])
+
+        # check c_master release/5.5 branch ==========================
+        #
+        # There are no builds in this branch at all. Not in report.
+        self.assertNotIn("release/5.5", br_by_name)
+
+        # check c_master release/5.6 branch ==========================
+        #
+        # no 'fake' builds required. Situation is similar to release/5.7
+        # but latest build was created not from a head commit
+        rbranch = br_by_name["release/5.6"]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["5.6.67"],)
+
+        bump = rbuilds[0].bumps['proj_lib']
+        self.assertEqual("10.120.2019", str(bump.to_buildnum))
+        self.assert_buildnums([], bump.from_build_nums)
+
+        # check c_master release/5.7 branch ==========================
+        #
+        # no 'fake' builds required
+        rbranch = br_by_name["release/5.7"]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(rbuilds, ["5.7.77"],)
+
+        bump = rbuilds[0].bumps['proj_lib']
+        self.assertEqual("10.120.2019", str(bump.to_buildnum))
+        self.assert_buildnums([], bump.from_build_nums)
+
+        # check c_master master branch ===============================
+        #
+        # only fake "not built" build is present
+        rbranch = br_by_name["master"]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["8888.8888.8888", ],
+        )
+
+        # bump in "not built" build
+        bump = rbuilds[0].bumps['proj_lib']
+        self.assertEqual("10.120.2019", str(bump.to_buildnum))
+        self.assert_buildnums(bump.from_build_nums, [])

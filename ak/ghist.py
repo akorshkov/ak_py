@@ -298,7 +298,7 @@ class RBuild:
     """
     NORMAL, FAKE_NOT_BUILT, FAKE_NOT_MERGED = 0, 1, 2
 
-    def __init__(self, rcommit, parent_rbuilds, rcommits, bumps_info, *, build_type=NORMAL):
+    def __init__(self, rcommit, parent_rbuilds, rcommits, bumps, *, build_type=NORMAL):
         """RBuild - elements of Reduced Commits Graph included in a build
 
         Arguments:
@@ -309,7 +309,7 @@ class RBuild:
             sub-branches)
         - rcommits: {iid: RCommit} - new RCommit's included into this build (that
             is not included into any of previous builds).
-            - bumps_info: {cmpnt_name: ComponentBump}
+            - bumps: {cmpnt_name: ComponentBump}
         - build_type: optional, should be specified for fake(*) builds.
 
         (*) fake RBuild. objects correspond to sets of commits not included
@@ -335,7 +335,7 @@ class RBuild:
             assert False
         self.rcommit = rcommit  # RCommit
         self.parent_rbuilds = parent_rbuilds  # {iid: RBuild}
-        self.bumps_info = bumps_info  # {repo_name: ComponentBump}
+        self.bumps = bumps  # {repo_name: ComponentBump}
         self.rcommits = rcommits  # {iid: RCommit} - new RCommit's in this build
 
     def __str__(self):
@@ -537,6 +537,10 @@ class RGraph:
             if br.rbuilds  # skip branches if there is nothing to report in them
         ]
 
+    def get_rbranches_by_name(self):
+        """RBranch'es having any report-related data: {branch_name: RBranch}."""
+        return {rbranch.branch_name: rbranch for rbranch in self.branches}
+
     def _read_branch(
             self, branch_name, ref_name,
             search_predicate, prev_branch,
@@ -735,7 +739,7 @@ class RGraph:
         if cur_branch_rbuilds:
             prev_rbuild = cur_branch_rbuilds[max(cur_branch_rbuilds.keys())]
             for repo_name in head_relevant_cmpnts:
-                cmpnt_prev_bump = prev_rbuild.bumps_info[repo_name]
+                cmpnt_prev_bump = prev_rbuild.bumps[repo_name]
                 cmpnt_incl_rbuild = cmpnt_prev_bump.to_rbuild
                 if cmpnt_incl_rbuild is None:
                     # !!!!!!!!
@@ -987,7 +991,7 @@ class RGraph:
             from_builnums = []
             from_rbuilds = {}
             for parent_rbuild in parent_rbuilds.values():
-                parent_component_bump = parent_rbuild.bumps_info.get(repo_name)
+                parent_component_bump = parent_rbuild.bumps.get(repo_name)
                 if not parent_component_bump:
                     continue
                 from_builnums.append(parent_component_bump.to_buildnum)
@@ -995,6 +999,23 @@ class RGraph:
                     from_rbuilds[parent_component_bump.to_rbuild.iid] = parent_component_bump.to_rbuild
                 else:
                     from_rbuilds.update(parent_component_bump.from_rbuilds)
+
+            if cur_component_rbuild is None and from_rbuilds:
+                # quite unusual situation: current commit references missing version
+                # component. We do not know where this version of component was built
+                # from. Let's ignore this version and act as if component version
+                # have not changed
+                logger.warning(
+                    "repo '%s' commit '%s' references unknown version '%s' "
+                    "of component '%s'",
+                    self.repo.name,
+                    commit.hexsha[:11],
+                    str(cur_component_bn),
+                    repo_name,
+                )
+                rbuild_id = max(rb.iid for rb in from_rbuilds.values())
+                cur_component_rbuild = from_rbuilds[rbuild_id]
+
             components_bumps[repo_name] = ComponentBump(
                 from_builnums, cur_component_bn,
                 from_rbuilds, cur_component_rbuild)
@@ -1218,7 +1239,7 @@ class ProjectRepo:
         self.name = name
         self.repo = repo_path if hasattr(repo_path, 'remotes') else GitRepo(repo_path)
 
-    def get_report_related_commits(self, search_text, components_rgraphs={}):
+    def build_report_rgraph(self, search_text, components_rgraphs={}):
         """Prepare and return RGraph
 
         RGraph - graph of RCommit's - commits which are related to
@@ -1702,7 +1723,7 @@ class ReposCollection:
     @classmethod
     def _make_repo_obj(cls, repo_name, repo_address):
         # !!!!
-        if hasattr(repo_address, 'get_report_related_commits'):
+        if hasattr(repo_address, 'build_report_rgraph'):
             # repo_address is a redy repo project
             return repo_address
         try:
@@ -1724,7 +1745,7 @@ class ReposCollection:
                 for repo_name, rgraph in rgraph_by_name.items()
                 if repo_name in repo._COMPONENTS_VERSIONS_LOCATIONS
             }
-            x = repo.get_report_related_commits(bug_id, components)
+            x = repo.build_report_rgraph(bug_id, components)
             results.append((repo_name, x))
             rgraph_by_name[repo_name] = x
         results.reverse()
@@ -1796,7 +1817,7 @@ class ReportPrinter:
             build_title += f" ({t_time})"
         yield build_title
 
-        for comp_name, bump in rbuild.bumps_info.items():
+        for comp_name, bump in rbuild.bumps.items():
             yield from self._gen_bump_descr(comp_name, bump, offset+1)
         for rc in rbuild.get_printable_rcommits():
             yield from self.gen_commit_descr(rc.commit, commits_merged, offset+1)
