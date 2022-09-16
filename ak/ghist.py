@@ -153,7 +153,7 @@ class BranchName(Comparable):
         is specified, sorting items will be ["zzz", "origin", "release", 10, 250]
         """
         self.name = branch_name
-        self._sort_items = [v for v in self._make_sort_items(self.name)]
+        self._sort_items = list(self._make_sort_items(self.name))
         if sort_prefix is not None:
             self._sort_items = sort_prefix + self._sort_items
 
@@ -323,9 +323,10 @@ class RBuild:
             # commit marked as build is included into this build
             rcommits[rcommit.iid] = rcommit
 
-        self.iid = None  # internal integer id. If self is normal build it
-                         # corresponds to some RCommit and in this case it has
-                         # same iid.
+        # internal integer id. If self is normal build it
+        # corresponds to some RCommit and in this case it has same iid.
+        self.iid = None
+
         self.build_type = build_type
         if rcommit is not None:
             self.build_num = rcommit.build_num
@@ -368,9 +369,7 @@ class RBranch:
         - rbuilds: id-map of RBuild's - builds in this branch
         """
         self.branch_name = branch_name
-        self.rheads = rheads  # [RCommit, ] - heads or reduced graph, which belong to
-                              # this branch
-
+        self.rheads = rheads  # [RCommit, ] - heads or reduced graph in this branch
         self.rbuilds = rbuilds  # {iid: RBuild}
 
     def get_latest_rbuild(self):
@@ -454,8 +453,7 @@ class RGraph:
 
         def __init__(self, bn_map, cutoff_ts):
             self.bn_map = bn_map  # {(major, minor, patch, build): (RBranch, RBuild)}
-            self.cutoff_ts = cutoff_ts  # skip component's versions checks for
-                                        # older commits
+            self.cutoff_ts = cutoff_ts  # skip checks for older commits
 
     def __init__(self, repo, search_predicate, cmpnts_rgraphs):
         """Construct RGraph
@@ -513,7 +511,8 @@ class RGraph:
                 cache.branches_refs_map[ref_name])
             if self.min_rbuild_timestamp is not None:
                 if self.min_rbuild_timestamp > (
-                    br_head.committed_date + _OBSOLETE_BRANCH_CUTOFF_PERIOD):
+                    br_head.committed_date + _OBSOLETE_BRANCH_CUTOFF_PERIOD
+                ):
                     # looks like this branch is very old and is not relevant any more
                     continue
             with Timer(f"read branch {self.repo.name} {branch_name}",
@@ -783,7 +782,7 @@ class RGraph:
         buildnums = None
         parent_rbuilds = None
 
-        if not(accumdat.selected_explicitely
+        if not (accumdat.selected_explicitely
                or accumdat.relevant_cmpnts or accumdat.rc_parents):
             # this commit is definitely not interesting for the report
             return None, None, buildnums, parent_rbuilds
@@ -996,7 +995,8 @@ class RGraph:
                     continue
                 from_builnums.append(parent_component_bump.to_buildnum)
                 if parent_component_bump.to_rbuild is not None:
-                    from_rbuilds[parent_component_bump.to_rbuild.iid] = parent_component_bump.to_rbuild
+                    prev_rbuild = parent_component_bump.to_rbuild
+                    from_rbuilds[prev_rbuild.iid] = prev_rbuild
                 else:
                     from_rbuilds.update(parent_component_bump.from_rbuilds)
 
@@ -1117,7 +1117,7 @@ class GitRepo(Repo):
 
         # iter refs on file-system
         fs_ref_names = set()
-        for p in prefixes:
+        for prefix in prefixes:
             for ref_name, _path in self._iter_refs_files(prefix):
                 fs_ref_names.add(ref_name)
                 yield ref_name, None
@@ -1239,7 +1239,7 @@ class ProjectRepo:
         self.name = name
         self.repo = repo_path if hasattr(repo_path, 'remotes') else GitRepo(repo_path)
 
-    def build_report_rgraph(self, search_text, components_rgraphs={}):
+    def build_report_rgraph(self, search_text, components_rgraphs):
         """Prepare and return RGraph
 
         RGraph - graph of RCommit's - commits which are related to
@@ -1270,8 +1270,10 @@ class ProjectRepo:
                 bn = BranchName(ref.name)
                 yield ref.name, branch_name, bn
 
-    def _read_saved_build_num_from_file(self, blob, path):
-        assert False, f"Implement this method in '{type(self)}'!"
+    def _read_saved_build_num_from_file(self, blob, path) -> BuildNumData:
+        # !!!!!!
+        _ = blob, path
+        raise NotImplementedError(f"Implement this method in '{type(self)}'!")
 
     #########################
     # methods for processing info about builds associated with commits
@@ -1433,6 +1435,8 @@ class ProjectRepo:
     def read_components_from_file(self, v_file_path, blob):
         # to be implemented in derived classes
         # should return {'component_name': (major, minor, patch)}
+        _ = v_file_path
+        _ = blob
         return {}
 
     #########################
@@ -1484,7 +1488,7 @@ class ProjectRepo:
         # Make sure that tags info created with refs iterator are cated correctly.
 
         with Timer("get tags hexsha old"):
-            bt_old = self.make_buildtags_map()
+            _ = self.make_buildtags_map()
 
         tags_map_direct = {}
         with Timer("get tags from .git directly"):
@@ -1535,6 +1539,7 @@ class RepoBuildsDetector:
     """
     def is_build_commit(self, commit) -> bool:
         """Check if some successful build was based on this commit."""
+        _ = commit
         assert False, "Not implemented"
 
     def get_builds_numbers(self, commit):
@@ -1542,6 +1547,7 @@ class RepoBuildsDetector:
 
         Returned list is sorted in ascending order.
         """
+        _ = commit
         assert False, "Not implemented"
 
 
@@ -1786,7 +1792,6 @@ class ReportPrinter:
             for rbranch in branches:
                 yield from self._gen_branch_report(repo_name, rbranch, 0)
 
-
     def _gen_branch_report(self, repo_name, rbranch, offset):
         yield (
             self._mk_offset(offset) +
@@ -1794,7 +1799,6 @@ class ReportPrinter:
             self.palette['BRANCH'](rbranch.branch_name) + ":")
         for rbuild in rbranch.get_rbuilds_list():
             yield from self._gen_rbuild_descr(rbuild, offset+1)
-
 
     def _gen_rbuild_descr(self, rbuild, offset):
         # !!!!!
@@ -1818,9 +1822,9 @@ class ReportPrinter:
         yield build_title
 
         for comp_name, bump in rbuild.bumps.items():
-            yield from self._gen_bump_descr(comp_name, bump, offset+1)
+            yield from self._gen_bump_descr(comp_name, bump, offset + 1)
         for rc in rbuild.get_printable_rcommits():
-            yield from self.gen_commit_descr(rc.commit, commits_merged, offset+1)
+            yield from self.gen_commit_descr(rc.commit, commits_merged, offset + 1)
 
     def _gen_bump_descr(self, comp_name, bump, offset):
         # !!!!!
@@ -1836,7 +1840,7 @@ class ReportPrinter:
                     str(bn) for bn in bump.from_build_nums)
                 bump_versions_descr += "]"
         yield (
-            self._mk_offset(offset+1) +
+            self._mk_offset(offset + 1) +
             self.palette['REPO'](comp_name) + "=" + bump_versions_descr)
 
     def gen_commit_descr(self, commit, merged, offset):
@@ -1848,12 +1852,11 @@ class ReportPrinter:
             commit.author.name).fixed_len(18)
         t_message = commit.message.split('\n')[0].strip()
 
-        yield ColoredText("  "*offset) + ColoredText(" ").join((
+        yield ColoredText("  " * offset) + ColoredText(" ").join((
             t_hexsha, t_time, t_name, t_message))
 
     def _mk_offset(self, offset):
-        return ColoredText("  "*offset)
-
+        return ColoredText("  " * offset)
 
 
 def find_commit_chain(from_commit, to_commit, except_commit=None):

@@ -205,7 +205,7 @@ class ColoredText:
             suffix_width = filler_width - prefix_width
             return filler_ch*prefix_width + str(self) + filler_ch*suffix_width
 
-    def __getitem__(self, index) -> 'ColoredText':
+    def __getitem__(self, index) -> 'ColorFmt':
         """Returns a slice of colored text.
 
         Examples:
