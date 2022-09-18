@@ -37,6 +37,18 @@ class CommitsCheckerMixin:
             actual_buildnums = [str(b) for b in builds_list]
         self.assertEqual(expected_buildnums, actual_buildnums, message)
 
+    def assert_incl_at(self, rbuild, expected_incl_at, message=None):
+        """Check contents of rbuild.included_at
+
+        Arguments:
+        - rbuild: RBuild
+        - expected_incl_at: {("repo_name", "relsease/10.5", "10.5.3"), }
+        """
+        actual_incl_at = {
+            (str(x[0]), str(x[1]), str(x[2]))
+            for x in rbuild.included_at}
+        self.assertEqual(expected_incl_at, actual_incl_at, message)
+
     def assert_rbuild_commits(self, rbuild, expected_intids_set, message=None):
         """Check commits included into RBuild.
 
@@ -677,3 +689,107 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         bump = rbuilds[0].bumps['proj_lib']
         self.assertEqual("10.120.2019", str(bump.to_buildnum))
         self.assert_buildnums(bump.from_build_nums, [])
+
+    def test_included_at_data_in_component(self):
+        """Check that builds of component are included into correct builds of parent"""
+        master_repo = MockedGitRepo(
+            'branch: origin/release/5.5',  # ---- branch 5.5
+            '590 |branch 5.5 head',
+            '--> |file:DEPENDS:{"proj_lib": "10.20.7"}',
+            '550 |build 5.5.5',
+            '--> |tags: build_5_release_5_5_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.20.4"}',
+            'branch: origin/release/5.4',  # ---- branch 5.4
+            '390<-10|branch 5.4 head',
+            '--> |tags:build_47_release_5_4_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.20.7"}',
+            'branch: origin/release/5.3',  # ---- branch 5.3
+            '90|build 5|tags: build_5_release_5_3_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.20.1"}',
+            '10|build 3|tags: build_3_release_5_3_success',
+            '--> |file:DEPENDS:{"proj_lib": "10.10.1"}',
+            name="c_master",
+        )
+
+        cmpnt_repo = MockedGitRepo(
+            'branch: origin/master',  # ---- branch
+            '990 | final_build |tags: build_3090_release_10_130_success',
+            '--> |file:VERSION:10.130|',
+            'branch: origin/release/10.20',  # ---- branch
+            '190 | BUG-212 g |tags: build_9_release_10_20_success',
+            '170 | BUG-212 f |tags: build_7_release_10_20_success',
+            '150 | BUG-212 d |tags: build_5_release_10_20_success',
+            '140 | no bug    |tags: build_4_release_10_20_success',
+            '120 | BUG-212 b |tags: build_3_release_10_20_success',
+            '110 | BUG-212 a |tags: build_2_release_10_20_success',
+            '100 | some build |tags: build_1_release_10_20_success',
+            name="proj_lib",
+        )
+
+        class MassterProjectRepo(StdTestRepo):
+            _COMPONENTS_VERSIONS_LOCATIONS = {
+                'proj_lib': 'DEPENDS',
+            }
+
+        class DemoRepoCollection3(ReposCollection):
+            _REPOS_TYPES = {
+                'c_master': MassterProjectRepo,
+                'proj_lib': StdTestRepo,
+            }
+
+        repos = DemoRepoCollection3({
+            'c_master': MassterProjectRepo('c_master', master_repo),
+            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo),
+        })
+
+        # repos prepared
+        reports_data = repos.make_reports_data("BUG-212")
+        rgraphs_by_name = {
+            repo_name: rgraph for repo_name, rgraph in reports_data}
+        repos.print_prepared_reports(reports_data)
+
+        # proj_lib repo: verify 'included_at' info is populated correctly.
+        #
+        # There are following builds in this component (all in release/10.120
+        # branch, structure is simple linear):
+        #
+        # 10.20.1, 10.20.2, 10.20.3, 10.20.5, 10.20.7, 10.20.9
+
+        # builds in proj_lib release/10.20
+        c_lib_rgraph = rgraphs_by_name['proj_lib']
+        self.assert_branches_list(
+            c_lib_rgraph, ["master", "release/10.20"])
+        rbuilds = {
+            str(rb.build_num): rb
+            for rb in c_lib_rgraph.branches[1].get_rbuilds_list()}
+        self.assertEqual(
+            rbuilds.keys(),
+            {
+                "10.20.2", "10.20.3", "10.20.5", "10.20.7", "10.20.9",
+            })
+
+        self.assert_incl_at(
+            rbuilds["10.20.2"], {
+                ('c_master', 'release/5.4', '5.4.47'),
+                ('c_master', 'release/5.5', '5.5.5'),
+            })
+
+        self.assert_incl_at(
+            rbuilds["10.20.3"], {
+                ('c_master', 'release/5.4', '5.4.47'),
+                ('c_master', 'release/5.5', '5.5.5'),
+            })
+
+        self.assert_incl_at(
+            rbuilds["10.20.5"], {
+                ('c_master', 'release/5.4', '5.4.47'),
+                ('c_master', 'release/5.5', '8888.8888.8888'),
+            })
+
+        self.assert_incl_at(
+            rbuilds["10.20.7"], {
+                ('c_master', 'release/5.4', '5.4.47'),
+                ('c_master', 'release/5.5', '8888.8888.8888'),
+            })
+
+        self.assert_incl_at(rbuilds["10.20.9"], set())

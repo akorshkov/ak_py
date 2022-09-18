@@ -52,6 +52,7 @@ class _MockedGitCommit:
     _AUTHORS = [
         "V. Arnold", "Arnold Sh.", "Richard Feynman", "J. Morrison",
         "Norris, Chuck", "Elieser Yudkowsky", "Stanislav Lem",
+        "Viktor Tsoy", "Linus B. Torvalds", "Euler",
     ]
     _BASE_TIME = random.randint(10000, 20000) * 86400
 

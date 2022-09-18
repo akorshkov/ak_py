@@ -81,7 +81,7 @@ class ComponentBump:
     Note:
     1. It should always be possible to tell exactly what is the version of a
     component in our commit. But there may be more (or less) than one parent
-    commits, so we 'to_buildnum' can contains only one build numbers, but
+    commits, so 'to_buildnum' can contains only one BuildNumData, but
     'from_build_nums' is a list.
 
     2. in order to decide if the bump of component is relevant for a report it
@@ -122,6 +122,54 @@ class ComponentBump:
             return True
         return self.to_rbuild.iid in self.from_rbuilds
 
+    def get_rbuilds_in_bump(self):
+        """Get {idd: RBuild} - all RBuild's included into this bump.
+
+        For example, this ComponentBump states that compenent version changed
+        from 1.1.5 to 1.1.10 since last build. But versions 1.1.7 and 1.1.8 are
+        also report-related. In this case this method will return component
+        RBuild's corresponding to 1.1.5, 1.1.7 and 1.1.8. All this versions
+        of component were included into the same build of parent repo.
+        """
+        if self.to_rbuild is None:
+            return {}
+        # DFS rbuilds in the component
+        dfs_stack = [[self.to_rbuild]]
+        dfs_sp = [0]
+        result_rbuilds = {}
+        while dfs_stack:
+            cur_sp = dfs_sp[-1]
+            if cur_sp < 0:
+                # all commits on top level processed.
+                # finish processing commit on previous level
+                dfs_stack.pop()
+                dfs_sp.pop()
+                if not dfs_stack:
+                    # DFS completed
+                    break
+                cur_sp = dfs_sp[-1]
+                cur_rbuild = dfs_stack[-1][cur_sp]
+
+                result_rbuilds[cur_rbuild.iid] = cur_rbuild
+                dfs_sp[-1] = cur_sp - 1
+                continue
+
+            cur_rbuild = dfs_stack[-1][cur_sp]
+
+            if cur_rbuild.iid in self.from_rbuilds:
+                # do not go deeper
+                dfs_sp[-1] = cur_sp - 1
+                continue
+
+            # need to go deeper to analize cur_commit
+            parents = sorted(
+                cur_rbuild.parent_rbuilds.values(),
+                key=lambda rb: rb.iid)
+            dfs_stack.append(parents)
+            dfs_sp.append(len(parents) - 1)
+
+        return result_rbuilds
+
     def __str__(self):
         is_triv = "(t) " if self.is_trivial() else ""
         to_rbuild_descr = (
@@ -153,12 +201,12 @@ class BranchName(Comparable):
         is specified, sorting items will be ["zzz", "origin", "release", 10, 250]
         """
         self.name = branch_name
-        self._sort_items = list(self._make_sort_items(self.name))
+        self._sort_items = list(self._mk_sort_items(self.name))
         if sort_prefix is not None:
             self._sort_items = sort_prefix + self._sort_items
 
     @staticmethod
-    def _make_sort_items(str_val):
+    def _mk_sort_items(str_val):
         # branch_name -> tuple of strings and integers (to be used for sorting):
         # "release/ABA12.5U1" -> ("release", "ABA", 12, "5U1")
         s = str_val.replace(
@@ -339,6 +387,11 @@ class RBuild:
         self.bumps = bumps  # {repo_name: ComponentBump}
         self.rcommits = rcommits  # {iid: RCommit} - new RCommit's in this build
 
+        # contains info about builds of parent component where this rbuild was
+        # included into.
+        # populated by parent components when they are parsed
+        self.included_at = []  # [(repo_name, BranchName, BuildNumData), ]
+
     def __str__(self):
         return f"RBuild<{self.build_num}; {len(self.rcommits)}cmts.>"
 
@@ -474,8 +527,8 @@ class RGraph:
         self._rcommits_counter = 0
         self.brcommits = {}  # {iid: RBuild} - all build commits
         # RBuild are registered with the same id's as corresponding RCommit's
-        # Fake RBuild do not correspond to any RCommit, so they are reristered
-        # with id's which would not collide with rcommits ids
+        # Fake RBuild do not correspond to any RCommit, so they are registered
+        # with id's which would not conflict with rcommits ids
         self._brcommits_counter = 1_000_000_000
 
         # get release branches
@@ -490,7 +543,7 @@ class RGraph:
             cache = self._RepoParserCache(
                 self.repo.make_builds_detector(),
                 self.repo.make_branch_refs_map('origin'),
-                self.repo._make_components_versions_cache(),
+                self.repo._mk_components_versions_cache(),
             )
 
         components_versions_maps = {
@@ -535,6 +588,28 @@ class RGraph:
             for br in self.branches[::-1]  # reverse, so that 'master' is first
             if br.rbuilds  # skip branches if there is nothing to report in them
         ]
+
+        # register 'included_at' buildnumbers in components
+        for my_rbranch in self.branches:
+            my_rbuilds = my_rbranch.get_rbuilds_list()
+            my_rbuilds.reverse()
+            for cmpnt_name, cmpnt_rgraph in cmpnts_rgraphs.items():
+                for my_rbuild in my_rbuilds:
+                    if my_rbuild.build_num.is_fake_not_merged():
+                        continue
+                    cmpnt_bump = my_rbuild.bumps.get(cmpnt_name)
+                    if cmpnt_bump is None:
+                        continue
+                    # do register my_rbuild in component's rbuilds.
+                    # This means: component build was included into this
+                    # build of parent (my_rbuild)
+                    inculed_into = (
+                        self.repo.name,
+                        my_rbranch.branch_name,
+                        my_rbuild.rcommit.build_num,
+                    )
+                    for cmpnt_rbuild in cmpnt_bump.get_rbuilds_in_bump().values():
+                        cmpnt_rbuild.included_at.append(inculed_into)
 
     def get_rbranches_by_name(self):
         """RBranch'es having any report-related data: {branch_name: RBranch}."""
@@ -607,7 +682,7 @@ class RGraph:
                 comm_hex = cur_commit.hexsha
 
                 # ==== create RCommit's from accumdat ========
-                new_rcommit, new_rbuild, buildnums, parent_rbuilds = self._make_rcommits(
+                new_rcommit, new_rbuild, buildnums, parent_rbuilds = self._mk_rcommits(
                     cur_accumdat,
                     components_versions_maps, repo_cache, br_cache,
                     is_head_commit=cur_accumdat.commit.hexsha == head_commit.hexsha,
@@ -697,31 +772,17 @@ class RGraph:
             for iid, commit in rbuild.rcommits.items()
         } if prev_branch is not None else {}
 
-        ###################  !!!!!!
-        #if all_commits_prev_branch:
-        #    print(all_commits_prev_branch)
-        ###################
-
         all_commits_in_this_branch = {
             iid
             for rbuild in cur_branch_rbuilds.values()
             for iid in rbuild.rcommits.keys()
         }
-        ###################  !!!!!!
-        #if all_commits_prev_branch:
-        #    print(f"all in this branch: {all_commits_in_this_branch}")
-        ###################
+
         not_merged_rcommits = {
             iid: rcommit
             for iid, rcommit in all_commits_prev_branch.items()
             if rcommit.is_explicit and iid not in all_commits_in_this_branch
         }
-        ###################  !!!!!!
-        #if all_commits_prev_branch:
-        #    print(f"not merged: {not_merged_rcommits}")
-        #if not_merged_rcommits:
-        #    print(not_merged_rcommits)
-        ###################
 
         # sub-graph of rbuilds in current branch has no more then one head.
         # If latest builds happened in different sub-branches, a fake 'not-yet-built'
@@ -741,7 +802,6 @@ class RGraph:
                 cmpnt_prev_bump = prev_rbuild.bumps[repo_name]
                 cmpnt_incl_rbuild = cmpnt_prev_bump.to_rbuild
                 if cmpnt_incl_rbuild is None:
-                    # !!!!!!!!
                     continue
                 cmpnt_incl_buildnum = cmpnt_prev_bump.to_buildnum
                 cmpnt_rbranch, _ = components_versions_maps[repo_name].bn_map[
@@ -769,7 +829,7 @@ class RGraph:
 
         return branch_rcommits, bn_map
 
-    def _make_rcommits(
+    def _mk_rcommits(
             self, accumdat, components_versions_maps, repo_cache, br_cache, *,
             is_head_commit,
     ):
@@ -801,7 +861,7 @@ class RGraph:
             buildnums = repo_cache.builds_detector.get_builds_numbers(accumdat.commit)
             if is_head_commit and not buildnums:
                 buildnums = [BuildNumData.mk_fake_not_built(), ]
-            components_bumps = self._make_bumps_info(
+            components_bumps = self._mk_bumps_info(
                 accumdat.commit, accumdat.relevant_cmpnts, parent_rbuilds,
                 components_versions_maps,
                 repo_cache.components_versions_cache,
@@ -898,7 +958,7 @@ class RGraph:
                     # we already know build parents of this commit
                     dfs_sp[-1] -= 1
                     continue
-                # still not enough info about cur_commit. Need to analyze parents
+                # still not enough info about cur_commit. Need to analize parents
                 dfs_stack.append(cur_commit)
                 dfs_sp.append(len(cur_commit.parents) - 1)
                 continue
@@ -960,7 +1020,7 @@ class RGraph:
 
         return new_rcommits, head_rbuilds
 
-    def _make_bumps_info(
+    def _mk_bumps_info(
             self, commit, relevant_components, parent_rbuilds,
             components_versions_maps,
             components_versions_cache,
@@ -1068,10 +1128,6 @@ class RGraph:
             # But it can be wrong in several rare cases (if component version numbers
             # do not grow monotonously in parent repo) - so instead of not reporting
             # this component at all report None ('not found') version
-            ####################### !!!!!!!!!!!!!
-            #branch_and_build = cmpnt_vmap.bn_map.get(build_num.as_tuple(), None)
-            #ret_val[comp_name] = branch_and_build
-            ####################### !!!!!!!!!!!!!
         return ret_val
 
 
@@ -1271,7 +1327,9 @@ class ProjectRepo:
                 yield ref.name, branch_name, bn
 
     def _read_saved_build_num_from_file(self, blob, path) -> BuildNumData:
-        # !!!!!!
+        # to be implemented in derived classes if necessry
+        #
+        # applicable for repositories where build number is stored in a file
         _ = blob, path
         raise NotImplementedError(f"Implement this method in '{type(self)}'!")
 
@@ -1351,7 +1409,6 @@ class ProjectRepo:
             try:
                 build_num = self._read_saved_build_num_from_file(
                     blob, local_path)
-                assert isinstance(build_num, BuildNumData)  # !!!!!!!!!
             except ValueError as err:
                 problems_descrs.append(str(err))
                 continue
@@ -1408,8 +1465,14 @@ class ProjectRepo:
         for v_file_path, cmps in components_to_check.items():
             try:
                 blob = commit.tree / v_file_path
-            except KeyError as err:
-                raise  # !!!!!!
+            except KeyError:
+                logger.warning(
+                    "repo '%s' commit '%s' does not contain a file '%s'",
+                    self.name,
+                    commit.hexsha[:11],
+                    v_file_path,
+                )
+                continue
 
             try:
                 components_in_file = cache[blob.hexsha]
@@ -1442,7 +1505,7 @@ class ProjectRepo:
     #########################
     # some ProjectRepo utils
 
-    def _make_components_versions_cache(self):
+    def _mk_components_versions_cache(self):
         # ovride in derived class if simple dictionary is not enough
         return {}
 
@@ -1635,8 +1698,8 @@ class RepoBuildsBySavedBuildNumDetector(RepoBuildsDetector):
         self.project_repo = project_repo
         self.cache = {}
 
-    def is_build_commit(self, commit):
-        """ !!!! """
+    def is_build_commit(self, commit) -> bool:
+        """Check if build was created from this commit."""
         cur_saved_build_num = self.get_builds_numbers(commit)[0]
         return all(
             cur_saved_build_num != self.get_builds_numbers(c)[0]
@@ -1665,7 +1728,7 @@ class ReposCollection:
         """
         self.repos = {}
         for repo_name, repo_address in repos.items():
-            repo = self._make_repo_obj(repo_name, repo_address)
+            repo = self._mk_repo_obj(repo_name, repo_address)
             if repo is None:
                 continue
             self.repos[repo_name] = repo
@@ -1727,8 +1790,13 @@ class ReposCollection:
         assert len(self.sorted_repos) == len(self.repos)
 
     @classmethod
-    def _make_repo_obj(cls, repo_name, repo_address):
-        # !!!!
+    def _mk_repo_obj(cls, repo_name, repo_address):
+        # helper to be used in constructor. Creates ProjectRepo
+        #
+        # Arguments:
+        # - repo_name: string
+        # - repo_address: either path to git reporitory or a ready ProjectRepo
+
         if hasattr(repo_address, 'build_report_rgraph'):
             # repo_address is a redy repo project
             return repo_address
@@ -1740,7 +1808,10 @@ class ReposCollection:
         return repo_class(repo_name, repo_address)
 
     def make_reports_data(self, bug_id):
-        """!!!!!! """
+        """Prepare report of commits with descriptions contaning specified text.
+
+        Return: [('repo_name', RGraph), ]
+        """
         results = []  # [(repo_name, RGraph), ]
         rgraph_by_name = {}  # {repo_name: RGraph}
 
@@ -1764,6 +1835,7 @@ class ReposCollection:
 
 
 class ReportPrinter:
+    """Pretty-print report data produced by ReposCollection.make_reports_data"""
 
     def __init__(self):
         self.palette = Palette({
@@ -1801,33 +1873,63 @@ class ReportPrinter:
             yield from self._gen_rbuild_descr(rbuild, offset+1)
 
     def _gen_rbuild_descr(self, rbuild, offset):
-        # !!!!!
+        # generate ColoredText lines of description of RBuild (including
+        # commits in this build)
 
-        commits_merged = True
         # prepare build title line
-        build_num = rbuild.build_num
-        if build_num.is_fake_not_built():
-            build_title = self.palette['VER_NOT_BUILT']("- not built -")
-        elif build_num.is_fake_not_merged():
-            build_title = self.palette['VER_NOT_MERGED']("- not merged -")
-            commits_merged = False
-        else:
-            build_title = self.palette['VERSION'](str(rbuild.build_num))
-        build_title = self._mk_offset(offset) + build_title
+        build_title = (
+            self._mk_offset(offset) + self._mk_buildnum_descr(rbuild.build_num))
+        commits_merged = not rbuild.build_num.is_fake_not_merged()
 
         if rbuild.rcommit is not None:
             commit = rbuild.rcommit.commit
             t_time = datetime.fromtimestamp(commit.committed_date).isoformat(sep=' ')
             build_title += f" ({t_time})"
+
+        # build_title now looks like:
+        #   10.260.2714 (2022-08-31 17:36:46)
+        #
+        # In case 'included_at' is not empty, it's first line also goes to title line:
+        #   10.260.2714 (2022-08-31 17:36:46) / parent_repo relese/3.4 10.15.35
+        incl_at_offset_str = None
+        if rbuild.included_at:
+            incl_at_offset_str = self._mk_offset(len(build_title), 1)
+            incl_at_offset_str += " / "
+            build_title += " / "
+            build_title += self._mk_included_at_descr(rbuild.included_at[0])
         yield build_title
+
+        # yiled remaining lines of 'included_at' section
+        for incl_at in rbuild.included_at[1:]:
+            yield incl_at_offset_str + self._mk_included_at_descr(incl_at)
 
         for comp_name, bump in rbuild.bumps.items():
             yield from self._gen_bump_descr(comp_name, bump, offset + 1)
         for rc in rbuild.get_printable_rcommits():
             yield from self.gen_commit_descr(rc.commit, commits_merged, offset + 1)
 
+    def _mk_buildnum_descr(self, build_num):
+        # BuildNumData -> ColoredText
+        if build_num.is_fake_not_built():
+            return self.palette['VER_NOT_BUILT']("- not built -")
+        elif build_num.is_fake_not_merged():
+            return self.palette['VER_NOT_MERGED']("- not merged -")
+
+        return self.palette['VERSION'](str(build_num))
+
+    def _mk_included_at_descr(self, incl_at):
+        # prepare description of the parent component's build:
+        # "parent_repo relese/3.4 10.15.35"
+        repo_name = self.palette['REPO'](incl_at[0])
+        branch_name = self.palette['BRANCH'](incl_at[1])
+        build = self._mk_buildnum_descr(incl_at[2])
+        return f"{repo_name} {branch_name} {build}"
+
     def _gen_bump_descr(self, comp_name, bump, offset):
-        # !!!!!
+        # generate lines of bump description for a parent component:
+        # Example:
+        # "      proj_lib=10.20.9<-10.20.7"
+        # "      proj_lib1=3.4.5"
         bump_versions_descr = self.palette['VERSION'](str(bump.to_buildnum))
         if bump.from_build_nums:
             bump_versions_descr += "<-"
@@ -1844,6 +1946,7 @@ class ReportPrinter:
             self.palette['REPO'](comp_name) + "=" + bump_versions_descr)
 
     def gen_commit_descr(self, commit, merged, offset):
+        """Generate ColoredText lines of a single commit descripiton."""
         t_hexsha = self.palette['HASH' if merged else 'HASH_NOT_MERGED'](
             commit.hexsha[:11])
         t_time = self.palette['COMMIT_TIME'](
@@ -1855,8 +1958,8 @@ class ReportPrinter:
         yield ColoredText("  " * offset) + ColoredText(" ").join((
             t_hexsha, t_time, t_name, t_message))
 
-    def _mk_offset(self, offset):
-        return ColoredText("  " * offset)
+    def _mk_offset(self, offset, _step=2):
+        return ColoredText(" " * (offset * _step))
 
 
 def find_commit_chain(from_commit, to_commit, except_commit=None):
