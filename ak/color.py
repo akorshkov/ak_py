@@ -518,7 +518,7 @@ class ColorBytes:
         return self._color_prefix + bytes_text + self._color_suffix
 
 
-def make_examples(text="text"):
+def make_examples(text="color text"):
     """Produce color examples table (simple printable string)"""
 
     def _produce_lines():
@@ -546,3 +546,7 @@ def make_examples(text="text"):
             yield line
 
     return "\n".join(line for line in _produce_lines())
+
+
+if __name__ == '__main__':
+    print(make_examples())
