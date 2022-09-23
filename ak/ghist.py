@@ -5,6 +5,7 @@ from datetime import datetime
 import logging
 from pathlib import Path
 import re
+import threading
 
 from git import Repo, SymbolicReference
 
@@ -1323,6 +1324,25 @@ class ProjectRepo:
 
         return gr
 
+    def sync(self) -> bool:
+        """Sync with remote: 'git fetch <remote_name>'
+
+        Return value indicates if sync was successfull.
+        """
+        with Timer(
+            f"sync {self.repo_id} {self.repo.working_dir} {self.remote_name}",
+            report_start=True,
+            log_method=logger.info
+        ):
+            remote = self.repo.remotes[self.remote_name]
+            try:
+                remote.fetch()
+            except:
+                logger.exception(
+                    "Unexpected error during Repo '%s' synchronization", repo)
+                return False
+        return True
+
     def iter_release_branches(self):
         # yield (ref_name, branch_name, BranchName) for release branches
         prefix_len = len(f"{self.remote_name}/")
@@ -1833,6 +1853,32 @@ class ReposCollection:
             return None
         return repo_class(repo_id, repo_address, remote_name)
 
+    def sync(self):
+        """Sync all the repos in the collection.
+
+        Method returns (num_synced, num_failed)
+        """
+        results = {}  # {repo_id: if_sync_successfull}
+
+        def run_job(repo_id):
+            results[repo_id] = self.repos[repo_id].sync()
+
+        threads = [
+            threading.Thread(target=run_job, args=((repo_id, )))
+            for repo_id in sorted(self.repos.keys())
+        ]
+        with Timer("total sync", log_method=logger.info):
+            for th in threads:
+                th.start()
+
+            for th in threads:
+                th.join()
+
+        assert len(results) == len(self.repos)
+        num_synced = sum(1 for result in results.values() if result)
+        num_failed = len(results) - num_synced
+        return num_synced, num_failed
+
     def make_reports_data(self, bug_id):
         """Prepare report of commits with descriptions contaning specified text.
 
@@ -1854,8 +1900,8 @@ class ReposCollection:
         results.reverse()
         return results
 
-    def print_prepared_reports(self, report_data):
-        rp = ReportPrinter()
+    def print_prepared_reports(self, report_data, color_stdout=True):
+        rp = ReportPrinter(color_stdout)
         for line in rp.gen_report(report_data):
             print(line)
 
@@ -1863,8 +1909,8 @@ class ReposCollection:
 class ReportPrinter:
     """Pretty-print report data produced by ReposCollection.make_reports_data"""
 
-    def __init__(self):
-        self.palette = Palette({
+    def __init__(self, color_stdout):
+        self.palette = Palette({}) if not color_stdout else Palette({
             'REPO': ColorFmt('CYAN', bold=True),
             'BRANCH': ColorFmt('GREEN', bold=True),
             'HASH': ColorFmt('YELLOW'),
