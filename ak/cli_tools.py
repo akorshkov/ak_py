@@ -35,7 +35,7 @@ class ArgParser:
         - _no_log_file: does not affect arguments procesing, but in case it is
             specified, adds '_no_log_file' attribute to the result 'args'.
             (So, it behaves like a hidden argument. It's value is used
-            by ak.cli_tools.std_app_conf function.
+            by ak.cli_tools.std_app_configure function.
         - kwargs: standard kwargs for argparse.ArgumentParser
         """
         if commands is None:
@@ -162,7 +162,7 @@ class ArgParser:
                 f"Configured commands: {avail_commands}")
 
 
-def std_app_conf(args):
+def std_app_configure(args):
     """Perform standard configuration of script
 
     Arguments:
