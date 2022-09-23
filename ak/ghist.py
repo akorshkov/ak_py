@@ -542,7 +542,7 @@ class RGraph:
         with Timer(f"init {self.repo.repo_id} repo caches", log_method=logger.debug):
             cache = self._RepoParserCache(
                 self.repo.make_builds_detector(),
-                self.repo.make_branch_refs_map('origin'),
+                self.repo.make_branch_refs_map(),
                 self.repo._mk_components_versions_cache(),
             )
 
@@ -1262,7 +1262,7 @@ class ProjectRepo:
     there will be a separate ProjectRepo-derived class for each project.
     """
 
-    _REPO_DESCR = None  # optional description of repository
+    REPO_DESCR = None  # optional description of repository
 
     # successfull build tag examples:
     #   build_4155_master_success
@@ -1285,17 +1285,23 @@ class ProjectRepo:
     # locations of files which contain verstions of sub-components
     _COMPONENTS_VERSIONS_LOCATIONS = {}  # {project_repo_id: local_path}
 
-    __slots__ = 'repo_id', 'repo'
+    __slots__ = 'repo_id', 'repo', 'remote_name'
 
-    def __init__(self, repo_id, repo_path):
+    def __init__(self, repo_id, repo_path, remote_name):
         """ProjectRepo constructor.
 
         Arguments:
         - repo_id: string, repo_id of this ProjectRepo.
         - repo_path: path to local git repository or GitRepo object
+        - remote_name: name of the git remote. Local data fetched from this
+            remote will be used for report.
         """
         self.repo_id = repo_id
         self.repo = repo_path if hasattr(repo_path, 'remotes') else GitRepo(repo_path)
+        assert remote_name, (
+            "Remote name must be specified. Preparing reports for commits "
+            "not pushed to remote server is not supported yet.")
+        self.remote_name = remote_name
 
     def build_report_rgraph(self, search_text, components_rgraphs):
         """Prepare and return RGraph
@@ -1319,12 +1325,14 @@ class ProjectRepo:
 
     def iter_release_branches(self):
         # yield (ref_name, branch_name, BranchName) for release branches
-        for ref in self.repo.remotes['origin'].refs:
-            if ref.name == 'origin/master':
+        prefix_len = len(f"{self.remote_name}/")
+        for ref in self.repo.remotes[self.remote_name].refs:
+            if ref.name in (f"{self.remote_name}/master", f"{self.remote_name}/main"):
                 bn = BranchName(ref.name, sort_prefix=["zzzzzzzzzzzzzz", ])
+                branch_name = ref.name[prefix_len:]
                 yield ref.name, "master", bn
-            if ref.name.startswith("origin/release/"):
-                branch_name = ref.name[len("origin/"):]
+            if ref.name.startswith(f"{self.remote_name}/release/"):
+                branch_name = ref.name[prefix_len:]
                 bn = BranchName(ref.name)
                 yield ref.name, branch_name, bn
 
@@ -1511,7 +1519,7 @@ class ProjectRepo:
         # ovride in derived class if simple dictionary is not enough
         return {}
 
-    def make_branch_refs_map(self, remote_name):
+    def make_branch_refs_map(self, remote_name=None):
         """Make {ref_name: commit.hexsha} for branches in specified remote.
 
         Arguments:
@@ -1522,6 +1530,8 @@ class ProjectRepo:
         This is consistent with GitPython lib behavior:
         repo.remotes['origin'].refs['master'].name == "origin/master"
         """
+        if remote_name is None:
+            remote_name = self.remote_name
         assert remote_name, "local branches not supported yet"
         refs_map = {}
         ref_prefix = f"refs/remotes/{remote_name}/"
@@ -1580,12 +1590,12 @@ class ProjectRepo:
         # Make sure that branch refs created with ref iterator are created correctly.
 
         with Timer("get refs using direct access"):
-            dummy_d = self.make_branch_refs_map('origin')
+            dummy_d = self.make_branch_refs_map(self.remote_name)
 
         with Timer("get refs using git package"):
             refs_gitlib = {
                 ref.name: ref.commit.hexsha
-                for ref in self.repo.remotes['origin'].refs
+                for ref in self.repo.remotes[self.remote_name].refs
             }
 
         compare_dictionaries(
@@ -1723,14 +1733,28 @@ class ReposCollection:
         """Construct ReposCollection - all git repos to use for report.
 
         Arguments:
-        - repos: {repo_id: ProjectRepo or path to repo}
+        - repos: {repo_id: project_repo_description(*) ProjectRepo or path to repo}
+
+        (*) project_repo_description may be in followinf formats:
+        - "path/to/git/repo"
+        - ProjectRepo object
+        - ("path/to/git/repo", "remote_name")
+        - (ProjectRepo object, "remote_name")
+
+        Default remote_name is "origin"
 
         In case path to git repo is specified, ProjectRepo objects will be
         constructed, actual types of the objects will be taken from _REPOS_TYPES
         """
         self.repos = {}
-        for repo_id, repo_address in repos.items():
-            repo = self._mk_repo_obj(repo_id, repo_address)
+        for repo_id, repo_info in repos.items():
+            if isinstance(repo_info, (list, tuple)):
+                repo_info, remote_name = repo_info
+                if remote_name is None:
+                    remote_name = 'origin'
+            else:
+                remote_name = 'origin'
+            repo = self._mk_repo_obj(repo_id, repo_info, remote_name)
             if repo is None:
                 continue
             self.repos[repo_id] = repo
@@ -1792,7 +1816,7 @@ class ReposCollection:
         assert len(self.sorted_repos) == len(self.repos)
 
     @classmethod
-    def _mk_repo_obj(cls, repo_id, repo_address):
+    def _mk_repo_obj(cls, repo_id, repo_address, remote_name):
         # helper to be used in constructor. Creates ProjectRepo
         #
         # Arguments:
@@ -1807,7 +1831,7 @@ class ReposCollection:
         except KeyError:
             logger.warning("unknown repo type '%s' encountered", repo_id)
             return None
-        return repo_class(repo_id, repo_address)
+        return repo_class(repo_id, repo_address, remote_name)
 
     def make_reports_data(self, bug_id):
         """Prepare report of commits with descriptions contaning specified text.

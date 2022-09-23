@@ -159,7 +159,7 @@ class TestSingleRepoSingleBranch(unittest.TestCase, CommitsCheckerMixin):
             }
 
         cls.repos = DemoRepoCollection1({
-            'comp_1': StdTestRepo('comp_1', component_1_git_repo),
+            'comp_1': StdTestRepo('comp_1', component_1_git_repo, 'origin'),
         })
         # logs_configure(5)
 
@@ -270,7 +270,7 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
             }
 
         cls.repos = DemoRepoCollection({
-            'comp_1': StdTestRepo('comp_1', component_1_git_repo),
+            'comp_1': StdTestRepo('comp_1', component_1_git_repo, 'origin'),
         })
         # logs_configure(5)
 
@@ -568,8 +568,8 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
             }
 
         repos = DemoRepoCollection2({
-            'c_master': MassterProjectRepo('c_master', master_repo),
-            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo),
+            'c_master': MassterProjectRepo('c_master', master_repo, 'origin'),
+            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo, 'origin'),
         })
 
         # repos prepared
@@ -738,8 +738,8 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
             }
 
         repos = DemoRepoCollection3({
-            'c_master': MassterProjectRepo('c_master', master_repo),
-            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo),
+            'c_master': MassterProjectRepo('c_master', master_repo, 'origin'),
+            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo, 'origin'),
         })
 
         # repos prepared
