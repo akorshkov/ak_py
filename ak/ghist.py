@@ -384,13 +384,13 @@ class RBuild:
             assert False
         self.rcommit = rcommit  # RCommit
         self.parent_rbuilds = parent_rbuilds  # {iid: RBuild}
-        self.bumps = bumps  # {repo_name: ComponentBump}
+        self.bumps = bumps  # {repo_id: ComponentBump}
         self.rcommits = rcommits  # {iid: RCommit} - new RCommit's in this build
 
         # contains info about builds of parent component where this rbuild was
         # included into.
         # populated by parent components when they are parsed
-        self.included_at = []  # [(repo_name, BranchName, BuildNumData), ]
+        self.included_at = []  # [(repo_id, BranchName, BuildNumData), ]
 
     def __str__(self):
         return f"RBuild<{self.build_num}; {len(self.rcommits)}cmts.>"
@@ -494,7 +494,7 @@ class RGraph:
         def __init__(self, commit, selected_explicitely, relevant_cmpnts):
             self.commit = commit  # git.commit
             self.selected_explicitely = selected_explicitely
-            self.relevant_cmpnts = relevant_cmpnts  # {repo_name, }
+            self.relevant_cmpnts = relevant_cmpnts  # {repo_id, }
             self.rc_parents = []
 
         def __str__(self):
@@ -539,7 +539,7 @@ class RGraph:
                             # report related commits in specific branches.
                             # (Last element corresponds to 'master' branch)
 
-        with Timer(f"init {self.repo.name} repo caches", log_method=logger.debug):
+        with Timer(f"init {self.repo.repo_id} repo caches", log_method=logger.debug):
             cache = self._RepoParserCache(
                 self.repo.make_builds_detector(),
                 self.repo.make_branch_refs_map('origin'),
@@ -547,10 +547,10 @@ class RGraph:
             )
 
         components_versions_maps = {
-            cmpnt_repo_name: self._ComponentVersionsMap(
+            cmpnt_repo_id: self._ComponentVersionsMap(
                 cmpnt_rgraph.bn_map,
                 cmpnt_rgraph.min_rbuild_timestamp - _CHECK_COMPONENTS_CUTOFF_PERIOD)
-            for cmpnt_repo_name, cmpnt_rgraph in cmpnts_rgraphs.items()
+            for cmpnt_repo_id, cmpnt_rgraph in cmpnts_rgraphs.items()
             if cmpnt_rgraph.bn_map
         }
 
@@ -568,7 +568,7 @@ class RGraph:
                 ):
                     # looks like this branch is very old and is not relevant any more
                     continue
-            with Timer(f"read branch {self.repo.name} {branch_name}",
+            with Timer(f"read branch {self.repo.repo_id} {branch_name}",
                        report_start=True, log_method=logger.debug):
                 rbranch, branch_bn_map = self._read_branch(
                     branch_name, ref_name, search_predicate,
@@ -604,7 +604,7 @@ class RGraph:
                     # This means: component build was included into this
                     # build of parent (my_rbuild)
                     inculed_into = (
-                        self.repo.name,
+                        self.repo.repo_id,
                         my_rbranch.branch_name,
                         my_rbuild.rcommit.build_num,
                     )
@@ -618,7 +618,7 @@ class RGraph:
     def _read_branch(
             self, branch_name, ref_name,
             search_predicate, prev_branch,
-            components_versions_maps,  # {repo_name: _ComponentVersionsMap}
+            components_versions_maps,  # {repo_id: _ComponentVersionsMap}
             repo_cache,
     ):
         # Reduce graph of git.commit corresponding to a specified branch
@@ -631,7 +631,7 @@ class RGraph:
         # - RBranch
         # - bn_map: {(major, minor, patch, build) -> RBuild}
 
-        logger.debug("read branch %s %s", self.repo.name, branch_name)
+        logger.debug("read branch %s %s", self.repo.repo_id, branch_name)
 
         bn_map = {}
         cur_branch_rbuilds = {}  # idmap of RBuild objects in current branch
@@ -798,20 +798,20 @@ class RGraph:
                                    # the component}
         if cur_branch_rbuilds:
             prev_rbuild = cur_branch_rbuilds[max(cur_branch_rbuilds.keys())]
-            for repo_name in head_relevant_cmpnts:
-                cmpnt_prev_bump = prev_rbuild.bumps[repo_name]
+            for repo_id in head_relevant_cmpnts:
+                cmpnt_prev_bump = prev_rbuild.bumps[repo_id]
                 cmpnt_incl_rbuild = cmpnt_prev_bump.to_rbuild
                 if cmpnt_incl_rbuild is None:
                     continue
                 cmpnt_incl_buildnum = cmpnt_prev_bump.to_buildnum
-                cmpnt_rbranch, _ = components_versions_maps[repo_name].bn_map[
+                cmpnt_rbranch, _ = components_versions_maps[repo_id].bn_map[
                     cmpnt_incl_rbuild.build_num.as_tuple()]
                 latest_cmpnt_rbuild = cmpnt_rbranch.get_latest_rbuild()
                 bump = ComponentBump(
                     [cmpnt_incl_buildnum], latest_cmpnt_rbuild.build_num,
                     {cmpnt_incl_rbuild.iid: cmpnt_incl_rbuild}, latest_cmpnt_rbuild)
                 if not bump.is_trivial():
-                    pending_cmpnts_bumps[repo_name] = bump
+                    pending_cmpnts_bumps[repo_id] = bump
 
         if not_merged_rcommits or pending_cmpnts_bumps:
             rbuild = RBuild(
@@ -865,7 +865,7 @@ class RGraph:
                 accumdat.commit, accumdat.relevant_cmpnts, parent_rbuilds,
                 components_versions_maps,
                 repo_cache.components_versions_cache,
-            )  # {repo_name: ComponentBump}
+            )  # {repo_id: ComponentBump}
 
             non_trivial_bumps_present = any(
                 not bump.is_trivial()
@@ -1025,23 +1025,23 @@ class RGraph:
             components_versions_maps,
             components_versions_cache,
     ):
-        # Returns {repo_name: ComponentBump} - info about report-related bumps
+        # Returns {repo_id: ComponentBump} - info about report-related bumps
         # of components since previous report related build(s) of current repo
 
         cur_components_buildnums = self._get_relevant_cmpnts_versions(
             commit, relevant_components,
             components_versions_maps,
             components_versions_cache,
-        )  # {repo_name: BuildNumData}
+        )  # {repo_id: BuildNumData}
 
-        components_bumps = {}  # {repo_name: ComponentBump}
-        for repo_name, cur_component_bn in cur_components_buildnums.items():
-            if repo_name not in relevant_components:
+        components_bumps = {}  # {repo_id: ComponentBump}
+        for repo_id, cur_component_bn in cur_components_buildnums.items():
+            if repo_id not in relevant_components:
                 continue
 
             cur_component_rbuild = None
             if cur_component_bn is not None:
-                cmpnt_bn_map = components_versions_maps[repo_name].bn_map
+                cmpnt_bn_map = components_versions_maps[repo_id].bn_map
                 branch_and_build = cmpnt_bn_map.get(
                     cur_component_bn.as_tuple(), None)
                 if branch_and_build is not None:
@@ -1050,7 +1050,7 @@ class RGraph:
             from_builnums = []
             from_rbuilds = {}
             for parent_rbuild in parent_rbuilds.values():
-                parent_component_bump = parent_rbuild.bumps.get(repo_name)
+                parent_component_bump = parent_rbuild.bumps.get(repo_id)
                 if not parent_component_bump:
                     continue
                 from_builnums.append(parent_component_bump.to_buildnum)
@@ -1068,15 +1068,15 @@ class RGraph:
                 logger.warning(
                     "repo '%s' commit '%s' references unknown version '%s' "
                     "of component '%s'",
-                    self.repo.name,
+                    self.repo.repo_id,
                     commit.hexsha[:11],
                     str(cur_component_bn),
-                    repo_name,
+                    repo_id,
                 )
                 rbuild_id = max(rb.iid for rb in from_rbuilds.values())
                 cur_component_rbuild = from_rbuilds[rbuild_id]
 
-            components_bumps[repo_name] = ComponentBump(
+            components_bumps[repo_id] = ComponentBump(
                 from_builnums, cur_component_bn,
                 from_rbuilds, cur_component_rbuild)
 
@@ -1084,21 +1084,21 @@ class RGraph:
 
     def _get_relevant_cmpnts_names(
             self, commit_ts, components_to_check,
-            components_versions_maps,  # {repo_name: _ComponentVersionsMap}
+            components_versions_maps,  # {repo_id: _ComponentVersionsMap}
     ):
         # get set of names of components which still may be relevant for report
         # (the deeper we go in commit tree the less relevant components remain.
         # Component becomes irrelevant when the earliest rbuild in this
         # component becomes younger than current commit)
         return {
-            repo_name
-            for repo_name in components_to_check
-            if commit_ts > components_versions_maps[repo_name].cutoff_ts
+            repo_id
+            for repo_id in components_to_check
+            if commit_ts > components_versions_maps[repo_id].cutoff_ts
         }
 
     def _get_relevant_cmpnts_versions(
             self, commit, components_to_check,
-            components_versions_maps,  # {repo_name: _ComponentVersionsMap}
+            components_versions_maps,  # {repo_id: _ComponentVersionsMap}
             cache,
     ):
         # return {comp_name: optional BuildNumData} for components still
@@ -1262,6 +1262,8 @@ class ProjectRepo:
     there will be a separate ProjectRepo-derived class for each project.
     """
 
+    _REPO_DESCR = None  # optional description of repository
+
     # successfull build tag examples:
     #   build_4155_master_success
     #   build_4154_release_10_240_success
@@ -1281,18 +1283,18 @@ class ProjectRepo:
     _SAVED_BUILD_NUM_SOURCES = []  # list of strings - paths to files
 
     # locations of files which contain verstions of sub-components
-    _COMPONENTS_VERSIONS_LOCATIONS = {}  # {project_repo_name: local_path}
+    _COMPONENTS_VERSIONS_LOCATIONS = {}  # {project_repo_id: local_path}
 
-    __slots__ = 'name', 'repo'
+    __slots__ = 'repo_id', 'repo'
 
-    def __init__(self, name, repo_path):
+    def __init__(self, repo_id, repo_path):
         """ProjectRepo constructor.
 
         Arguments:
-        - name: string, name of this ProjectRepo.
+        - repo_id: string, repo_id of this ProjectRepo.
         - repo_path: path to local git repository or GitRepo object
         """
-        self.name = name
+        self.repo_id = repo_id
         self.repo = repo_path if hasattr(repo_path, 'remotes') else GitRepo(repo_path)
 
     def build_report_rgraph(self, search_text, components_rgraphs):
@@ -1672,7 +1674,7 @@ class RepoBuildsByTagDetector(RepoBuildsDetector):
                 commit, self.cache)
         except ValueError as err:
             raise ValueError(
-                f"Repo: {self.project_repo.name}: can't get build number from "
+                f"Repo: {self.project_repo.repo_id}: can't get build number from "
                 f"commit '{commit.hexsha}'."
             ) from err
 
@@ -1715,28 +1717,28 @@ class RepoBuildsBySavedBuildNumDetector(RepoBuildsDetector):
 class ReposCollection:
     """Collection of ProjectRepo's."""
 
-    _REPOS_TYPES = {}  # to be populated in derived classes
+    _REPOS_TYPES = {}  # {repo_id: ProjectRepo-class}
 
     def __init__(self, repos):
         """Construct ReposCollection - all git repos to use for report.
 
         Arguments:
-        - repos: {repo_name: ProjectRepo or path to repo}
+        - repos: {repo_id: ProjectRepo or path to repo}
 
         In case path to git repo is specified, ProjectRepo objects will be
         constructed, actual types of the objects will be taken from _REPOS_TYPES
         """
         self.repos = {}
-        for repo_name, repo_address in repos.items():
-            repo = self._mk_repo_obj(repo_name, repo_address)
+        for repo_id, repo_address in repos.items():
+            repo = self._mk_repo_obj(repo_id, repo_address)
             if repo is None:
                 continue
-            self.repos[repo_name] = repo
+            self.repos[repo_id] = repo
 
-        # repo names sorted in a way that components go before owners
+        # repo ids sorted in a way that components go before owners
         self.sorted_repos = []
         done_repos = set()
-        dfs_stack = [sorted(repo_name for repo_name in self.repos), ]
+        dfs_stack = [sorted(repo_id for repo_id in self.repos), ]
         dfs_sp = [len(dfs_stack[0]) - 1, ]
         dfs_path_names = [dfs_stack[0][-1], ]
         while dfs_stack:
@@ -1746,34 +1748,34 @@ class ReposCollection:
                 dfs_sp.pop()
                 dfs_path_names.pop()
                 continue
-            cur_repo_name = dfs_stack[-1][cur_sp]
-            if cur_repo_name in done_repos:
+            cur_repo_id = dfs_stack[-1][cur_sp]
+            if cur_repo_id in done_repos:
                 cur_sp = dfs_sp[-1] - 1
                 dfs_sp[-1] = cur_sp
                 dfs_path_names[-1] = dfs_stack[-1][cur_sp] if cur_sp >= 0 else None
                 continue
-            cur_repo = self.repos[cur_repo_name]
+            cur_repo = self.repos[cur_repo_id]
             not_processed_sub_components = sorted(
-                repo_name
-                for repo_name in cur_repo._COMPONENTS_VERSIONS_LOCATIONS
-                if repo_name in self.repos and repo_name not in done_repos)
+                repo_id
+                for repo_id in cur_repo._COMPONENTS_VERSIONS_LOCATIONS
+                if repo_id in self.repos and repo_id not in done_repos)
 
             if not not_processed_sub_components:
                 # all dependecies are processed, finalise this repo
-                self.sorted_repos.append(cur_repo_name)
-                done_repos.add(cur_repo_name)
+                self.sorted_repos.append(cur_repo_id)
+                done_repos.add(cur_repo_id)
                 cur_sp = dfs_sp[-1] - 1
                 dfs_sp[-1] = cur_sp
                 dfs_path_names[-1] = dfs_stack[-1][cur_sp] if cur_sp >= 0 else None
                 continue
 
             # detect cycle dependencies
-            cycled_repo_names = [
-                repo_name
-                for repo_name in not_processed_sub_components
-                if repo_name in dfs_path_names]
-            if cycled_repo_names:
-                bad_repo = cycled_repo_names[0]
+            cycled_repo_ids = [
+                repo_id
+                for repo_id in not_processed_sub_components
+                if repo_id in dfs_path_names]
+            if cycled_repo_ids:
+                bad_repo = cycled_repo_ids[0]
                 i = dfs_path_names.index(bad_repo)
                 cycle = dfs_path_names[i:]
                 cycle.append(bad_repo)
@@ -1790,41 +1792,41 @@ class ReposCollection:
         assert len(self.sorted_repos) == len(self.repos)
 
     @classmethod
-    def _mk_repo_obj(cls, repo_name, repo_address):
+    def _mk_repo_obj(cls, repo_id, repo_address):
         # helper to be used in constructor. Creates ProjectRepo
         #
         # Arguments:
-        # - repo_name: string
+        # - repo_id: string
         # - repo_address: either path to git reporitory or a ready ProjectRepo
 
         if hasattr(repo_address, 'build_report_rgraph'):
             # repo_address is a redy repo project
             return repo_address
         try:
-            repo_class = cls._REPOS_TYPES[repo_name]
+            repo_class = cls._REPOS_TYPES[repo_id]
         except KeyError:
-            logger.warning("unknown repo type '%s' encountered", repo_name)
+            logger.warning("unknown repo type '%s' encountered", repo_id)
             return None
-        return repo_class(repo_name, repo_address)
+        return repo_class(repo_id, repo_address)
 
     def make_reports_data(self, bug_id):
         """Prepare report of commits with descriptions contaning specified text.
 
-        Return: [('repo_name', RGraph), ]
+        Return: [('repo_id', RGraph), ]
         """
-        results = []  # [(repo_name, RGraph), ]
-        rgraph_by_name = {}  # {repo_name: RGraph}
+        results = []  # [(repo_id, RGraph), ]
+        rgraph_by_name = {}  # {repo_id: RGraph}
 
-        for repo_name in self.sorted_repos:
-            repo = self.repos[repo_name]
+        for repo_id in self.sorted_repos:
+            repo = self.repos[repo_id]
             components = {
-                repo_name: rgraph
-                for repo_name, rgraph in rgraph_by_name.items()
-                if repo_name in repo._COMPONENTS_VERSIONS_LOCATIONS
+                repo_id: rgraph
+                for repo_id, rgraph in rgraph_by_name.items()
+                if repo_id in repo._COMPONENTS_VERSIONS_LOCATIONS
             }
             x = repo.build_report_rgraph(bug_id, components)
-            results.append((repo_name, x))
-            rgraph_by_name[repo_name] = x
+            results.append((repo_id, x))
+            rgraph_by_name[repo_id] = x
         results.reverse()
         return results
 
@@ -1857,17 +1859,17 @@ class ReportPrinter:
         - report_data: [('component_name', RGraph), ] - properly ordered
             list as generated by ReposCollection.make_reports_data.
         """
-        for repo_name, rgraph in report_data:
+        for repo_id, rgraph in report_data:
             branches = rgraph.branches
             yield ""
-            yield ColoredText("==== repo ") + self.palette['REPO'](repo_name) + " ===="
+            yield ColoredText("==== repo ") + self.palette['REPO'](repo_id) + " ===="
             for rbranch in branches:
-                yield from self._gen_branch_report(repo_name, rbranch, 0)
+                yield from self._gen_branch_report(repo_id, rbranch, 0)
 
-    def _gen_branch_report(self, repo_name, rbranch, offset):
+    def _gen_branch_report(self, repo_id, rbranch, offset):
         yield (
             self._mk_offset(offset) +
-            self.palette['REPO'](repo_name) + " " +
+            self.palette['REPO'](repo_id) + " " +
             self.palette['BRANCH'](rbranch.branch_name) + ":")
         for rbuild in rbranch.get_rbuilds_list():
             yield from self._gen_rbuild_descr(rbuild, offset+1)
@@ -1920,10 +1922,10 @@ class ReportPrinter:
     def _mk_included_at_descr(self, incl_at):
         # prepare description of the parent component's build:
         # "parent_repo relese/3.4 10.15.35"
-        repo_name = self.palette['REPO'](incl_at[0])
+        repo_id = self.palette['REPO'](incl_at[0])
         branch_name = self.palette['BRANCH'](incl_at[1])
         build = self._mk_buildnum_descr(incl_at[2])
-        return f"{repo_name} {branch_name} {build}"
+        return f"{repo_id} {branch_name} {build}"
 
     def _gen_bump_descr(self, comp_name, bump, offset):
         # generate lines of bump description for a parent component:

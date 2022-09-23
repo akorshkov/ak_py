@@ -746,7 +746,7 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         reports_data = repos.make_reports_data("BUG-212")
         rgraphs_by_name = {
             repo_name: rgraph for repo_name, rgraph in reports_data}
-        repos.print_prepared_reports(reports_data)
+        # repos.print_prepared_reports(reports_data)
 
         # proj_lib repo: verify 'included_at' info is populated correctly.
         #
