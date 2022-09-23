@@ -116,8 +116,6 @@ class TestArgParser(unittest.TestCase):
         self.assertEqual(2, args.details_level)
         self.assertEqual("17", args.simplearg)
 
-        print(args)
-
     def test_no_log_options_in_multicmd(self):
         """Test _no_log and _no_log_file options in multi-cmd parser"""
 
