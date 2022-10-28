@@ -1,4 +1,11 @@
-"""Collection of tools commonly used in cli applications."""
+"""Collection of tools commonly used in cli applications.
+
+Very minimal usage example:
+
+    parser = cli_tools.ArgParser(description="populate stand")
+    args = parser.parse_args()
+    cli_tools.std_app_configure(args)
+"""
 
 import sys
 import contextlib
@@ -16,7 +23,7 @@ class ArgParser:
 
     def __init__(
             self, commands=None, default_command=None, *,
-            _no_log=False, _no_log_file=False,
+            _no_log=False, _no_log_file=False, _help_if_no_args=False,
             **kwargs):
         """Create ArgParser.
 
@@ -36,6 +43,8 @@ class ArgParser:
             specified, adds '_no_log_file' attribute to the result 'args'.
             (So, it behaves like a hidden argument. It's value is used
             by ak.cli_tools.std_app_configure function.
+        - _help_if_no_args: (dafault False) - indicates if help message should
+            be printed if args list is empty.
         - kwargs: standard kwargs for argparse.ArgumentParser
         """
         if commands is None:
@@ -49,6 +58,7 @@ class ArgParser:
         self.parser = argparse.ArgumentParser(**kwargs)
         self._no_log = _no_log
         self._no_log_file = _no_log_file
+        self._help_if_no_args = _help_if_no_args
 
         if commands is None:
             self.command_parsers = None
@@ -69,10 +79,10 @@ class ArgParser:
             if args is None:
                 args = sys.argv[1:]
 
-            if not args:
+            if not args and self._help_if_no_args:
                 args.append("--help")
             else:
-                first_arg = args[0]
+                first_arg = args[0] if args else None
                 if all(
                     first_arg not in choices
                     for choices in [['-h', '--help'], self.command_parsers]

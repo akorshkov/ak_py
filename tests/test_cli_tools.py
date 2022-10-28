@@ -78,7 +78,18 @@ class TestArgParser(unittest.TestCase):
             not hasattr(args, 'verbose'),
             "this option is disabled explicitely by '_no_log' arg")
 
-    def test_multicommant_argparse(self):
+    def test_empty_args_list(self):
+        """Test _help_if_no_args ArgParser option."""
+        parser = ArgParser(description="std descr", _help_if_no_args=False)
+
+        parser.parse_args([])
+
+        self.assertTrue(
+            True,
+            "should get here: parse_args should not exit because "
+            "_help_if_no_args option specified")
+
+    def test_multicommand_argparse(self):
         """Test usual scenario with multi-command argparser"""
 
         parser = ArgParser(
@@ -160,3 +171,19 @@ class TestArgParser(unittest.TestCase):
         self.assertTrue(
             not hasattr(args, 'verbose'),
             "this option is disabled explicitely by '_no_log' arg")
+
+    def test_empty_args_list_multicmd_parser(self):
+        """Test _help_if_no_args ArgParser option."""
+        parser = ArgParser(
+            [("cmd1", "descr1"), ("cmd2", "descr2")],
+            description="std descr", _help_if_no_args=False,
+        )
+
+        args = parser.parse_args([])
+
+        self.assertTrue(
+            True,
+            "should get here: parse_args should not exit because "
+            "_help_if_no_args option specified")
+        self.assertEqual(
+            "cmd1", args.command, "first command is default one by default, hehe")
