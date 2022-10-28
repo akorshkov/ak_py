@@ -1799,9 +1799,14 @@ class ReposCollection:
         # repo ids sorted in a way that components go before owners
         self.sorted_repos = []
         done_repos = set()
-        dfs_stack = [sorted(repo_id for repo_id in self.repos), ]
-        dfs_sp = [len(dfs_stack[0]) - 1, ]
-        dfs_path_names = [dfs_stack[0][-1], ]
+
+        dfs_stack, dfs_sp, dfs_path_names = [], [], []
+        repos_list = sorted(repo_id for repo_id in self.repos)
+        if repos_list:
+            dfs_stack.append(repos_list)
+            dfs_sp.append(len(repos_list) - 1)
+            dfs_path_names.append(repos_list[-1])
+
         while dfs_stack:
             cur_sp = dfs_sp[-1]
             if cur_sp < 0:
