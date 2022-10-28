@@ -6,6 +6,7 @@ Classes provided by this module:
 """
 
 from typing import Iterator
+from numbers import Number
 from ak import utils
 from ak.color import ColorFmt, ColoredText, Palette
 
@@ -206,9 +207,9 @@ class PrettyPrinter(_PrettyPrinterBase):
         # value -> formatted string
         if isinstance(value, str):
             return '"' + value + '"'
-        elif any(value is keyword for keyword in [None, True, False]):
+        elif self.is_keyword_value(value):
             return self._color_keyword(self._consts[value])
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, Number):
             return self._color_number(str(value))
         elif isinstance(value, dict):
             assert not value
@@ -228,8 +229,10 @@ class PrettyPrinter(_PrettyPrinterBase):
 
     @classmethod
     def _mk_type_sort_value(cls, value):
-        # sorting used to order dictionari elements when printing
-        if isinstance(value, (int, float)):
+        # sorting used to order dictionary elements when printing
+        if cls.is_keyword_value(value):
+            return (3, str(value))
+        elif isinstance(value, Number):
             return (0, value)
         elif isinstance(value, str):
             return (1, value)
@@ -237,6 +240,15 @@ class PrettyPrinter(_PrettyPrinterBase):
             return (2, value)
         else:
             return (3, str(value))
+
+    @staticmethod
+    def is_keyword_value(value):
+        """Check if value is one of {True, False, None}.
+
+        Simple check 'x in {True, False, None}' can't be used because it
+        returns True for x = 1
+        """
+        return any(value is keyword for keyword in [True, False, None])
 
 
 class PPObjBase:
@@ -357,11 +369,11 @@ class PPTableFieldType:
             raise ValueError(
                 f"{type(self)} field type does not support format modifiers. "
                 f"Specified fmt_modifier: '{fmt_modifier}'")
-        if isinstance(value, (int, float)):
-            syntax_name = "NUMBER"
-            align = ALIGN_RIGHT
-        elif value in (True, False, None):
+        if PrettyPrinter.is_keyword_value(value):
             syntax_name = "KEYWORD"
+            align = ALIGN_RIGHT
+        elif isinstance(value, Number):
+            syntax_name = "NUMBER"
             align = ALIGN_RIGHT
         else:
             syntax_name = None
