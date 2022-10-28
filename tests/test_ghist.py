@@ -793,3 +793,91 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
             })
 
         self.assert_incl_at(rbuilds["10.20.9"], set())
+
+    def test_branch_wo_component_version(self):
+        """Corner case: component has no builds in some branch yet."""
+
+        cmpnt_repo = MockedGitRepo(
+            'branch: origin/master',  # ---- branch
+            '900 <- 310 | branch ',
+            'branch: origin/release/22.11',  # ---- branch
+            '310 | build me |tags: build_2_release_22_11_success',
+            '300 <- 220 | branch 22.11',
+            'branch: origin/release/22.10',  # ---- branch
+            '220 | current 22.10 head',
+            '210 | BUG-42 x1',  # but there is no build in this branch
+            '200 <- 120 | branch 22.10',
+            'branch: origin/release/22.09',  # ---- branch
+            '120 | build me |tags: build_1_release_22_09_success',
+            '110 | BUG-42',
+            '100 | initial commit',
+            name="proj_lib",
+        )
+
+        master_repo = MockedGitRepo(
+            'branch: origin/master',  # ---- branch
+            '900 <- 310 | branch ',
+            'branch: origin/release/22.11',  # ---- branch
+            '310 | include fix here',
+            '--> |file:DEPENDS:{"proj_lib": "22.11.2"}',
+            '300 <- 220| branch 22.11',
+            'branch: origin/release/22.10',  # ---- branch
+            '220 | current head of 22.10',
+            '210 | BUG-42 some fixes in owner repo',
+            '200 <- 100| branch 22.10',
+            '--> |file:DEPENDS:{"proj_lib": "22.09.1"}',
+            'branch: origin/release/22.09',  # ---- branch
+            '100 | initial commit',
+            name="c_master",
+        )
+
+        class MassterProjectRepo(StdTestRepo):
+            _COMPONENTS_VERSIONS_LOCATIONS = {
+                'proj_lib': 'DEPENDS',
+            }
+
+        class DemoRepoCollection3(ReposCollection):
+            _REPOS_TYPES = {
+                'c_master': MassterProjectRepo,
+                'proj_lib': StdTestRepo,
+            }
+
+        repos = DemoRepoCollection3({
+            'c_master': MassterProjectRepo('c_master', master_repo, 'origin'),
+            'proj_lib': StdTestRepo('proj_lib', cmpnt_repo, 'origin'),
+        })
+
+        # main part of test: next command should not fail
+        reports_data = repos.make_reports_data("BUG-42")
+        rgraphs_by_name = {
+            repo_name: rgraph for repo_name, rgraph in reports_data}
+        # repos.print_prepared_reports(reports_data)
+
+        self.assertEqual({'c_master', 'proj_lib'}, rgraphs_by_name.keys())
+
+        # test is mostly interested in structure of report for c_master
+        # but first make sure component data is as expected
+        c_lib_rgraph = rgraphs_by_name['proj_lib']
+        self.assert_branches_list(
+            c_lib_rgraph, ["master", "release/22.11", "release/22.10", "release/22.09"])
+
+        # now test c_master
+        c_master_rgraph = rgraphs_by_name['c_master']
+        self.assert_branches_list(
+            c_master_rgraph, ["master", "release/22.11", "release/22.10"])
+        br_by_name = c_master_rgraph.get_rbranches_by_name()
+
+        rbranch = br_by_name["release/22.10"]
+        rbuilds = rbranch.get_rbuilds_list()
+        self.assert_buildnums(
+            rbuilds, ["8888.8888.8888"],
+        )
+
+        # bumps in fake 'not-yet-built' build of 22.10
+        bumps = rbuilds[0].bumps
+
+        self.assertNotIn(
+            'proj_lib', bumps,
+            f"'proj_lib' should not be in bumps list because in branch 22.10 there are "
+            f"no report-related build of 'proj_lib' at all. Actual bumps: {bumps}"
+        )

@@ -358,7 +358,7 @@ class RBuild:
             sub-branches)
         - rcommits: {iid: RCommit} - new RCommit's included into this build (that
             is not included into any of previous builds).
-            - bumps: {cmpnt_name: ComponentBump}
+        - bumps: {cmpnt_name: ComponentBump}
         - build_type: optional, should be specified for fake(*) builds.
 
         (*) fake RBuild. objects correspond to sets of commits not included
@@ -394,7 +394,7 @@ class RBuild:
         self.included_at = []  # [(repo_id, BranchName, BuildNumData), ]
 
     def __str__(self):
-        return f"RBuild<{self.build_num}; {len(self.rcommits)}cmts.>"
+        return f"RBuild<{self.build_num}; {len(self.rcommits)} commits>"
 
     def __repr__(self):
         return str(self)
@@ -612,6 +612,12 @@ class RGraph:
                     for cmpnt_rbuild in cmpnt_bump.get_rbuilds_in_bump().values():
                         cmpnt_rbuild.included_at.append(inculed_into)
 
+    def __str__(self):
+        return f"RGraph of {self.repo}"
+
+    def __repr__(self):
+        return str(self)
+
     def get_rbranches_by_name(self):
         """RBranch'es having any report-related data: {branch_name: RBranch}."""
         return {rbranch.branch_name: rbranch for rbranch in self.branches}
@@ -632,8 +638,6 @@ class RGraph:
         # - RBranch
         # - bn_map: {(major, minor, patch, build) -> RBuild}
 
-        logger.debug("read branch %s %s", self.repo.repo_id, branch_name)
-
         bn_map = {}
         cur_branch_rbuilds = {}  # idmap of RBuild objects in current branch
 
@@ -642,7 +646,8 @@ class RGraph:
 
         # ==== init DFS ======================================
         head_commit = self.repo.repo.commit(repo_cache.branches_refs_map[ref_name])
-        head_relevant_cmpnts = self._get_relevant_cmpnts_names(
+
+        head_relevant_components_candidates = self._get_relevant_cmpnts_names(
             head_commit.committed_date,
             components_versions_maps.keys(), components_versions_maps,
         )
@@ -663,7 +668,7 @@ class RGraph:
         dfs_stack = [(head_commit, )]
         dfs_sp = [0]  # pointers to commits in current path in dfs_stack
         dfs_accumdata = [
-            self._NodeAccumdat(None, False, head_relevant_cmpnts), ]
+            self._NodeAccumdat(None, False, head_relevant_components_candidates), ]
 
         # ==== DFS loop ======================================
         while dfs_stack:
@@ -688,6 +693,8 @@ class RGraph:
                     components_versions_maps, repo_cache, br_cache,
                     is_head_commit=cur_accumdat.commit.hexsha == head_commit.hexsha,
                 )
+                if new_rbuild is not None:
+                    logger.debug("RBuild: %s", new_rbuild)
 
                 # ==== register RCommit in misc caches =======
                 if new_rcommit is None:
@@ -785,9 +792,13 @@ class RGraph:
             if rcommit.is_explicit and iid not in all_commits_in_this_branch
         }
 
-        # sub-graph of rbuilds in current branch has no more then one head.
-        # If latest builds happened in different sub-branches, a fake 'not-yet-built'
-        # build would have been created based on head commit of the branch.
+        # Get info about latest build in current branch - it will be a parent build
+        # for the 'not-yet-merged' fake build.
+        # Usually a build may have several parent builds, but in this case
+        # only one is possible.
+        # If there are several parent builds (created in different sub-branches), then
+        # a fake 'not-yet-built' build would have been created based on head commit of
+        # the branch.
         parent_rbuilds = {}
         if cur_branch_rbuilds:
             last_rbuild_iid = max(cur_branch_rbuilds.keys())
@@ -798,9 +809,9 @@ class RGraph:
                                    # indicates new report-related builds of
                                    # the component}
         if cur_branch_rbuilds:
-            prev_rbuild = cur_branch_rbuilds[max(cur_branch_rbuilds.keys())]
-            for repo_id in head_relevant_cmpnts:
-                cmpnt_prev_bump = prev_rbuild.bumps[repo_id]
+            latest_rbuild = cur_branch_rbuilds[max(cur_branch_rbuilds.keys())]
+            for repo_id in latest_rbuild.bumps:
+                cmpnt_prev_bump = latest_rbuild.bumps[repo_id]
                 cmpnt_incl_rbuild = cmpnt_prev_bump.to_rbuild
                 if cmpnt_incl_rbuild is None:
                     continue
@@ -1304,6 +1315,12 @@ class ProjectRepo:
             "not pushed to remote server is not supported yet.")
         self.remote_name = remote_name
 
+    def __str__(self):
+        return f"ProjectRepo {self.repo_id} ({type(self)})"
+
+    def __repr__(self):
+        return str(self)
+
     def build_report_rgraph(self, search_text, components_rgraphs):
         """Prepare and return RGraph
 
@@ -1339,7 +1356,7 @@ class ProjectRepo:
                 remote.fetch()
             except:
                 logger.exception(
-                    "Unexpected error during Repo '%s' synchronization", repo)
+                    "Unexpected error during Repo '%s' synchronization", self.repo)
                 return False
         return True
 
@@ -1498,7 +1515,7 @@ class ProjectRepo:
             except KeyError:
                 logger.warning(
                     "repo '%s' commit '%s' does not contain a file '%s'",
-                    self.name,
+                    self.repo.name,
                     commit.hexsha[:11],
                     v_file_path,
                 )
