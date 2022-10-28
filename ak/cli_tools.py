@@ -93,6 +93,10 @@ class ArgParser:
         if self._no_log_file:
             args._no_log_file = True
 
+        if args.no_color:
+            args.color = False
+        del args.no_color
+
         return args
 
     def _mk_std_args(self, parser):
@@ -102,7 +106,9 @@ class ArgParser:
                 "-v", "--verbose", default=0, action="count",
                 help="increase log verbocity (3 levels)")
 
-        parser.add_argument(
+        color_grp = parser.add_mutually_exclusive_group()
+
+        color_grp.add_argument(
             "--color", default='auto', nargs="?",
             choices=["auto", "always", "yes", "1", "never", "no", "0"],
             help=(
@@ -110,7 +116,7 @@ class ArgParser:
                 "Default value is 'auto'.")
         )
 
-        parser.add_argument(
+        color_grp.add_argument(
             "--no-color", action='store_true',
             help="the same as '--color=never'. Overrides '--color' option"
         )
@@ -183,7 +189,7 @@ def std_app_configure(args):
     this value to decide if colored text should be produced.
     """
     # 1. process 'use colors' options
-    if args.color.lower() in ('never', 'no', '0'):
+    if not args.color or args.color.lower() in ('never', 'no', '0'):
         color_stdout = False
     elif args.color.lower() in ('always', 'yes', '1'):
         color_stdout = True
