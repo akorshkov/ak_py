@@ -293,7 +293,7 @@ class PPObj(PPObjBase):
     repr of this object prints the structure in a pretty-formatted colored form.
     """
 
-    __slots__ = 'r'
+    __slots__ = ('r', )
     _PPRINTER = PrettyPrinter()
 
     def __init__(self, obj_to_print):
@@ -1360,15 +1360,13 @@ class PPTable(PPObjBase):
             table_lines.append(rec)
             prev_break_by_values = cur_break_by_values
 
-        # check if some records should be hided because of record numbers limits
+        # check if some records should be hidden because of record numbers limits
         n_first = self._ppt_fmt.limit_flines
         n_last = self._ppt_fmt.limit_llines
         if (n_first is not None
             and n_last is not None
             and len(table_lines) > n_first + n_last + 1
            ):
-            n_skipped_table_lines = len(self.records) - n_first - n_last
-            assert n_skipped_table_lines >= 2
             first_lines = table_lines[:n_first] if n_first else []
             last_lines = table_lines[-n_last:] if n_last else []
             # calculate number of not visible records.

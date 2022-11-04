@@ -15,7 +15,7 @@ class TestArgParser(unittest.TestCase):
         # script run w/o arguments
         args = parser.parse_args([])
 
-        std_options = ['verbose', 'color', 'no_color']
+        std_options = ['verbose', 'color']
         missing_options = [
             opt for opt in std_options
             if not hasattr(args, opt)
@@ -26,14 +26,14 @@ class TestArgParser(unittest.TestCase):
             f"{missing_options}")
         self.assertEqual(0, args.verbose)
         self.assertEqual('auto', args.color)
-        self.assertEqual(False, args.no_color)
+        self.assertFalse(hasattr(args, 'no_color'))
 
         # script run with some arguments
         args = parser.parse_args(['-vv', '--color' , 'never'])
 
         self.assertEqual(2, args.verbose)
         self.assertEqual('never', args.color)
-        self.assertEqual(False, args.no_color)
+        self.assertFalse(hasattr(args, 'no_color'))
 
     def test_std_parser_additional_arg(self):
         """Test standard parser with additional argument"""
@@ -47,7 +47,7 @@ class TestArgParser(unittest.TestCase):
 
         self.assertEqual(0, args.verbose)
         self.assertEqual('auto', args.color)
-        self.assertEqual(False, args.no_color)
+        self.assertFalse(hasattr(args, 'no_color'))
         self.assertEqual(["f1", "f2", "f3"], args.features)
 
     def test_no_log_options(self):
@@ -123,7 +123,9 @@ class TestArgParser(unittest.TestCase):
         self.assertEqual('cmd3', args.command)
         self.assertEqual(0, args.verbose)
         self.assertEqual('auto', args.color)
-        self.assertEqual(False, args.no_color)
+        self.assertFalse(
+            hasattr(args, 'no_color'),
+            "--no-color option affects args.color value, not args.no_color")
         self.assertEqual(2, args.details_level)
         self.assertEqual("17", args.simplearg)
 
