@@ -22,6 +22,7 @@ Installation:
 ```
     pip install --user openpyxl
     pip install --user mysql-connector-python
+    pip install --user gitpython
 ```
 4. Use it:
 ```

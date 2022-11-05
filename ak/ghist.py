@@ -7,10 +7,27 @@ from pathlib import Path
 import re
 import threading
 
-from git import Repo, SymbolicReference
-
 from ak.color import ColorFmt, ColoredText, Palette
 from ak.utils import Timer, Comparable, compare_dictionaries
+
+try:
+    from git import Repo, SymbolicReference
+except ImportError:
+    # git module is required 'in production'
+    # but to run unittests the following dummies should be enough
+
+    class Repo:
+        """Dummy git.Repo (to run unittests w/o actual git package)."""
+        def __init__(self, repo_path):
+            raise Exception(
+                "Looks like 'git' package is not installed. "
+                "It is required to use 'ak.ghist' module. "
+                "Check README for installation instructions."
+            )
+
+
+    SymbolicReference = None
+
 
 logger = logging.getLogger(__name__)
 
