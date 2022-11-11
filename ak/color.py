@@ -327,32 +327,6 @@ class ColoredText:
         return cls._ColoredChunk(orig_chunk.c_prefix, new_text, orig_chunk.c_suffix)
 
 
-class Palette:
-    """Simple mapping 'syntax_name' -> ColorFmt"""
-
-    def __init__(self, colors, use_colors=True):
-        """Create simple dictionary {syntax_type: ColorFmt}.
-
-        Example:
-            Palette({'syntax1': ColorFmt('RED'), 'syntax2': ColorFmt('BLUE')})
-        """
-        self.colors = colors.copy()
-        self.use_colors = use_colors
-
-    def get_color(self, syntax_name):
-        """syntax_name -> ColorFmt"""
-        no_effects_fmt = ColorFmt.get_plaintext_fmt()
-
-        if not self.use_colors:
-            return no_effects_fmt
-
-        return self.colors.get(syntax_name, no_effects_fmt)
-
-    def __getitem__(self, index):
-        """same behavior as get_color method"""
-        return self.get_color(index)
-
-
 class ColorSequences:
     """Constructor of color escape sequences"""
 
@@ -546,6 +520,302 @@ def make_examples(text="color text"):
             yield line
 
     return "\n".join(line for line in _produce_lines())
+
+
+#########################
+# Palette and ColorsConfig
+
+class Palette:
+    """Simple mapping 'syntax_name' -> ColorFmt"""
+
+    def __init__(self, colors, use_colors=True):
+        """Create simple dictionary {syntax_type: ColorFmt}.
+
+        Example:
+            Palette({'syntax1': ColorFmt('RED'), 'syntax2': ColorFmt('BLUE')})
+        """
+        self.colors = colors.copy()
+        self.use_colors = use_colors
+
+    def get_color(self, syntax_name):
+        """syntax_name -> ColorFmt"""
+        no_effects_fmt = ColorFmt.get_plaintext_fmt()
+
+        if not self.use_colors:
+            return no_effects_fmt
+
+        return self.colors.get(syntax_name, no_effects_fmt)
+
+    def __getitem__(self, index):
+        """same behavior as get_color method"""
+        return self.get_color(index)
+
+
+_COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
+
+
+def get_global_colors_config():
+    """Get global ColorsConfig"""
+    global _COLORS_CONFIG
+    if _COLORS_CONFIG is None:
+        _COLORS_CONFIG = ColorsConfig({})  # all defaults
+    return _COLORS_CONFIG
+
+
+def set_global_colors_config(colors_config):
+    """Set global ColorsConfig"""
+    global _COLORS_CONFIG
+    _COLORS_CONFIG = colors_config
+
+
+class ColorsConfig:
+    """Global color settings.
+
+    ColorsConfig contains default colors for miscelaneous syntax items such as
+    numbers in pretty-printed jsons or table borders.
+
+    ColorsConfig is a global object - miscelaneous pretty-printers should be able
+    to find this configuration without any explicit configuration.
+
+    This global object is ak.color._COLORS_CONFIG. Use
+    ak.color.get_global_colors_config() and ak.color.set_global_colors_config() to access
+    this object.
+    """
+
+    _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
+
+    DFLT_CONFIG = {
+        "TEXT": "",  # default text settings
+        "NAME": "GREEN:bold",
+        "ATTR": "YELLOW",
+        "FUNC_NAME": "BLUE",
+        "TAG": "GREEN",
+        "CATEGORY": "MAGENTA",
+        "KEYWORD": "BLUE:bold",
+        "NUMBER": "YELLOW",
+        "WARN": "RED",
+        "TABLE": {
+            "BORDER": "GREEN",
+            "COL_TITLE": "GREEN:bold",
+            "NUMBER": "NUMBER",
+            "KEYWORD": "KEYWORD",
+            "WARN": "WARN",
+        },
+    }
+
+    _MODIFIERS = {
+        'bold': ('bold', True),
+        'faint': ('faint', True),
+        'underline': ('underline', True),
+        'blink': ('blink', True),
+        'crossed': ('crossed', True),
+        'no_bold': ('bold', False),
+        'no_faint': ('faint', False),
+        'no_underline': ('underline', False),
+        'no_blink': ('blink', False),
+        'no_crossed': ('crossed', False),
+    }
+
+    _COLORS_NAMES = ColorSequences._COLORS.keys() | {""}
+
+    def __init__(self, modified_syntaxes, use_effects=True):
+        """Constructor.
+
+        Arguments:
+        - modified_syntaxes: dict of amendments to default config (*)
+        - use_effects: if False - ignores all other config settings and creates
+          'no-color' config
+
+        (*) example:
+        {
+            "NAME": "BLUE:bold",
+            "TABLE": {
+                "NAME": "YELLOW",
+                "BORDER": "GREEN",
+                "NUMBER": "TABLE.NAME",
+            }
+        }
+
+        Color description format:
+            "COLOR/BG_COLOR:modifiers"
+        or
+            "OTHER_SYNTAX:modifiers"
+
+        where modifiers is a list of individual modifiers with optional 'no_' prefix.
+
+        Examples:
+            "YELLOW/BLUE:bold,faint,underline,blink,crossed"
+            "GREEN"
+            "RED:bold"
+            "OTHER_SYNTAX_NAME:no_bold"
+
+        Check ColorsConfig.DFLT_CONFIG for names of syntaxes.
+        """
+        if not use_effects:
+            # no colors formatting will be used - and do not even try to parse
+            # config data
+            self.config = {}
+            return
+
+        flat_init_data = self._flatten_dict(self.DFLT_CONFIG)
+        flat_init_data.update(self._flatten_dict(modified_syntaxes))
+
+        # {syntax_name: (color_name, other_syntax_name, modifiers)}
+        flat_init_data = {
+            syntax_name: self._parse_color_descr(color_descr)
+            for syntax_name, color_descr in flat_init_data.items()
+        }
+
+        # now flat_init_data contains init params for colors. These rules may
+        # refer to other rules. Resolve these dependencies.
+        syntax_attrs = {}  # {syntax_name: (color_name, modifiers)}
+        for syntax_name, value in flat_init_data.items():
+            color_name, src_syntax_name, modifiers = value
+            assert color_name is None or src_syntax_name is None
+            if syntax_name in syntax_attrs:
+                # rules for this syntax_name processed already
+                continue
+            path = []
+            while True:
+                if src_syntax_name is None:
+                    # source syntax can be processed immediately
+                    syntax_attrs[syntax_name] = (color_name, modifiers)
+                    break
+                path.append((syntax_name, src_syntax_name, modifiers))
+                if src_syntax_name in syntax_attrs:
+                    # source syntax is ready
+                    break
+                if src_syntax_name not in flat_init_data:
+                    raise Exception(
+                        f"Invalid colors config: rule for syntax '{syntax_name}' "
+                        f"referenses syntax '{src_syntax_name}' which does not exist")
+                # need to go deeper
+                color_name, next_src_syntax_name, modifiers = flat_init_data[src_syntax_name]
+                syntax_name, src_syntax_name = src_syntax_name, next_src_syntax_name
+                assert color_name is None or src_syntax_name is None
+                if any(syntax_name == x[0] for x in path):
+                    # circular dependency detected
+                    names_path = [x[0] for x in path]
+                    names_path.append(syntax_name)
+                    raise Exception(f"circular syntax rules dependencies: {names_path}")
+            # process all the rules accumulated in path
+            for syntax_name, src_syntax_name, modifiers in path[::-1]:
+                assert src_syntax_name in syntax_attrs
+                src_color, src_modifiers = syntax_attrs[src_syntax_name]
+                results_modifiers = src_modifiers.copy()
+                results_modifiers.update(modifiers)
+                syntax_attrs[syntax_name] = (src_color, results_modifiers)
+
+        # syntax_attrs contains color="" in 'plaintext' case, but ColorFmt
+        # expects None. Fix this:
+        fix_empty_color = lambda color: None if color == "" else color
+
+        self.config = {
+            syntax_name: ColorFmt(fix_empty_color(color), **modifiers)
+            for syntax_name, (color, modifiers) in syntax_attrs.items()
+        }
+
+    @classmethod
+    def _parse_color_descr(cls, color_descr):
+        # parse string description of a color
+        # color_descr_srt -> (color_name, other_syntax_name, modifiers)
+        color_name = None
+        bk_color_name = None
+        other_item_name = None
+        modifiers = {}
+
+        chunks = color_descr.split(':')
+        assert len(chunks) < 3, f"invalid color description: '{color_descr}'"
+        if len(chunks) == 1:
+            chunks.append("")
+
+        color_part, modifiers_part = chunks
+
+        # process color_part
+        chunks = color_part.split('/')
+        assert len(chunks) < 3, f"invalid color name '{color_part}'"
+        if len(chunks) == 2:
+            # "COLOR/BK_COLOR"
+            color_name, bk_color_name = chunks
+            assert color_name in cls._COLORS_NAMES, (
+                f"invalid color name '{color_name}'")
+            assert bk_color_name in cls._COLORS_NAMES, (
+                f"invalid color name '{bk_color_name}'")
+        else:
+            if chunks[0] in cls._COLORS_NAMES:
+                color_name = chunks[0]
+            else:
+                # this is not a color name, but other syntax name
+                other_item_name = chunks[0]
+
+        # process modiiers part
+        chunks = [s.strip() for s in modifiers_part.split(',')]
+        chunks = [s for s in chunks if s]
+        for modifier in chunks:
+            try:
+                mod_name, mod_value = cls._MODIFIERS[modifier]
+            except KeyError:
+                raise Exception(f"invalid color modifier name '{modifier}'")
+            modifiers[mod_name] = mod_value
+
+        if bk_color_name is not None:
+            modifiers['bg_color'] = bk_color_name
+
+        return color_name, other_item_name, modifiers
+
+    @classmethod
+    def _flatten_dict(cls, src):
+        # transform structure of nested dictionaries into a flat dictionary.
+        # keys of items corresponding to elements of nested disctionaris are
+        # composed of names of items in path:
+        # {'TABLE': {'BORDER': value}}  ->  {'TABLE.BORDER': value}
+        result = {}
+        for key, value in src.items():
+            if isinstance(value, str):
+                result[key] = value
+            elif isinstance(value, dict):
+                flatten_subdict = cls._flatten_dict(value)
+                for skey, sval in flatten_subdict.items():
+                    result[f"{key}.{skey}"] = sval
+        return result
+
+    def get_color(self, syntax_name):
+        """syntax_name -> ColorFmt"""
+        return self.config.get(syntax_name, self._NO_EFFECTS_FMT)
+
+
+class PaletteUser:
+    """Base class for classes which construct Palette from global config.
+
+    The global config is ColorsConfig object stored in ak.color._COLORS_CONFIG.
+
+    PaletteUser-defived class T provide class method cls.get_palette() which is
+    supposed to be used by objects of T to get properly configured palette.
+
+    Palette object returned by cls.get_palette() is created only once when
+    this method is called first time. Make sure that the global colors
+    config is initialized by that time. (That means that if application
+    does not use default colors configuration, ColorsConfig should be configured
+    as soon as possible, before get_palette() method of any PaletteUser-derived
+    class is called).
+    """
+
+    _PALETTE = None  # Palette of a class will be stored here
+
+    @classmethod
+    def _init_palette(cls, color_config):
+        # create palette for objects of this class
+        # to be implemented in derived class
+        pass
+
+    @classmethod
+    def get_palette(cls):
+        """Get Palette object to be used by an object of cls class."""
+        if cls._PALETTE is None:
+            global_colors_config = get_global_colors_config()
+            cls._PALETTE = cls._init_palette(global_colors_config)
+        assert cls._PALETTE is not None
+        return cls._PALETTE
 
 
 if __name__ == '__main__':

@@ -2,8 +2,14 @@
 
 import unittest
 
-from ak.color import ColoredText, ColorFmt, ColorBytes, Palette
+from ak.color import (
+    ColoredText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser,
+    get_global_colors_config, set_global_colors_config,
+)
 
+
+#########################
+# Test ColorFmt
 
 class TestColorFmt(unittest.TestCase):
     """Test ColorFmt: object wich produce colored text."""
@@ -379,6 +385,28 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual(plain_str, stripped_colored_str)
 
 
+class TestColorFmtBytes(unittest.TestCase):
+    """Test using ColorFmt to process bytes."""
+
+    def test_simple_with_bytes(self):
+        """Test successfull scenarios of using ColorFmt with bytes."""
+
+        green_printer_b = ColorBytes('GREEN')
+        raw_bytes = b'test'
+        green_bytes = green_printer_b(raw_bytes)
+
+        self.assertGreater(
+            len(green_bytes), len(raw_bytes),
+            f"formatte bytes should contain additional escape "
+            f"characters: {green_bytes}")
+
+        with self.assertRaises(TypeError) as err:
+            green_printer_b("string_text")
+
+
+#########################
+# Test Palette and ColorsConfig functionality
+
 class TestPalette(unittest.TestCase):
     """Test Palette functionality."""
 
@@ -398,20 +426,171 @@ class TestPalette(unittest.TestCase):
         self.assertEqual("test text", str(t2))
 
 
-class TestColorFmtBytes(unittest.TestCase):
-    """Test using ColorFmt to process bytes."""
+class TestColorsConfig(unittest.TestCase):
 
-    def test_simple_with_bytes(self):
-        """Test successfull scenarios of using ColorFmt with bytes."""
+    class TstColorsConfig(ColorsConfig):
+        # not a nice-loking colors config, but ok for test purposes
+        DFLT_CONFIG = {
+            "TEXT": "",
+            "NAME": "BLUE:bold",
+            "VERY_COLORED": "YELLOW/BLUE:bold,faint,underline,blink,crossed",
+            "VERY_UNCOLORED": (
+                "YELLOW/BLUE:no_bold,no_faint,no_underline,no_blink,no_crossed"
+            ),
+            "TABLE": {
+                "BORDER": "RED",
+                "NAME": "GREEN",
+                "ALT1_NAME": "NAME",
+                "ALT2_NAME": "TABLE.NAME",
+            },
+        }
 
-        green_printer_b = ColorBytes('GREEN')
-        raw_bytes = b'test'
-        green_bytes = green_printer_b(raw_bytes)
+    def test_colors_config_use_defaults(self):
+        """Test initialization of ColorsConfig with all defaults."""
+
+        raw_text = "test"
+
+        # reset possible previous initialization
+        set_global_colors_config(None)
+
+        # get_color should not fail even without explicit initialization
+        _ = get_global_colors_config().get_color("TEXT")
+
+        # explicit initialization with using all the defaults
+        colors_conf = self.TstColorsConfig({})
+
+        colored_texts = {
+            syntax_name: colors_conf.get_color(syntax_name)(raw_text)
+            for syntax_name in [
+                "TEXT", "NAME", "VERY_COLORED", "VERY_UNCOLORED",
+                "UNEXPECTED",
+                "TABLE.BORDER", "TABLE.NAME", "TABLE.ALT1_NAME", "TABLE.ALT2_NAME",
+            ]
+        }
+
+        self.assertEqual(
+            raw_text, colored_texts['TEXT'], "empty description means no formatting")
+        self.assertEqual(
+            raw_text, colored_texts['UNEXPECTED'], "missing syntax means no formatting")
+
+        #print(colored_texts['VERY_COLORED'])
+        #print(colored_texts['VERY_UNCOLORED'])
+
+        # all these items expected to be colored
+        self.assertGreater(len(str(colored_texts['NAME'])), len(raw_text))
+        self.assertGreater(len(str(colored_texts['TABLE.NAME'])), len(raw_text))
+        self.assertGreater(len(str(colored_texts['TABLE.ALT1_NAME'])), len(raw_text))
+        self.assertGreater(len(str(colored_texts['TABLE.ALT2_NAME'])), len(raw_text))
+
+        self.assertEqual(
+            colored_texts['NAME'], colored_texts['TABLE.ALT1_NAME'])
+        self.assertEqual(
+            colored_texts['TABLE.NAME'], colored_texts['TABLE.ALT2_NAME'])
+        self.assertNotEqual(
+            colored_texts['NAME'], colored_texts['TABLE.ALT2_NAME'],
+            "expected BLUE and GREEN colors respectively")
+
+    def test_no_colors_config(self):
+        """Test turning off all the syntax coloring."""
+
+        raw_text = "test"
+
+        colors_conf = self.TstColorsConfig({}, use_effects=False)
+
+        colored_texts = {
+            syntax_name: colors_conf.get_color(syntax_name)(raw_text)
+            for syntax_name in [
+                "TEXT", "NAME", "VERY_COLORED", "VERY_UNCOLORED",
+                "UNEXPECTED",
+                "TABLE.BORDER", "TABLE.NAME", "TABLE.ALT1_NAME", "TABLE.ALT2_NAME",
+            ]
+        }
+
+        for syntax_name, text in colored_texts.items():
+            self.assertEqual(
+                raw_text, text, "should be equal as all the coloring was turned off")
+
+    def test_config_not_default(self):
+        """Test modifications to default config."""
+
+        raw_text = "test"
+
+        colors_conf = self.TstColorsConfig({
+            'TABLE': {
+                'NAME': "",
+            },
+            'VERY_COLORED': "TABLE.BORDER",
+        })
+
+        colored_texts = {
+            syntax_name: colors_conf.get_color(syntax_name)(raw_text)
+            for syntax_name in [
+                "TEXT", "NAME", "VERY_COLORED", "VERY_UNCOLORED",
+                "UNEXPECTED",
+                "TABLE.BORDER", "TABLE.NAME", "TABLE.ALT1_NAME", "TABLE.ALT2_NAME",
+            ]
+        }
+
+        self.assertEqual(
+            raw_text, colored_texts['TABLE.NAME'],
+            "syntax coloring was tuned off for TABLE.NAME")
+        self.assertEqual(
+            colored_texts['VERY_COLORED'], colored_texts['TABLE.BORDER'])
+
+    def test_palette_user_class(self):
+        """Test behavior of a class which uses palette and global colors config."""
+
+        # 0. make primitive PaletteUser class and object of this class
+        class CPrinter(PaletteUser):
+            """Primitive class which produces colored text and reads colors config."""
+
+            @classmethod
+            def _init_palette(cls, color_config):
+                # create palette to be used by objects of this class
+                # colors config is taken form ak.color.ColorsConfig
+                return Palette({
+                    'SYNTAX1': color_config.get_color('TABLE.COL_TITLE'),
+                    'BAD_SYNTAX': color_config.get_color('UNKNOWN_SYNTAX'),
+                })
+
+            def __init__(self, raw_text):
+                self.raw_text = raw_text
+                self.palette = self.get_palette()
+
+            def mk_colored_texts(self):
+                return {
+                    'SYNTAX1': self.palette['SYNTAX1'](self.raw_text),
+                    'BAD_SYNTAX': self.palette['BAD_SYNTAX'](self.raw_text),
+                }
+
+        # it is supposed that global color config is initialized only once.
+        # manually clean-up config to reset the init
+        set_global_colors_config(None)
+        CPrinter._PALETTE = None
+
+        raw_text = "test"
+
+        cp = CPrinter(raw_text)
+        colored_texts = cp.mk_colored_texts()
 
         self.assertGreater(
-            len(green_bytes), len(raw_bytes),
-            f"formatte bytes should contain additional escape "
-            f"characters: {green_bytes}")
+            len(str(colored_texts['SYNTAX1'])), len(raw_text),
+            "expected to be colored: color taken from 'TABLE.COL_TITLE' of config",
+        )
+        self.assertEqual(raw_text, ColoredText.strip_colors(str(colored_texts['SYNTAX1'])))
 
-        with self.assertRaises(TypeError) as err:
-            green_printer_b("string_text")
+        self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
+
+        # it is supposed that global color config is initialized only once.
+        # manually clean-up config to reset the init
+        set_global_colors_config(None)
+        CPrinter._PALETTE = None
+
+        # test init config with all color effects turned off
+        set_global_colors_config(self.TstColorsConfig({}, use_effects=False))
+
+        cp = CPrinter(raw_text)
+        colored_texts = cp.mk_colored_texts()
+
+        self.assertEqual(raw_text, str(colored_texts['SYNTAX1']))
+        self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
