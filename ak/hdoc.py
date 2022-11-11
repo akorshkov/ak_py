@@ -13,13 +13,13 @@ python's concole scope.
 """
 
 import inspect
-from ak.color import ColorFmt, Palette
+from ak.color import Palette, PaletteUser
 
 
 #########################
 # 'll'-command specific classes
 
-class LLImpl:
+class LLImpl(PaletteUser):
     """Implementation of 'll' command.
 
     Usage:
@@ -28,30 +28,21 @@ class LLImpl:
     ... summary of local variables is printed ...
     """
 
-    _COLOR_NAME = ColorFmt('GREEN', bold=True)
-    _COLOR_CATEGORY = ColorFmt('MAGENTA', bold=True)
-
-    def __init__(
-            self, locals_dict, *,
-            color_name=_COLOR_NAME,
-            color_category=_COLOR_CATEGORY,
-            use_colors=True):
+    def __init__(self, locals_dict):
         """Create 'll' object which prints summary of values in python console.
 
         Arguments:
         - locals_dict: dictionary of console's locals
-        - color_name: specifies how names of variables are formatted
-        - color_category: specifies how names of categories are formatted
-        - use_colors: if False, the "color_*" arguments are ignored and
-            plain text is produced.
-
-        Note: You can specify 'color_*' arguments to override predefined
-            colors. Check help(ColorFmt.make) for possible values of these
-            arguments.
         """
         self.locals_dict = locals_dict
-        self._color_name = ColorFmt.make(color_name, use_colors)
-        self._color_category = ColorFmt.make(color_category, use_colors)
+
+    @classmethod
+    def _init_palette(cls, colors_config):
+        # make palette from global color config
+        return Palette({
+            'NAME': colors_config.get_color('NAME'),
+            'CATEGORY': colors_config.get_color('CATEGORY'),
+        })
 
     def __repr__(self):
         # usually this method shoudl return tring. But python interpreter
@@ -63,6 +54,11 @@ class LLImpl:
     def _make_ll_report(self):
         # generate lines (string values) which make a summary of
         # variables in self.locals_dict
+
+        palette = self.get_palette()
+        color_fmt_name = palette.get_color('NAME')
+        color_fmt_category = palette.get_color('CATEGORY')
+        color_fmt_nodescr = palette.get_color(None)
 
         # each category has list of items with description and list of
         # items w/o description
@@ -95,19 +91,18 @@ class LLImpl:
                 cat_is_first = False
             else:
                 yield ""
-            yield str(self._color_category(category_name)) + ":"
+            yield str(color_fmt_category(category_name)) + ":"
             items, items_wo_descr = items_by_category[category_name]
             if items:
                 items.sort(key=lambda kv: kv[0])
                 max_name_len = max(len(item[0]) for item in items)
                 name_col_len = min(max_name_len, 20) + 1
                 for name, descr in items:
-                    c_name = self._color_name(name)
+                    c_name = color_fmt_name(name)
                     yield f"  {c_name:{name_col_len}}: {descr}"
             if items_wo_descr:
-                no_effects = ColorFmt.get_plaintext_fmt()
-                yield "  " + str(no_effects(", ").join(
-                    self._color_name(name) for name in items_wo_descr))
+                yield "  " + str(color_fmt_nodescr(", ").join(
+                    color_fmt_name(name) for name in items_wo_descr))
 
     def _get_explicit_value_descr(self, value):
         # detect if data for 'll' report is present in the object and return it.
@@ -145,7 +140,7 @@ class LLImpl:
 #########################
 # 'h'-command specific classes
 
-class HCommand:
+class HCommand(PaletteUser):
     """Implementation of 'h' command.
 
     h(obj) prints some text related to the 'obj'. The text is produced by
@@ -156,13 +151,17 @@ class HCommand:
     _LEVEL_H, _LEVEL_HH = 1, 2  # correspond to 'h' and 'hh' commands
 
     def __init__(self, dets_level=_LEVEL_H):
-        self.palette = Palette({
-            'attr': ColorFmt('YELLOW'),
-            'func_name': ColorFmt("BLUE"),
-            'tags':  ColorFmt("GREEN"),
-            'warning': ColorFmt('RED'),
-        })
+        self.palette = self.get_palette()
         self.dets_level = dets_level
+
+    @classmethod
+    def _init_palette(cls, colors_config):
+        return Palette({
+            'ATTR': colors_config.get_color('ATTR'),
+            'FUNC_NAME': colors_config.get_color('FUNC_NAME'),
+            'TAG':  colors_config.get_color('TAG'),
+            'WARN': colors_config.get_color('WARN'),
+        })
 
     def __call__(self, obj, filt=_DFLT_FILT_ARG):
         # this method does not return the help text, but prints it
@@ -396,7 +395,7 @@ class HDocItemFunc(HDocItem):
 
         bm_notes = _bm_notes or self._get_bound_method_notes(obj, palette)
 
-        f_name = palette.get_color('func_name')(self.name)
+        f_name = palette.get_color('FUNC_NAME')(self.name)
         args_descr = ", ".join(self.arg_names)
         yield f"{f_name}({args_descr}) {bm_notes.note_short} {self.short_descr}"
 
@@ -421,7 +420,7 @@ class HDocItemFunc(HDocItem):
                 if tag != self.main_tag:
                     yield tag
 
-        ct = palette.get_color('tags')
+        ct = palette.get_color('TAG')
         tags = " ".join(f"#{ct(tag)}" for tag in _gen_tags())
         yield "    " + tags
 
@@ -549,7 +548,7 @@ class HDocItemCls(HDocItem):
             "'_bm_notes' are applicable for bound methods, but this mehod "
             "generates h-doc for class or object of class")
 
-        cls_name = palette.get_color('class_name')(self.name)
+        cls_name = palette.get_color('class_name')(self.name)  # fix it - no such syntax name
         obj_indicator = "" if inspect.isclass(obj) else "Object of "
 
         yield f"{obj_indicator}{cls_name}  {self.short_descr}"
@@ -571,8 +570,8 @@ class HDocItemCls(HDocItem):
         if hasattr(obj, '_HDOC_ATTRS'):
             is_class = inspect.isclass(obj)
             attrs_hdocs = []
-            color_attr = palette.get_color('attr')
-            color_warning = palette.get_color('warning')
+            color_attr = palette.get_color('ATTR')
+            color_warning = palette.get_color('WARN')
             for attr_name, attr_descr in obj._HDOC_ATTRS:
                 include_attr = True
                 attr_is_available = True
@@ -599,7 +598,7 @@ class HDocItemCls(HDocItem):
 
         # generate descriptions of methods
         for tag, h_items in self.h_items_by_tag.items():
-            ct = palette.get_color('tags')
+            ct = palette.get_color('TAG')
             tag_line_reported = False
             for h_item in h_items:
                 if h_item.hidden:

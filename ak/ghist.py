@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import threading
 
-from ak.color import ColorFmt, ColoredText, Palette
+from ak.color import ColorsConfig, PaletteUser, ColoredText, Palette
 from ak.utils import Timer, Comparable, compare_dictionaries
 
 try:
@@ -1939,26 +1939,57 @@ class ReposCollection:
         results.reverse()
         return results
 
-    def print_prepared_reports(self, report_data, color_stdout=True):
-        rp = ReportPrinter(color_stdout)
+    def print_prepared_reports(self, report_data):
+        rp = ReportPrinter()
         for line in rp.gen_report(report_data):
             print(line)
 
 
-class ReportPrinter:
+class GHistColorsConfig(ColorsConfig):
+    """Global config of colors used by ghist.
+
+    Syntax names used by ghist reports are very different from standard syntax names,
+    that's why different ColorsConfig class is used.
+
+    Application should call ak.color.set_global_colors_config(c) to register object
+    of this class as global color config.
+    """
+
+    OWN_DFLT_CONFIG = {
+        'GHIST': {
+            'REPO': "CYAN:bold",
+            'BRANCH': "GREEN:bold",
+            'HASH': "YELLOW",
+            'HASH_NOT_MERGED': "",
+            'COMMIT_TIME': "BLUE",
+            'COMMIT_NAME': "GREEN",
+            'VERSION': "CYAN",
+            'VER_NOT_BUILT': "RED",
+            'VER_NOT_MERGED': "RED",
+        }
+    }
+
+    DFLT_CONFIG = {**ColorsConfig.DFLT_CONFIG, **OWN_DFLT_CONFIG}
+
+
+class ReportPrinter(PaletteUser):
     """Pretty-print report data produced by ReposCollection.make_reports_data"""
 
-    def __init__(self, color_stdout):
-        self.palette = Palette({}) if not color_stdout else Palette({
-            'REPO': ColorFmt('CYAN', bold=True),
-            'BRANCH': ColorFmt('GREEN', bold=True),
-            'HASH': ColorFmt('YELLOW'),
-            'HASH_NOT_MERGED': ColorFmt(None),
-            'COMMIT_TIME': ColorFmt('BLUE'),
-            'COMMIT_NAME': ColorFmt('GREEN'),
-            'VERSION': ColorFmt('CYAN'),
-            'VER_NOT_BUILT': ColorFmt('RED'),
-            'VER_NOT_MERGED': ColorFmt('RED'),
+    def __init__(self):
+        self.palette = self.get_palette()
+
+    @classmethod
+    def _init_palette(cls, colors_config):
+        return Palette({
+            'REPO': colors_config.get_color('GHIST.REPO'),
+            'BRANCH': colors_config.get_color('GHIST.BRANCH'),
+            'HASH': colors_config.get_color('GHIST.HASH'),
+            'HASH_NOT_MERGED': colors_config.get_color('GHIST.HASH_NOT_MERGED'),
+            'COMMIT_TIME': colors_config.get_color('GHIST.COMMIT_TIME'),
+            'COMMIT_NAME': colors_config.get_color('GHIST.COMMIT_NAME'),
+            'VERSION': colors_config.get_color('GHIST.VERSION'),
+            'VER_NOT_BUILT': colors_config.get_color('GHIST.VER_NOT_BUILT'),
+            'VER_NOT_MERGED': colors_config.get_color('GHIST.VER_NOT_MERGED'),
         })
 
     def gen_report(self, report_data):

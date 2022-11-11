@@ -8,7 +8,7 @@ Classes provided by this module:
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import ColorFmt, ColoredText, Palette
+from ak.color import ColoredText, Palette, PaletteUser
 
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
@@ -31,45 +31,38 @@ class _PrettyPrinterBase:
         return "\n".join(self.gen_pplines(obj_to_print))
 
 
-class PrettyPrinter(_PrettyPrinterBase):
+class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
     """Print json-like python objects with color highliting."""
-
-    # dafault colors
-    _COLOR_NAME = ColorFmt('GREEN', bold=True)
-    _COLOR_NUMBER = ColorFmt('YELLOW')
-    _COLOR_KEYWORD = ColorFmt('BLUE', bold=True)
 
     _CONSTANTS_LITERALS = (
         {True: 'True', False: 'False', None: 'None'},
         {True: 'true', False: 'false', None: 'null'},
     )
 
-    def __init__(
-            self, *,
-            fmt_json=False,
-            color_name=_COLOR_NAME,
-            color_number=_COLOR_NUMBER,
-            color_keyword=_COLOR_KEYWORD,
-            use_colors=True):
+    def __init__(self, *, fmt_json=False, use_colors=True):
         """Create PrettyPrinter for printing json-like objects.
 
         Arguments:
         - fmt_json: if True generate output in json form, else - in python form.
             The difference is in value of constans only ('true' vs 'True', etc.)
-        - color_name: specifies how keys of dicts are formatted.
-        - color_number: specifies how number values are formatted.
-        - color_keyword: specifies format for 'True', 'False' and 'None' constants
-        - use_colors: if False, the "color_*" arguments are ignored and
-            plain text is produced.
-
-        Note: You can specify 'color_*' arguments to override predefined
-            colors. Check help(ColorFmt.make) for possible values of these
-            arguments.
+        - use_colors: if False, colors configuration is ignored and plain text is
+            produced. If True - global colors configuration is used (produced
+            text may be plain, if global config specifies so).
         """
         self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
-        self._color_name = ColorFmt.make(color_name, use_colors)
-        self._color_number = ColorFmt.make(color_number, use_colors)
-        self._color_keyword = ColorFmt.make(color_keyword, use_colors)
+        palette = self.get_palette() if use_colors else Palette({})
+        self._color_name = palette.get_color('NAME')
+        self._color_number = palette.get_color('NUMBER')
+        self._color_keyword = palette.get_color('KEYWORD')
+
+    @classmethod
+    def _init_palette(cls, color_config):
+        # init palette based on global colors config
+        return Palette({
+            'NAME': color_config.get_color('NAME'),
+            'NUMBER': color_config.get_color('NUMBER'),
+            'KEYWORD': color_config.get_color('KEYWORD'),
+        })
 
     def gen_pplines(self, obj_to_print) -> Iterator[str]:
         """Generate lines of colored text - pretty representation of the object."""
@@ -392,7 +385,7 @@ class PPTableFieldType:
         # column. It is not a enum or uuid - it makes no need to format these values
         # using fmt_modifier.
         str_val = str(value) if value else ""
-        fmt = palette.get_color('NAME')
+        fmt = palette.get_color('COL_TITLE')
         text = fmt(str_val)
         return text, ALIGN_CENTER
 
@@ -1170,7 +1163,7 @@ class PPTableFormat:
         return ";".join(parts)
 
 
-class PPTable(PPObjBase):
+class PPTable(PPObjBase, PaletteUser):
     """2-D table.
 
     Provides pretty-printing and simple manipulation on 2-D table
@@ -1246,14 +1239,7 @@ class PPTable(PPObjBase):
         if footer is None:
             footer = f"Total {len(self.records)} records"
         self._footer = ColoredText(footer)
-
-        self.palette = Palette({
-            'TBL_BORDER': ColorFmt('GREEN'),
-            'NAME': ColorFmt('GREEN', bold=True),
-            'NUMBER': ColorFmt('YELLOW'),
-            'KEYWORD': ColorFmt('BLUE', bold=True),
-            'WARN': ColorFmt('RED'),
-        })
+        self.palette = self.get_palette()
 
     def _init_format(self, fmt, fmt_obj, fields, fields_types) -> PPTableFormat:
         # part of PPTable constructor.
@@ -1305,6 +1291,17 @@ class PPTable(PPObjBase):
 
         # table is empty and there is no information about it's columns.
         return PPTableFormat.mk_dummy_empty(parsed_fmt)
+
+    @classmethod
+    def _init_palette(cls, color_config):
+        # create palette object based on global colors config
+        return Palette({
+            'TBL_BORDER': color_config.get_color('TABLE.BORDER'),
+            'COL_TITLE': color_config.get_color('TABLE.COL_TITLE'),
+            'NUMBER': color_config.get_color('TABLE.NUMBER'),
+            'KEYWORD': color_config.get_color('TABLE.KEYWORD'),
+            'WARN': color_config.get_color('TABLE.WARN'),
+        })
 
     def set_fmt(self, fmt):
         """Specify fmt - a string which describes format of the table.
@@ -1421,7 +1418,7 @@ class PPTable(PPObjBase):
         # 2. table header (name)
         if self.header:
             line = sep + PPTableFieldType.fit_to_width(
-                self.palette.get_color("NAME")(self.header),
+                self.palette.get_color("COL_TITLE")(self.header),
                 table_width - 2,
                 ALIGN_LEFT,
                 self.palette) + sep
