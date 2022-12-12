@@ -458,6 +458,25 @@ class TestPPTable(unittest.TestCase):
             _get_num_vis_lines_fmt(table.fmt), "",
             "all lines are visible, no need to mention lines limits in fmt")
 
+    def test_explicit_limits(self):
+        """Test explicit records limits specified in PPTable constructor."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+            (5, 9, "Hermiona"),
+        ]
+
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            fmt="id,level,name;1:2",
+            limits=(None, None),
+        )
+        # default format specifies that 1+2 body lines should be printed
+        # but 'limits' argument overrides these numbers and removes limits
+        verify_table_format(self, table, n_body_lines=len(records))
+
     def test_columns_zero_width(self):
         """It's ok for a column to have 0 width.
 
@@ -1008,3 +1027,27 @@ class TestEnhancedPPTable(unittest.TestCase):
             n_body_lines=3,
             cols_widths=[len('seat'), len("Arnold")],
         )
+
+    def test_print_method(self):
+        """Test PPTable.print method"""
+
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+            (5, 9, "Hermiona"),
+        ]
+
+        table = PPTable(records, fields=['id', 'level', 'name'])
+
+        table.fmt = "id,level,name;1:2"
+
+        #print(table)
+        #table.print()
+
+        #table.print(limits=(None, None))
+        #table.print()
+        #table.print(no_color=True)
+        #table.print()
+        #self.assertTrue(False, "!!!! SUCCESS !!!!")

@@ -5,6 +5,8 @@ Classes provided by this module:
 - PPTable - pretty-printable 2-D tables
 """
 
+import sys
+
 from typing import Iterator
 from numbers import Number
 from ak import utils
@@ -1068,6 +1070,17 @@ class PPTableFormat:
             if c.name not in columns_names
         ]
 
+    def set_limits(self, limits):
+        """Change number of printrable records.
+
+        Possible values:
+        - (n_first, n_last): tuple of two optional integers
+        """
+        assert isinstance(limits, (list, tuple)) and len(limits) == 2, (
+            f"invalid limits specified: {limits}. Expected value is None "
+            f"or (n_firts, n_last)")
+        self.limit_flines, self.limit_llines = limits
+
     @staticmethod
     def _parse_fmt(fmt):
         # parse fmt string if not parsed yet
@@ -1170,22 +1183,18 @@ class PPTable(PPObjBase, PaletteUser):
     of data (such as results of sql query).
     """
 
-    class _ServiceLine:
-        # contents of a 'service' line of a printed table - line, which
-        # doesn't correspond to any record (f.e. empty 'break by' line)
-        __slots__ = ('line_text', )
-        def __init__(self, line_text=None):
-            self.line_text = line_text
-
     def __init__(
             self, records, *,
             header=None,
             footer=None,
             fmt=None,
             fmt_obj=None,
+            limits=None,
+            skip_columns=None,
             fields=None,
             title_records=None,
             fields_types=None,
+            no_color=False,
     ):
         """Constructor of PPTable object - this object prints table.
 
@@ -1202,12 +1211,18 @@ class PPTable(PPObjBase, PaletteUser):
         - fmt: (optional) string, describing columns of the table. Check
             PPTableFormat doc for more details.
         - fmt_obj: (optional) PPTableFormat object
+        - limits: override default or specified in fmt numbers of printable records.
+            Acceptable values:
+            - None: ignored (default number of records will be printed)
+            - (n_first, n_last) - tuple of two optional integers
+        - skip_columns: list of columns to skip. Overrides fmt argument.
         - fields: (optional) list of names of fileds in a record, or list
             of PPTableField objects
         - title_records: (optional) list of objects which have format similar to
             elements of 'records' argument, but contain not information for
             multi-line titles
         - fields_types: (optional) dictionary {field_name: PPTableFieldType}.
+        - no_color: do not use colors when printing the table
 
         Combinations of arguments used in common scenarios:
 
@@ -1228,10 +1243,163 @@ class PPTable(PPObjBase, PaletteUser):
 
         Check doc of PPTableFormat for more detailed description of fmt string.
         """
+        self.r = records
+
+        # self._default_pptable_printer produces 'default' representation of the table
+        # (that is what is produced by 'print(pptable)')
+        self._default_pptable_printer = _PPTableImpl(
+            records,
+            Palette({}) if no_color else self.get_palette(),
+            header=header,
+            fmt=fmt,
+            fmt_obj=fmt_obj,
+            limits=limits,
+            skip_columns=skip_columns,
+            fields=fields,
+            title_records=title_records,
+            fields_types=fields_types,
+        )
+
+    @classmethod
+    def _init_palette(cls, color_config):
+        # create palette object based on global colors config
+        return Palette({
+            'TBL_BORDER': color_config.get_color('TABLE.BORDER'),
+            'COL_TITLE': color_config.get_color('TABLE.COL_TITLE'),
+            'NUMBER': color_config.get_color('TABLE.NUMBER'),
+            'KEYWORD': color_config.get_color('TABLE.KEYWORD'),
+            'WARN': color_config.get_color('TABLE.WARN'),
+        })
+
+    def set_fmt(self, fmt):
+        """Specify fmt - a string which describes format of the table.
+
+        Method returns self - so that in python console the modified table be
+        printed out immediately.
+        """
+        self._default_pptable_printer.set_fmt(fmt)
+        return self
+
+    def _get_fmt(self):
+        # getter of 'fmt' property.
+        # returns PPTableFormat object
+        # repr of this object contains fmt string which can be used to apply
+        # new format
+        return self._default_pptable_printer._get_fmt()
+
+    fmt = property(_get_fmt, set_fmt)
+
+    def remove_columns(self, columns_names):
+        """Remove columns from table.
+
+        Arguments:
+        - columns_names: list of names of columns to remove. (values not
+            equal to name of any column are accepted but ignored).
+        """
+        self._default_pptable_printer.remove_columns(columns_names)
+
+    def gen_pplines(self) -> Iterator[str]:
+        # implementation of PrettyPrinter functionality
+        yield from self._default_pptable_printer.gen_pplines()
+
+    def print(
+            self, *,
+            file=sys.stdout,
+            delimiter=None,
+            fmt=None,
+            limits=None,
+            skip_columns=None,
+            skip_header=None,
+            additional_columns=None,
+            no_color=None):
+        """Print contents of the table to specified destination.
+
+        This is more flexible and efficient alternative to print(pptable).
+        This method of printing table is preferrable because it is possible to
+        specify additional parameters when calling this method and because
+        this method can produce output line by line.
+
+        If no additional arguments are specified the produced output is identical
+        to output of print(pptable).
+
+        Arguments (all are optional):
+        - delimiter: produce delimited text (with specified delimiter)
+        - no_color: if True - prints result w/o color formatting. Otherwise
+            print results using default color settings (depending on these settings
+            the result may be not colored as well)
+        - fmt: string, describing columns of the table. Check PPTableFormat doc for
+            more details.
+        - limits: override default or specified in fmt numbers of printable records.
+            Check PPTable constructor doc for more details.
+            Does not affect the 'delimited' format becase with 'delimited' format
+            all records are always printed.
+        - skip_columns: list of names of columns which should not be printed.
+            (overrides value of 'fmt' argument)
+        - skip_header: do not print the header (names of columns). Affects]
+            'delimited' format only
+        - additional_columns: [(column_name, value), ] Values for 'additional'
+            columns. Can be used when several tables are printed into the same file
+            to indicate the source table for each record. Affects only 'delimited'
+            format.
+        """
+        if delimiter is not None:
+            assert False, "not implemented"
+
+        if all(x is None for x in (fmt, limits, skip_columns, no_color)):
+            for line in self._default_pptable_printer.gen_pplines():
+                print(line, file=file)
+            return
+
+        # create one-time PPTableFormat to be used for this print
+        fmt_obj = PPTableFormat.mk_by_other(fmt, self._default_pptable_printer._ppt_fmt)
+
+        if limits is not None:
+            fmt_obj.set_limits(limits)
+
+        if skip_columns:
+            fmt_obj.remove_columns(skip_columns)
+
+        palette = Palette({}) if no_color else self._default_pptable_printer.palette
+
+        cur_pptable_printer = _PPTableImpl(self.r, palette, fmt_obj=fmt_obj)
+
+        for line in cur_pptable_printer.gen_pplines():
+            print(line, file=file)
+
+
+class _PPTableImpl:
+    # Implements pretty-printing of table
+
+    class _ServiceLine:
+        # contents of a 'service' line of a printed table - line, which
+        # doesn't correspond to any record (f.e. empty 'break by' line)
+        __slots__ = ('line_text', )
+        def __init__(self, line_text=None):
+            self.line_text = line_text
+
+    def __init__(
+            self, records, palette, *,
+            header=None,
+            footer=None,
+            fmt=None,
+            fmt_obj=None,
+            limits=None,
+            skip_columns=None,
+            fields=None,
+            title_records=None,
+            fields_types=None,
+    ):
+        # check doc of PPTable for description of aruments
+
         self.records = records
         self.r = self.records
 
         self._ppt_fmt = self._init_format(fmt, fmt_obj, fields, fields_types)
+        if limits is not None:
+            self._ppt_fmt.set_limits(limits)
+        if skip_columns is not None:
+            self._ppt_fmt.remove_columns(skip_columns)
+
         self.title_records = title_records or []
 
         self.header = header
@@ -1239,7 +1407,7 @@ class PPTable(PPObjBase, PaletteUser):
         if footer is None:
             footer = f"Total {len(self.records)} records"
         self._footer = ColoredText(footer)
-        self.palette = self.get_palette()
+        self.palette = palette
 
     def _init_format(self, fmt, fmt_obj, fields, fields_types) -> PPTableFormat:
         # part of PPTable constructor.
@@ -1292,46 +1460,21 @@ class PPTable(PPObjBase, PaletteUser):
         # table is empty and there is no information about it's columns.
         return PPTableFormat.mk_dummy_empty(parsed_fmt)
 
-    @classmethod
-    def _init_palette(cls, color_config):
-        # create palette object based on global colors config
-        return Palette({
-            'TBL_BORDER': color_config.get_color('TABLE.BORDER'),
-            'COL_TITLE': color_config.get_color('TABLE.COL_TITLE'),
-            'NUMBER': color_config.get_color('TABLE.NUMBER'),
-            'KEYWORD': color_config.get_color('TABLE.KEYWORD'),
-            'WARN': color_config.get_color('TABLE.WARN'),
-        })
-
     def set_fmt(self, fmt):
-        """Specify fmt - a string which describes format of the table.
-
-        Method returns self - so that in python console the modified table be
-        printed out immediately.
-        """
+        """Specify fmt - a string which describes format of the table."""
         self._ppt_fmt = PPTableFormat.mk_by_other(fmt, other=self._ppt_fmt)
         return self
 
     def _get_fmt(self):
         # getter of 'fmt' property.
-        # returns PPTableFormat object
-        # repr of this object contains fmt string which can be used to apply
-        # new format
         return self._ppt_fmt
-
-    fmt = property(_get_fmt, set_fmt)
-
+    
     def remove_columns(self, columns_names):
-        """Remove columns from table.
-
-        Arguments:
-        - columns_names: list of names of columns to remove. (values not
-            equal to name of any column are accepted but ignored).
-        """
+        """Remove columns from table."""
         self._ppt_fmt.remove_columns(columns_names)
 
     def gen_pplines(self) -> Iterator[str]:
-        # implementation of PrettyPrinter functionality
+        """Produce the lines of PPTable representation"""
         for line in self._gen_ppcolored_text():
             yield str(line)
 
