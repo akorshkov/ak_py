@@ -1251,7 +1251,10 @@ class PPTable(PPObjBase, PaletteUser):
 
         Check doc of PPTableFormat for more detailed description of fmt string.
         """
-        self.r = records
+        self.records = records
+        # each PPObj should have 'r' attribute, which contains 'original' object.
+        # In case of table the original object is the list of records:
+        self.r = self.records
 
         # self._default_pptable_printer produces 'default' representation of the table
         # (that is what is produced by 'print(pptable)')
@@ -1400,7 +1403,6 @@ class _PPTableImpl:
         # check doc of PPTable for description of aruments
 
         self.records = records
-        self.r = self.records
 
         self._ppt_fmt = self._init_format(fmt, fmt_obj, fields, fields_types)
         if limits is not None:

@@ -73,10 +73,10 @@ class TestMCallerSQL(unittest.TestCase):
 
         my_sql_caller = MySqlCallerSingleConn(db)
 
-        account = my_sql_caller.get_account(1).r[0]
+        account = my_sql_caller.get_account(1).records[0]
 
         self.assertEqual("MI6", account.name)
-        account = my_sql_caller.get_account(1).r[0]
+        account = my_sql_caller.get_account(1).records[0]
         self.assertEqual("MI6", account.name)
 
         h_text_obj = h(my_sql_caller)
