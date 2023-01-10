@@ -1241,6 +1241,14 @@ class PPTable(PPObjBase, PaletteUser):
             fields_types={...},
         )
 
+        (value_path example: "zipcode<-0.[user].address."
+        - 0 - means position in a list/tuple
+        - address - sttribute name
+        - [user] - in square brakets, means 'user' is a key in a dictionary
+        - . - skipped last element, means the last element is the same as field name
+            (in this case 'zipcode')
+        )
+
         Check doc of PPTableFormat for more detailed description of fmt string.
         """
         self.r = records

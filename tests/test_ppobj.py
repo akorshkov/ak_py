@@ -106,6 +106,7 @@ class TestPrettyPrinter(unittest.TestCase):
 def verify_table_format(
         testcase, table,
         has_header=False,
+        is_colored=None,
         cols_names=None,
         n_extra_title_lines=None,
         n_body_lines=None,
@@ -115,6 +116,8 @@ def verify_table_format(
 ):
     """Verify that table is printed out correctly.
 
+    Arguments:
+    - table: either PPTable object or a sring
     Printed table looks like:
     
     +--+-----+------+
@@ -128,7 +131,17 @@ def verify_table_format(
     +--+-----+------+
     Total 4 records  <- including trailing spaces here
     """
-    ttext = ColoredText.strip_colors(str(table))
+    orig_ttext = table if isinstance(table, str) else str(table)
+    ttext = ColoredText.strip_colors(orig_ttext)
+
+    if is_colored is not None:
+        table_is_colored = ttext != orig_ttext
+        if is_colored:
+            testcase.assertTrue(
+                table_is_colored, "table is not colored:\n{table}")
+        else:
+            testcase.assertFalse(
+                table_is_colored, "table is colored:\n{table}")
 
     text_lines = ttext.split('\n')
 
