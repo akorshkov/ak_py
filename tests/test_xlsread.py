@@ -4,6 +4,7 @@ import unittest
 from ak.xlsread import (
     cell_str, cell_int, cell_list, cell_bool,
     XlsObject, read_table, read_table_make_map, CellRangeSet, CellRangeDict,
+    TableReader,
 )
 from .mock_openpyxl import MockedWorkBook, Cell
 
@@ -100,6 +101,48 @@ class TestXlsTables(unittest.TestCase):
 
         err_msg = str(exc.exception)
         self.assertIn("'status' is not a ranged attribute", err_msg)
+
+    def test_table_reader_mixin(self):
+        """Similar to test_parsing_simple_table, but rules declared in class"""
+
+        class XlPerson(XlsObject, TableReader):
+            _ATTRS = ['id', 'name', 'status']
+            _NUM_ID_ATTRS = 1
+
+            # configuration required by TableReader mixin
+            ATTR_RULES = {
+                'id': ('Id', cell_int),
+                'name': ("Person's name", cell_str),
+                'status': ('Status', cell_int),
+            }
+
+        wb = MockedWorkBook([
+            ('sheet1', [
+                "|Id    |Person's name  |Status |",
+                "|10    |Richard        |20     |",
+                "|20    |Arnold         |20     |",
+                "|30    |Harry          |20     |",
+            ]),
+        ])
+
+        # read_list - method implemented in TableReader
+        people = XlPerson.read_list(wb['sheet1'])
+        self.assertEqual(3, len(people))
+
+        arnold = people[1]
+        self.assertEqual(20, arnold.id)
+        self.assertEqual("Arnold", arnold.name)
+        self.assertEqual(20, arnold.status)
+
+        # read_map - method implemented in TableReader
+        people_map = XlPerson.read_map(wb['sheet1'])
+        self.assertTrue(isinstance(people_map, dict))
+        self.assertEqual({10, 20, 30}, people_map.keys())
+
+        arnold = people_map[20]
+        self.assertEqual(20, arnold.id)
+        self.assertEqual("Arnold", arnold.name)
+        self.assertEqual(20, arnold.status)
 
     def test_skip_columns(self):
         """It is possble to skip some attributes when reading data from table."""

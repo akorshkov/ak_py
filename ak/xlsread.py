@@ -610,9 +610,42 @@ class XlsTableReader:
         return cell.value is None or str(cell.value).strip() == ""
 
 
+class TableReader:
+    """Mixin which can be used in XlsObject derived classes.
+
+    Contains helper methods for reading all the XlsObject from a worksheet.
+    """
+    # this functionality is not implemented in XlsObject itself because objects
+    # of the same type can be read from different worksheets with different
+    # column names and table structure.
+
+    ATTR_RULES = None  # {XlsObject attribute name: ("Column name", cell_type)}
+    STOP_ON = "blank all"
+    LADDER_FORMAT = False
+
+    @classmethod
+    def iter_xls(cls, worksheet):
+        """Read and yield XlsObjects from excel worksheet"""
+        assert cls.ATTR_RULES is not None, (
+            f"'ATTR_RULES' not defined in TableReader deriveed class {cls}")
+        yield from iter_table(worksheet, cls, cls.ATTR_RULES)
+
+    @classmethod
+    def read_list(cls, worksheet):
+        """worksheet -> [XlsObject, ]"""
+        return list(cls.iter_xls(worksheet))
+
+    @classmethod
+    def read_map(cls, worksheet):
+        """worksheet -> {XlsObject.logic_id: XlsObject}"""
+        return cls.make_objects_map(cls.iter_xls(worksheet))
+
+
 def iter_table(worksheet, xls_obj_class, attrs_rules, *,
                stop_on="blank all", ladder_format=False):
-    """This method should be used to read data from excel table in most cases.
+    """This method can be used to read data from excel table in most cases.
+
+    (Alternatively TableReader mixin can be used for this purpose)
 
     Arguments:
     - worksheet: excel worksheet (use openpyxl package to open excel file and
