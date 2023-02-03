@@ -1,6 +1,7 @@
 """Test xlsread - helpers to read info from excel files."""
 
 import unittest
+import traceback
 from ak.xlsread import (
     cell_str, cell_int, cell_list, cell_bool,
     XlsObject, read_table, read_table_make_map, CellRangeSet, CellRangeDict,
@@ -172,7 +173,7 @@ class TestXlsTables(unittest.TestCase):
         self.assertIsNone(arnold.name)
         self.assertEqual(20, arnold.status)
 
-        self.assertEqual("<skipped column>", arnold.get_attr_origin('name'))
+        self.assertEqual("<n/a>", arnold.get_attr_origin('name'))
 
     def test_worksheet_with_empty_lines(self):
         """worksheet may start with empty lines. And columns."""
@@ -419,16 +420,16 @@ class TestXlsTables(unittest.TestCase):
         err_msg = str(exc.exception)
 
         self.assertIn(
-            "column Status required for attribute status is not found", err_msg)
+            "column 'Status' required for attribute 'status' is not found", err_msg)
 
-        # but with explicitely specified 'optional' property it should work
+        # specifying default makes column 'optional'
         #
         # need to specify this option for column 'Status' as it is not present
         # specifying this option for a present column ('Id') should have no effect
         people = read_table(wb['sheet1'], XlPerson, {
-            'id': ('Id', cell_int, {'column_is_optional': True}),
+            'id': ('Id', cell_int, {'default_val': None}),
             'name': ("Person's name", cell_str),
-            'status': ('Status', cell_int, {'column_is_optional': True}),
+            'status': ('Status', cell_int, {'default_val': None}),
         })
         self.assertEqual(3, len(people), f"people: {people}")
 
@@ -436,6 +437,56 @@ class TestXlsTables(unittest.TestCase):
         self.assertEqual(20, arnold.id)
         self.assertEqual("Arnold", arnold.name)
         self.assertEqual(None, arnold.status)
+
+    def test_external_attrs(self):
+        """Test attributes which should be initialized from some other sources"""
+        class XlPerson(XlsObject):
+            _ATTRS = ['id', 'name', 'status', 'altstatus', 'status2']
+            _NUM_ID_ATTRS = 1
+
+        wb = MockedWorkBook([
+            ('sheet1', [
+                "|Id    |Person's name  |",
+                "|10    |Richard        |",
+                "|20    |Arnold         |",
+                "|30    |Harry          |",
+            ]),
+        ])
+
+        with self.assertRaises(ValueError) as err:
+            read_table(wb['sheet1'], XlPerson, {
+                'id': ('Id', cell_int),
+                'name': ("Person's name", cell_str),
+                'status': ('Status', cell_int),
+                'altstatus': ('Status', cell_int),
+                'status2': ('Status', cell_int),
+            })
+
+        err_msg = str(err.exception)
+
+        self.assertIn(
+            "column 'Status' required for attribute 'status' is not found", err_msg,
+            f"\nThe exception: {traceback.print_tb(err.exception.__traceback__)}")
+
+        # but with explicitely specified 'optional' property it should work
+        #
+        # need to specify this option for column 'Status' as it is not present
+        # specifying this option for a present column ('Id') should have no effect
+        people = read_table(wb['sheet1'], XlPerson, {
+            'id': ('Id', cell_int, {'default_val': 25}),
+            'name': ("Person's name", cell_str),
+            'status': (None, None, {'default_val': lambda: 42}),
+            'altstatus': (None, None, {'default_val': 17}),
+            'status2': ("Missing column", cell_int, {'default_val': 137}),
+        })
+        self.assertEqual(3, len(people), f"people: {people}")
+
+        arnold = people[1]
+        self.assertEqual(20, arnold.id)
+        self.assertEqual("Arnold", arnold.name)
+        self.assertEqual(42, arnold.status)
+        self.assertEqual(17, arnold.altstatus)
+        self.assertEqual(137, arnold.status2)
 
     def test_optional_ranged_columns(self):
         """Test corner case of a ranged attribute - zero columns correspond to it."""
@@ -469,7 +520,7 @@ class TestXlsTables(unittest.TestCase):
             'id': ('id', cell_int),
             'name': ('name', cell_str),
             'status': ('status', cell_int),
-            'classes': ('*', classes_set, {'column_is_optional': True}),
+            'classes': ('*', classes_set, {'default_val': None}),
         })
 
         arnold = objs[0]

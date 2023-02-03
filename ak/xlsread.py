@@ -29,7 +29,7 @@ class _CellReader:
             set(none_values) if none_values is not None else self._NONE_VALUES)
 
     def val_from_cell(self, cell):
-        """xls cell -> optional string value of the cell"""
+        """xls cell -> optional value of the cell"""
         if cell.value in self.none_values:
             return None
         try:
@@ -127,7 +127,7 @@ class _CellRangeReader:
 class CellRangeDict(_CellRangeReader):
     """Make a dictionary of values from range of excel cells"""
     def val_from_cells(self, cells_titles, cells):
-        """range of cells -> {column_title: cell_value}."""
+        """range of cells -> {column_title: cell_value}, attr_origins."""
         assert len(cells_titles) == len(cells)
         val = {
             title: self.cell_type.val_from_cell(cell)
@@ -173,11 +173,15 @@ class XlsObject:
 
     __slots__ = '_src_ws_name', '_anchor_cell_coord', '_attrs_origins', 'logic_id'
 
-    def __init__(self, cells_types, cells_list):
+    def __init__(self, cells_types, cells_list, defaults_factories=None):
         assert self._NUM_ID_ATTRS <= len(self._ATTRS)
         assert len(cells_list) == len(self._ATTRS), (
             f"Can't init {type(self)}. Expected "
             f"{len(self._ATTRS)} cells, actually got {len(cells_list)} cells")
+        assert len(cells_types) == len(cells_list)
+        if defaults_factories is None:
+            defaults_factories = [None for _ in range(len(cells_types))]
+        assert len(cells_types) == len(defaults_factories)
 
         anchor_cell = cells_list[0]
         self._src_ws_name = anchor_cell.parent.title
@@ -186,20 +190,23 @@ class XlsObject:
         self._anchor_cell_coord = anchor_cell.coordinate
         self._attrs_origins = {}
 
-        for attr_name, cell_type, cell in zip(self._ATTRS, cells_types, cells_list):
+        for attr_name, cell_type, cell, default_factory in zip(
+            self._ATTRS, cells_types, cells_list, defaults_factories,
+        ):
             if hasattr(cell_type, 'val_from_cells'):
                 # cell should be not a single cell, but range
                 column_names, cells = cell
                 val, attr_origins = cell_type.val_from_cells(column_names, cells)
             elif cell_type is None:
-                # this attribute explicitely ignored by reading rules
+                # this attribute is explicitely ignored by reading rules
                 assert cell is None
-                val = None
-                attr_origins = "<skipped column>"
+                assert default_factory is not None
+                val = default_factory()
+                attr_origins = "<n/a>"
             elif cell is None:
                 # this cell corresponds to a 'missing' column
-                # it was explicitely allowed with 'column_is_optional' rule
-                val = None
+                assert default_factory is not None
+                val = default_factory()
                 attr_origins = "<skipped column>"
             else:
                 val = cell_type.val_from_cell(cell)
@@ -210,14 +217,14 @@ class XlsObject:
         self.logic_id = self._compose_key_value()
 
     @classmethod
-    def construct(cls, cells_types, cells):
+    def construct(cls, cells_types, cells, defaults_factories=None):
         """Constructor, but may return None if cells are empty."""
         key_valls_empty = all(
             cell.value is None for cell in cells[:cls._NUM_ID_ATTRS])
 
         if key_valls_empty and cls._NUM_ID_ATTRS > 0:
             return None
-        obj = cls(cells_types, cells)
+        obj = cls(cells_types, cells, defaults_factories)
         if cls._NUM_ID_ATTRS > 0 and obj.key_is_none():
             return None
         return obj
@@ -344,25 +351,45 @@ class XlsObject:
 class XlsRecordAttrReadRules:
     """Rules of reading a single attribute from excel table."""
 
-    def __init__(self, attr_name, column_name, cell_type, *,
-                 column_is_optional=False):
+    def __init__(self, attr_name, column_name, cell_type, **kwargs):
         """Rules of reading a single XlsObject attribute from excel table.
 
         Arguments:
         - attr_name: name of the attribute
         - column_name: name of column of ecxel table. Column name should
-            be '*' for 'range' values
+            be '*' for 'range' values.
+            If column_name is None than 'default_val' argument must be specified
         - cell_type: object, which converts excel cell into a simple value
             (obj of either _CellReader or _CellRangeReader -derived class)
-        - column_is_optional: allow column with column_name name not to be present
-            in table.
+        - default_val: if present in kwargs make the column optional. Can be either
+            a callable or a final value. This argument must be named.
         """
         if hasattr(cell_type, 'val_from_cells'):
-            assert column_name == '*'
+            assert column_name is None or column_name == '*', (
+                "column name is not applicable for ranged values, '*' is expected")
+
+        if column_name is None:
+            # this is an external attribute; it's value will not be read from xls
+            assert cell_type is None
+            assert 'default_val' in kwargs, (
+                "default_val argument must be specified because column_name if not")
+        else:
+            assert cell_type is not None
+
+        if 'default_val' not in kwargs:
+            self.default_factory = None
+        else:
+            default_val = kwargs.pop('default_val')
+            if callable(default_val):
+                self.default_factory = default_val
+            else:
+                self.default_factory = lambda: default_val
+
+        assert not kwargs, f"unexpected arguments: {kwargs}"
+
         self.attr_name = attr_name
         self.column_name = column_name
         self.cell_type = cell_type
-        self.column_is_optional = column_is_optional
 
 
 class XlsObjReadRules:
@@ -390,7 +417,8 @@ class XlsObjReadRules:
                 # it is explicitely stated, that value for this attr is not
                 # present in excel table
                 attrs_rules_map[attr_name] = XlsRecordAttrReadRules(
-                    attr_name, None, None, column_is_optional=True)
+                    attr_name, None, None,
+                    default_val=None)
                 continue
             if isinstance(attr_info, XlsRecordAttrReadRules):
                 attrs_rules_map[attr_name] = attr_info
@@ -402,6 +430,10 @@ class XlsObjReadRules:
                     attr_name, column_name, cell_type)
             elif len(attr_info) == 3:
                 column_name, cell_type, attr_kwargs = attr_info
+                assert isinstance(attr_kwargs, dict), (
+                    f"additional options for attribute '{attr_name}' "
+                    f"should be a dictionary. But specified {type(attr_kwargs)}: "
+                    f"{attr_kwargs}")
                 attr_rrules = XlsRecordAttrReadRules(
                     attr_name, column_name, cell_type, **attr_kwargs)
             attrs_rules_map[attr_name] = attr_rrules
@@ -424,6 +456,7 @@ class _ObjScrCellsMap:
         self.attrs_rules = attrs_rules
         self.cells_types = [rr.cell_type for rr in self.attrs_rules]
         self.columns_map = None  # positions of columns, corresponding to attrs_rules
+        self.defaults_factories = []  # sources values for external and optional attrs
 
     def get_known_columns_names(self):
         """Return set of all column names, which correspond to object attributes.
@@ -469,7 +502,7 @@ class _ObjScrCellsMap:
                     in_range = True
                     range_cells_names.append(col_name)
 
-                if not range_cells_names and not attr_rrules.column_is_optional:
+                if not range_cells_names and attr_rrules.default_factory is None:
                     raise ValueError(
                         f"no columns corresponding to ranged "
                         f"attribute '{attr_rrules.attr_name}'. List of all "
@@ -479,18 +512,33 @@ class _ObjScrCellsMap:
                     col_names_ids[n] for n in range_cells_names]
 
                 self.columns_map.append((range_cells_names, range_cells_ids))
+            elif attr_rrules.column_name is None:
+                # this is an external column - it's value will not be read from xls
+                assert attr_rrules.default_factory is not None, (
+                        f"default value is not specified for attribute "
+                        f"'{attr_rrules.attr_name}'")
+                self.columns_map.append(None)
             else:
-                # this is 'usual' attribute, it's value is taken from s single cell
+                # this is 'usual' attribute, it's value is taken from a single cell
                 col_id = col_names_ids.get(attr_rrules.column_name, None)
-                if col_id is None and not attr_rrules.column_is_optional:
+                if col_id is None and attr_rrules.default_factory is None:
                     raise ValueError(
-                        f"column {attr_rrules.column_name} required for "
-                        f"attribute {attr_rrules.attr_name} is not found. "
+                        f"column '{attr_rrules.column_name}' required for "
+                        f"attribute '{attr_rrules.attr_name}' is not found. "
                         f"List of all columns names: {cols_names}")
                 self.columns_map.append(col_id)
+            self.defaults_factories.append(attr_rrules.default_factory)
+            assert len(self.defaults_factories) == len(self.columns_map)
 
     def cells_from_row(self, row):
-        """Get cells and types in format expected by XlsObject.construct """
+        """excel row -> data prepared for XlsObject.construct.
+
+        Method returns:
+        - list of cell types
+        - list of excell cells
+        - list of default values factories for the attributes
+        """
+
         assert self.columns_map is not None, (
             "_ObjScrCellsMap is not ready: call 'bind_titles_row' "
             "to finish init.")
@@ -511,7 +559,7 @@ class _ObjScrCellsMap:
             for cols_ids in self.columns_map
         ]
 
-        return self.cells_types, cells
+        return self.cells_types, cells, self.defaults_factories
 
 
 class XlsTableReader:
@@ -593,9 +641,9 @@ class XlsTableReader:
 
             results = []
             for obj_rrules, cells_map in zip(self.objs_rrules, self.cells_maps):
-                cells_types, cells_list = cells_map.cells_from_row(current_row)
                 results.append(
-                    obj_rrules.obj_class.construct(cells_types, cells_list))
+                        obj_rrules.obj_class.construct(
+                            *cells_map.cells_from_row(current_row)))
 
             prev_row = current_row
 
