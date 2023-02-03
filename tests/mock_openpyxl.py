@@ -41,7 +41,11 @@ class MockedWorksheet:
                 assert borders[0] == 0
                 assert borders[-1] == llen - 1
 
-            assert len(line) == llen
+            assert len(line) == llen, (
+                f"bad format of mock xls worksheet. Length of line #{line_n}:\n"
+                f"{line}\n"
+                f"is not equal to the length of header line: "
+                f"{len(line)} != {llen}")
             prev_b = None
             values = []
             for b in borders:

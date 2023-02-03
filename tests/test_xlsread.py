@@ -6,6 +6,7 @@ from ak.xlsread import (
     cell_str, cell_int, cell_list, cell_bool,
     XlsObject, read_table, read_table_make_map, CellRangeSet, CellRangeDict,
     TableReader,
+    CellList,
 )
 from .mock_openpyxl import MockedWorkBook, Cell
 
@@ -216,6 +217,7 @@ class TestXlsTables(unittest.TestCase):
                 "|ID| Classes                        |",
                 "|0 |math\n science,history           |",
                 "|1 | computer science , \n databases |",
+                "|2 |                                |",
             ]),
         ])
 
@@ -224,9 +226,21 @@ class TestXlsTables(unittest.TestCase):
             'classes': ('Classes', cell_list),
         })
 
-        self.assertEqual(2, len(objs))
+        self.assertEqual(3, len(objs))
         self.assertEqual(['math', 'science', 'history'], objs[0].classes)
         self.assertEqual(['computer science', 'databases'], objs[1].classes)
+        self.assertEqual(None, objs[2].classes)
+
+        # configure read to get empty list if corresponding cell is empty
+        objs = read_table(wb['sheet1'], XlObj, {
+            'id': ('ID', cell_int),
+            'classes': ('Classes', CellList(none_values=[])),
+        })
+
+        self.assertEqual(3, len(objs))
+        self.assertEqual(['math', 'science', 'history'], objs[0].classes)
+        self.assertEqual(['computer science', 'databases'], objs[1].classes)
+        self.assertEqual([], objs[2].classes)
 
     def test_range_set(self):
         """Test reading XlsObject with a CellRangeSet attribute."""

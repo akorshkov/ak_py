@@ -93,6 +93,10 @@ class CellList(_CellReader):
     def _make_value(self, cell):
         # xls cell -> list of strings value of the cell
         v = cell.value
+        if v is None:
+            # cell is empty. Usually this means that attrinute value would be None.
+            # but if we get here, this behavior is overridden.
+            return []
         if not hasattr(v, 'split'):
             raise ValueError(
                 f"cell {cell} does not contain a list of values. "
