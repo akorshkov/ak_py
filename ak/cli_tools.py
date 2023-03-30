@@ -14,6 +14,10 @@ import argparse
 
 from .color import ColorsConfig, set_global_colors_config
 from .logtools import logs_configure
+from . import utils
+
+
+Timer = utils.Timer
 
 
 class ArgParser:

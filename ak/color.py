@@ -17,7 +17,7 @@ ColorBytes - analog of ColorFmt, but for bytes.
     - ColorBytes produces simple bytes.
 
 Example of usage:
-    green_printer = ColorFmt('GREEN')
+    green_printer = ColorFmt('GREEN')  # check doc for more options
     t = green_printer("some green text") + " and normal text "
     t += [" and ", ColorFmt('RED')("some red text")]
 
@@ -29,8 +29,8 @@ Example of usage:
     # produce string with same text but no color escape sequences
     t_plain_text = t.plain_text()
 
-    # print color examples table: each cell have different color/effects
-    print(make_examples('text'))
+Colors examples:
+    use bin/colors_demo.py script to print examples of colored text.
 """
 
 import re
@@ -327,48 +327,35 @@ class ColoredText:
         return cls._ColoredChunk(orig_chunk.c_prefix, new_text, orig_chunk.c_suffix)
 
 
-class ColorSequences:
-    """Constructor of color escape sequences"""
+class _ColorSequences:
+    # Constructor of color escape sequences
 
     _COLORS = {
-        'BLACK'  : "30",
-        'RED'    : "31",
-        'GREEN'  : "32",
-        'YELLOW' : "33",
-        'BLUE'   : "34",
-        'MAGENTA': "35",
-        'CYAN'   : "36",
-        'WHITE'  : "37",
+        'BLACK'  : "0",
+        'RED'    : "1",
+        'GREEN'  : "2",
+        'YELLOW' : "3",
+        'BLUE'   : "4",
+        'MAGENTA': "5",
+        'CYAN'   : "6",
+        'WHITE'  : "7",
     }
 
     @classmethod
     def make(cls, color, bg_color=None,
              bold=None, faint=None, underline=None, blink=None, crossed=None,
              use_effects=True, make_bytes=False):
-        """Make prefix and suffix to decorate text with specified effects.
-
-        Arguments:
-            most arguments are self-explained.
-            - use_effects: if False, all other arguments are ignored and
-                empty strings are returned.
-            - make_bytes: produce bytes instead of strings
-        """
-        if color is not None and color not in cls._COLORS:
-            raise ValueError(
-                f"Invalid color name '{color}' specified. "
-                f"Valid color names: {cls._COLORS.keys()}")
-        if bg_color is not None and bg_color not in cls._COLORS:
-            raise ValueError(
-                f"Invalid bg_color name '{bg_color}' specified. "
-                f"Valid color names: {cls._COLORS.keys()}")
+        # Make prefix and suffix to decorate text with specified effects.
+        #
+        # Check ColorFmt doc for arguments description
 
         color_codes = []
         if use_effects:
             if color is not None:
-                color_codes.append(cls._COLORS[color])
+                color_codes.append(cls._make_seq_element(color, False))
 
             if bg_color is not None:
-                color_codes.append("4" + cls._COLORS[bg_color][1:])
+                color_codes.append(cls._make_seq_element(bg_color, True))
 
             if bold:
                 color_codes.append("1")
@@ -398,6 +385,56 @@ class ColorSequences:
 
         return color_prefix, color_suffix
 
+    @classmethod
+    def _make_seq_element(cls, color, is_bg=False):
+        # create a part of the color escape sequence, the part which defines color
+
+        fg_bg_id = "4" if is_bg else "3"
+        param_name = "bg_color" if is_bg else "color"
+
+        # case 1: 'color' is a name of color
+        if color in _ColorSequences._COLORS:
+            return fg_bg_id + _ColorSequences._COLORS[color]
+
+        # case 2: 'color' is an (r, g, b) tuple, each compnent in range(5)
+        if isinstance(color, (list, tuple)):
+            if len(color) != 3 or any(c < 0 or c > 5 for c in color):
+                raise ValueError(
+                    f"Invalid {param_name} description tuple {color}. "
+                    f"Valid color description tuple should have 3 elements "
+                    f"each in range(5)")
+            # tuple corresponds to an int color, will be handled in case 4.
+            r, g, b = color
+            color = 16 + r * 36 + g * 6 + b
+
+        # case 3: color specifies shade of gray
+        if isinstance(color, str):
+            if color.startswith('g'):
+                try:
+                    shade = int(color[1:])
+                except ValueError:
+                    shade = -1
+                if shade < 0 or shade > 24:
+                    raise ValueError(
+                        f"Invalid 'shade of gray' color description '{color}'. "
+                        f"It is supposed to be in form 'g0' - 'g23'")
+                color = 232 + shade
+            else:
+                raise ValueError(
+                    f"Invalid {param_name} name '{color}'. "
+                    f"Should be one of {list(cls._COLORS.keys())} "
+                    f"or in form 'g0' - 'g23' for shades of gray")
+
+        # case 4: 'color' is an int id of color
+        if isinstance(color, int):
+            if color < 0 or color > 255:
+                raise ValueError(
+                    f"Invalid int {param_name} id {color}. Valid int color id should be "
+                    f"in range(256)")
+            return f"{fg_bg_id}8:5:{color}"
+
+        raise ValueError(f"Invalid {param_name} object: {type(color)}: {color!r}")
+
 
 class ColorFmt:
     """Objects of this class produce text with specified color."""
@@ -413,48 +450,21 @@ class ColorFmt:
         """Create an object which converts text to text with specified effects.
 
         Arguments:
-            most arguments are self-explained.
-            - color: one of ['BLACK', 'RED', 'GREEN', 'YELLOW', 'BLUE', 'MAGENTA',
-                'CYAN', 'WHITE', None]
-                None - does not change color
-            - use_effects: if False, all other arguments are ignored and
-                created object is 'dummy' - it does not add any effects to text.
+        most arguments are self-explained.
+        - color and bg_color: define text color and background color. It may be:
+          - one of ['BLACK', 'RED', 'GREEN', 'YELLOW', 'BLUE', 'MAGENTA',
+            'CYAN', 'WHITE', None]
+          - integer color code: in range(256)
+          - (r, g, b): tuple of 3 integers in range(5). Corresponds to
+            integer color code 16 + r*36 + g*6 + b
+          - string in form 'g0' - 'g23' - indicates shade of gray. Corresponds to
+            integer color codes 231-255.
+        - use_effects: if False, all other arguments are ignored and
+            created object is 'dummy' - it does not add any effects to text.
         """
-        self._color_prefix, self._color_suffix = ColorSequences.make(
+        self._color_prefix, self._color_suffix = _ColorSequences.make(
             color, bg_color, bold, faint, underline, blink, crossed,
             use_effects)
-
-    @classmethod
-    def make(cls, color_obj, use_colors=True):
-        """Helper method which produce ColorFmt object.
-
-        Arguments:
-        - color_obj: can be either:
-            - ColorFmt object.
-            - color name string
-            - tuple of ("color name", {effect_name: value}).
-              Check ColorFmt constructor for possible values of color
-              and effects.
-            - None (to use text w/o any effects)
-        - use_colors: if False, the first argument is ignored and dummy
-            ColorFmt object is returned (it produces text w/o any effects)
-        """
-        if not use_colors:
-            return cls.get_plaintext_fmt()
-        elif isinstance(color_obj, cls):
-            return color_obj
-        elif isinstance(color_obj, str):
-            return cls(color_obj)
-        elif isinstance(color_obj, tuple):
-            assert len(color_obj) == 2, (
-                f"Invalid argument(s) for ColorFmt: {color_obj}. "
-                f"Expected tuple of two elements: color_name and dict."
-            )
-            return cls(color_obj[0], **color_obj[1])
-        elif color_obj is None:
-            return cls.get_plaintext_fmt()
-
-        raise ValueError(f"Invalid arg {color_obj} for ColorFmt")
 
     @classmethod
     def get_plaintext_fmt(cls):
@@ -484,42 +494,12 @@ class ColorBytes:
             - use_effects: if False, all other arguments are ignored and
                 created object is 'dummy' - it does not add any effects to text.
         """
-        self._color_prefix, self._color_suffix = ColorSequences.make(
+        self._color_prefix, self._color_suffix = _ColorSequences.make(
             color, bg_color, bold, faint, underline, blink, crossed,
             use_effects, make_bytes=True)
 
     def __call__(self, bytes_text):
         return self._color_prefix + bytes_text + self._color_suffix
-
-
-def make_examples(text="color text"):
-    """Produce color examples table (simple printable string)"""
-
-    def _produce_lines():
-        width = max(len(text), 15)
-        first_col_width = 20
-        fmt_opts = [
-            ('--', {}),
-            ('bold', {"bold": True}),
-            ('faint', {'faint': True}),
-            ('both', {'bold': True, 'faint': True}),
-        ]
-
-        cols_descr = 'Color \\ modifiers'
-        header_str = f"{cols_descr:{first_col_width}}"
-        for col_name, _ in fmt_opts:
-            header_str += f"{col_name:^{width}}"
-        yield header_str
-
-        for color in [None, 'BLACK', 'RED', 'GREEN', 'YELLOW',
-                      'BLUE', 'MAGENTA', 'CYAN', 'WHITE']:
-            line = f"{str(color):{first_col_width}}"
-            for col_name, opts in fmt_opts:
-                colored_text = ColorFmt(color, **opts)(text)
-                line += f"{colored_text:^{width}}"
-            yield line
-
-    return "\n".join(line for line in _produce_lines())
 
 
 #########################
@@ -616,7 +596,7 @@ class ColorsConfig:
         'no_crossed': ('crossed', False),
     }
 
-    _COLORS_NAMES = ColorSequences._COLORS.keys() | {""}
+    _COLORS_NAMES = _ColorSequences._COLORS.keys() | {""}
 
     def __init__(self, modified_syntaxes, use_effects=True):
         """Constructor.
@@ -816,7 +796,3 @@ class PaletteUser:
             cls._PALETTE = cls._init_palette(global_colors_config)
         assert cls._PALETTE is not None
         return cls._PALETTE
-
-
-if __name__ == '__main__':
-    print(make_examples())

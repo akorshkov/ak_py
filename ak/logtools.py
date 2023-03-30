@@ -25,7 +25,7 @@ def register_colored_levelnames(
     Arguments:
     - log_colors: optional dictionary {logging.LEVEL: color_obj}
         This argument can be specified to override predefined loglevel colors.
-        Check help(ColorFmt.make) for possible values 'color_obj'.
+        Check ColorFmt doc for possible values 'color_obj'.
     - use_colors: if specified, all other arguments are ignored, and
         record's 'levelname_c' attributes will contain level names w/o
         any color effects.
@@ -36,11 +36,14 @@ def register_colored_levelnames(
     def _mk_color_fmt(log_level, use_colors):
         # create ColorFmt for coloring log level name. Color is taken either
         # from 'log_colors' argument, or from predefined colors dictionary.
+        if not use_colors:
+            return ColorFmt.get_plaintext_fmt()
+
         try:
             color_obj = log_colors[log_level]
         except KeyError:
             color_obj = _PREDEFINED_LOGLEVEL_COLORS[log_level]
-        return ColorFmt.make(color_obj, use_colors)
+        return color_obj
 
     c_level_names = {  # {log_level: colored_name}
         log_level: str(
@@ -98,7 +101,8 @@ def logs_configure(
         can 'tail -f' log file and see debug logs in separate terminal)
     - log_colors: optional dictionary {logging.LEVEL: color_obj}
         This argument can be specified to override predefined loglevel colors.
-        Check help(ColorFmt.make) for possible values 'color_obj'.
+        'color_obj' may be either a ColorFmt object or a string name of the color
+        (check ColorFmt doc for possible values of color name)
     """
     use_logfile = filename is not None
 

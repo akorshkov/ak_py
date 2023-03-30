@@ -695,9 +695,9 @@ class _PPTableParsedFmt:
 
 
 class PPTableField:
-    """Describes possible source of data for a column of PPTable.
+    """Describes source of data for a column of PPTable.
 
-    Each column of a table refers to some field. The field contain rules how
+    Each column of a table refers to some field. The field contains rules how
     to fetch a value for this column from a record and information about type
     of this value (for example possible alternative ways to represent the value)
 

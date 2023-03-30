@@ -85,16 +85,65 @@ class TestColorFmt(unittest.TestCase):
             "error message should contain list of valid color codes",
         )
 
-    def test_make_colored_fmt(self):
-        """Text ColorFmt.make method."""
+    def test_numeric_colors(self):
+        """Test using numeric color ids."""
 
-        # Check that the 'make' method does not fail with different
-        # types of arguents.
-        _ = ColorFmt.make(None)  # produces dummy formatter
-        _ = ColorFmt.make('GREEN')
-        _ = ColorFmt.make(('GREEN', {'bold': True}))
-        _ = ColorFmt.make((None, {'bold': True}))
-        _ = ColorFmt.make('GREEN', use_colors=False)
+        test_text = "Some Test Text"
+
+        fmt1 = ColorFmt((4, 1, 1), bold=True)
+        fmt2 = ColorFmt(167, bold=True)
+
+        t1 = fmt1(test_text)
+        t2 = fmt2(test_text)
+
+        s1 = str(t1)
+        s2 = str(t2)
+
+        # color (4, 1, 1) is the same as color 167:
+        # 16 + 4*36 + 6 + 1 = 167
+        self.assertEqual(s1, s2, f"{s1!r} != {s2!r}")
+
+        self.assertNotEqual(test_text, s1)
+
+        self.assertEqual(test_text, t1.plain_text())
+
+    def test_grayscale_colors(self):
+        """Test grayscale colors."""
+        test_text = "Some Test Text"
+
+        fmt1 = ColorFmt("g5", bold=True)
+        fmt2 = ColorFmt(237, bold=True)
+
+        t1 = fmt1(test_text)
+        t2 = fmt2(test_text)
+
+        s1 = str(t1)
+        s2 = str(t2)
+
+        # color 'g5' is the same as color 237: 232 + 5 = 237
+        self.assertEqual(s1, s2, f"{s1!r} != {s2!r}")
+
+        self.assertNotEqual(test_text, s1)
+
+        self.assertEqual(test_text, t1.plain_text())
+
+    def test_invalid_intcolors(self):
+        """Test construction of ColorFmt with invalid colors."""
+
+        expected_errors = [
+            (-5, "Invalid int color id -5"),
+            (256, "Invalid int color id 256"),
+            ('g25', "Invalid 'shade of gray' color description 'g25'"),
+            ((1, 1, 6), "Invalid color description tuple"),
+            ((1, 1), "Invalid color description tuple"),
+        ]
+
+        for arg, expected_msg in expected_errors:
+            with self.assertRaises(ValueError) as err:
+                ColorFmt(arg)
+
+            err_msg = str(err.exception)
+            self.assertIn(expected_msg, err_msg)
 
 
 class TestColoredTextProperties(unittest.TestCase):
