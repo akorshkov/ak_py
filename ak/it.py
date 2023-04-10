@@ -1,12 +1,12 @@
-"""Method for creatoin of interactive sessions.
+"""Ready to use gadgets to be used in interactive console.
 
-The created console has specified local objects and 'h', 'll', 'pp' functions.
+Usage example:
+>> x = {"a": 10, "b":20}
+>> from ak.it import pp
+>> pp(x)     # prints colored formatted text
 """
 
-import sys
-import code
 from . import ppobj
-from . import hdoc
 
 
 class _PPrintCommand:
@@ -16,6 +16,8 @@ class _PPrintCommand:
     the object generates own description. For other objects generic
     PrettyPrinter is used.
     """
+
+    _GLOBAL_PP = None
 
     def __init__(self):
         self._pprinter = ppobj.PrettyPrinter()
@@ -33,40 +35,8 @@ class _PPrintCommand:
         return "Console tools", "Command which pretty prints objects"
 
 
-def start_interactive_console(
-        locals_for_console=None, locals_descr=None, banner=None, exitmsg=None):
-    """Start interactive console, make 'h' and 'll' commands available in it."""
-    if banner is None:
-        banner = f"Python {sys.version} on {sys.platform}\n"
-        if locals_descr:
-            banner += "Locals:\n"
-            for local_name, local_descr in locals_descr:
-                banner += f"{local_name:19}<- {local_descr}\n"
-        banner += (
-            f"Following commands from 'ak' package are available:\n"
-            f"ll                 <- list local variables\n"
-            f"h(obj)             <- help command\n"
-            f"hh(obj)            <- help command - more detailed help\n"
-            f"pp(obj)            <- pretty printer for json-like python objects\n"
-        )
-
-    if locals_for_console is None:
-        locals_for_console = {}
-
-    if 'h' not in locals_for_console:
-        locals_for_console['h'] = hdoc.HCommand()
-
-    if 'hh' not in locals_for_console:
-        locals_for_console['hh'] = hdoc.HCommand(hdoc.HCommand._LEVEL_HH)
-
-    if 'll' not in locals_for_console:
-        locals_for_console['ll'] = hdoc.LLImpl(locals_for_console)
-
-    if 'pp' not in locals_for_console:
-        locals_for_console['pp'] = _PPrintCommand()
-
-    if exitmsg is None:
-        exitmsg = "Good bye!"
-
-    code.interact(
-        banner=banner, readfunc=None, local=locals_for_console, exitmsg=exitmsg)
+def pp(obj_to_print):
+    """Pretty-print json-like object."""
+    if _PPrintCommand._GLOBAL_PP is None:
+        _PPrintCommand._GLOBAL_PP = _PPrintCommand()
+    _PPrintCommand._GLOBAL_PP(obj_to_print)

@@ -13,7 +13,8 @@ mwrap     - tools for creation of "methods wrappers". "method wrapper" object
             Main purpose is to make these methods console-friendly.
 
 Console-related sub-modules:
-it     - tools to be used in interactive python console
-hdoc   - implementation of 'h' and 'll' methods to be used in console
+it      - ready-to-use gadgets to be used in interactive python console
+console - tools for creation of applications based on python console
+hdoc    - implementation of 'h' and 'll' methods to be used in console
 
 """
