@@ -28,7 +28,9 @@ class SqlFilterCondition:
     __slots__ = ('field_name', 'op', 'value')
 
     SUPPORTED_OPS = [
-        '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE']
+        '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE',
+        '>', '<', '>=', '<=',
+    ]
 
     PLACEHOLDER_TYPE_QUESTION, PLACEHOLDER_TYPE_PERCENT_S = 0, 1
 
@@ -44,6 +46,10 @@ class SqlFilterCondition:
             'IS NOT NULL': ' IS NOT NULL',
             'LIKE': ' LIKE ?',
             'NOT LIKE': ' NOT LIKE ?',
+            '>': ' > ?',
+            '<': ' < ?',
+            '>=': ' >= ?',
+            '<=': ' <= ?',
         },
         PLACEHOLDER_TYPE_PERCENT_S: {
             'PLACEHOLDER': '%s',
@@ -55,6 +61,10 @@ class SqlFilterCondition:
             'IS NOT NULL': ' IS NOT NULL',
             'LIKE': ' LIKE %s',
             'NOT LIKE': ' NOT LIKE %s',
+            '>': ' > %s',
+            '<': ' < %s',
+            '>=': ' >= %s',
+            '<=': ' <= %s',
         },
     }
 
@@ -87,6 +97,8 @@ class SqlFilterCondition:
                 raise ValueError(
                     f"value for '{self.op}' condition is not str but "
                     f"{type(value)}: {value}")
+        elif self.op in ['>', '<', '>=', '<=']:
+            pass
         else:
             raise ValueError(
                 f"unsupported sql operation '{self.op}'. Supported operations "
@@ -138,7 +150,7 @@ class SqlFilterCondition:
         sql_clauses = self._SQL_CLAUSES[placeholders_type]
         if self.field_name is None:
             sql = self.op
-        elif self.op in ('=', '!='):
+        elif self.op in ('=', '!=', '>', '<', '>=', '<='):
             values_list.append(self.value)
             sql = self.field_name + sql_clauses[self.op]
         elif self.op in ('IN', 'NOT IN'):

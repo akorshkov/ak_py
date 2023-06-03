@@ -84,10 +84,10 @@ class RCommit:
         t += "e" if self.is_explicit else "."
         t += "b" if self.build_num else "."
         hexsha = self.commit.hexsha[:11]
-        name = self.commit.author.name
+        author = self.commit.author.name
         message = self.commit.message.split('\n')[0].strip()
         build_num = f" |{self.build_num}|" if self.build_num else ""
-        return f"<{self.iid}: {t}: {hexsha} {name} {message}{build_num}>"
+        return f"<{self.iid}: {t}: {hexsha} {author} {message}{build_num}>"
 
     def __repr__(self):
         return str(self)
@@ -1505,7 +1505,7 @@ class ProjectRepo:
         Arguments:
         - commit: git.commit object
         - components: list of names of components to get versions of.
-            If is None - version of all known components will wi returned
+            If is None - version of all known components will be returned
 
         Return value:
         - {component_name: BuildNumData}: - may contain info about not
@@ -1531,8 +1531,9 @@ class ProjectRepo:
                 blob = commit.tree / v_file_path
             except KeyError:
                 logger.warning(
-                    "repo '%s' commit '%s' does not contain a file '%s'",
-                    self.repo.name,
+                    "repo '%s' ('%s') commit '%s' does not contain a file '%s'",
+                    self.repo_id,
+                    self.repo.git_dir,
                     commit.hexsha[:11],
                     v_file_path,
                 )
@@ -1565,6 +1566,24 @@ class ProjectRepo:
         _ = v_file_path
         _ = blob
         return {}
+
+    @staticmethod
+    def _parse_keyvalues_file(blob, separator='='):
+        # helper method which parses simple key-value files
+        # lines starting with '#' are interpreted as comments and ignored
+        # lines which do not contain separator are also ignored
+
+        for line in blob.data_stream.read().decode().split('\n'):
+            if line.startswith("#"):
+                continue
+            chunks = line.split(separator, maxsplit=1)
+            if len(chunks) == 1:
+                continue
+            key, value = [c.strip() for c in chunks]
+            if len(value) > 2 and value[0] == value[-1] and value[0] in ['"', "'"]:
+                # strip quotes around the value
+                value = value[1:-1]
+            yield (key, value)
 
     #########################
     # some ProjectRepo utils
