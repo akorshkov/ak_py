@@ -511,6 +511,18 @@ class TestPalette(unittest.TestCase):
 
         self.assertEqual('plain text1 text2 red', t0.plain_text())
 
+    def test_palette_self_report(self):
+        """Palette can print itself."""
+        palette = Palette({
+            'style_1': ColorFmt('GREEN'),
+            'style_2': ColorFmt('BLUE'),
+        })
+
+        report = palette.make_report()
+        lines = report.split('\n')
+        self.assertEqual(2, len(lines))
+        self.assertIn('style_1', report)
+
 
 class TestColorsConfig(unittest.TestCase):
 
@@ -557,7 +569,8 @@ class TestColorsConfig(unittest.TestCase):
         self.assertEqual(
             raw_text, colored_texts['TEXT'], "empty description means no formatting")
         self.assertEqual(
-            raw_text, colored_texts['UNEXPECTED'], "missing syntax means no formatting")
+            raw_text, colored_texts['UNEXPECTED'],
+            "missing syntax means no formatting")
 
         #print(colored_texts['VERY_COLORED'])
         #print(colored_texts['VERY_UNCOLORED'])
@@ -663,7 +676,9 @@ class TestColorsConfig(unittest.TestCase):
             len(str(colored_texts['SYNTAX1'])), len(raw_text),
             "expected to be colored: color taken from 'TABLE.COL_TITLE' of config",
         )
-        self.assertEqual(raw_text, ColoredText.strip_colors(str(colored_texts['SYNTAX1'])))
+        self.assertEqual(
+            raw_text,
+            ColoredText.strip_colors(str(colored_texts['SYNTAX1'])))
 
         self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
 
@@ -680,3 +695,12 @@ class TestColorsConfig(unittest.TestCase):
 
         self.assertEqual(raw_text, str(colored_texts['SYNTAX1']))
         self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
+
+    def test_config_report(self):
+        """Smoke test that make_report doesn't fail."""
+
+        colors_conf = self.TstColorsConfig({})
+        _ = colors_conf.make_report()
+
+        colors_conf = self.TstColorsConfig({}, use_effects=False)
+        _ = colors_conf.make_report()

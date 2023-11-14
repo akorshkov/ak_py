@@ -51,6 +51,8 @@ Colors examples:
 import re
 from collections import namedtuple
 
+from typing import Iterator
+
 
 #########################
 # Color printer
@@ -444,8 +446,8 @@ class _ColorSequences:
         if isinstance(color, int):
             if color < 0 or color > 255:
                 raise ValueError(
-                    f"Invalid int {param_name} id {color}. Valid int color id should be "
-                    f"in range(256)")
+                    f"Invalid int {param_name} id {color}. Valid int color id "
+                    f"should be in range(256)")
             return f"{fg_bg_id}8:5:{color}"
 
         raise ValueError(f"Invalid {param_name} object: {type(color)}: {color!r}")
@@ -532,6 +534,15 @@ class Palette:
         self.colors = colors.copy()
         self.use_colors = use_colors
 
+    def make_report(self) -> str:
+        """Create report of colors in in th palette"""
+        return "\n".join(
+            str(line) for line in self.gen_report_lines())
+
+    def gen_report_lines(self) -> Iterator[str]:
+        for syntax_name, color_fmt in sorted(self.colors.items()):
+            yield f"{syntax_name:15}: {color_fmt('<SAMPLE>')}"
+
     def get_color(self, syntax_name):
         """syntax_name -> ColorFmt"""
         no_effects_fmt = ColorFmt.get_plaintext_fmt()
@@ -617,6 +628,7 @@ class ColorsConfig:
         "KEYWORD": "BLUE:bold",
         "NUMBER": "YELLOW",
         "WARN": "RED",
+        "OK": "GREEN:bold",
         "TABLE": {
             "BORDER": "GREEN",
             "COL_TITLE": "GREEN:bold",
@@ -674,19 +686,19 @@ class ColorsConfig:
 
         Check ColorsConfig.DFLT_CONFIG for names of syntaxes.
         """
+        self.flat_init_conf = self._flatten_dict(self.DFLT_CONFIG)
+        self.flat_init_conf.update(self._flatten_dict(modified_syntaxes))
+
         if not use_effects:
             # no colors formatting will be used - and do not even try to parse
             # config data
             self.config = {}
             return
 
-        flat_init_data = self._flatten_dict(self.DFLT_CONFIG)
-        flat_init_data.update(self._flatten_dict(modified_syntaxes))
-
         # {syntax_name: (color_name, other_syntax_name, modifiers)}
         flat_init_data = {
             syntax_name: self._parse_color_descr(color_descr)
-            for syntax_name, color_descr in flat_init_data.items()
+            for syntax_name, color_descr in self.flat_init_conf.items()
         }
 
         # now flat_init_data contains init params for colors. These rules may
@@ -806,9 +818,46 @@ class ColorsConfig:
                     result[f"{key}.{skey}"] = sval
         return result
 
-    def get_color(self, syntax_name):
+    def get_color(self, syntax_name) -> ColorFmt:
         """syntax_name -> ColorFmt"""
         return self.config.get(syntax_name, self._NO_EFFECTS_FMT)
+
+    def make_report(self) -> str:
+        """Create colored report of self."""
+        return "\n".join(self.gen_report_lines())
+
+    def gen_report_lines(self) -> Iterator[str]:
+        """Generate lines for self-report"""
+        offset_step = "  "
+        common_path = []  # path to a current syntax element
+        for syntax_name, syntax_descr in sorted(self.flat_init_conf.items()):
+            if not syntax_descr:
+                syntax_descr = "<SAMPLE>"
+            syntax_chunks = syntax_name.split('.')
+            cur_path = syntax_chunks[:-1]
+            cur_name = syntax_chunks[-1]
+
+            # leave only prefix of common_path which is still valid for current item
+            cmn_path_valid_len = 0
+            for cmn_path_chunk, synt_path_chunk in zip(common_path, cur_path):
+                if cmn_path_chunk != synt_path_chunk:
+                    break
+                cmn_path_valid_len += 1
+            common_path = common_path[:cmn_path_valid_len]
+
+            while len(cur_path) > len(common_path):
+                # report next group name
+                depth = len(common_path)
+                group_name = cur_path[depth]
+                common_path.append(group_name)
+                yield f"{offset_step*depth}{group_name} ->"
+
+            assert len(cur_path) == len(common_path)
+            # report the syntax description
+            depth = len(common_path)
+            prefix = self._NO_EFFECTS_FMT(offset_step*depth)
+            color_fmt = self.get_color(syntax_name)
+            yield str(prefix + f"{cur_name}: " + color_fmt(syntax_descr))
 
 
 class PaletteUser:
