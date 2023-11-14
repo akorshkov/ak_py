@@ -1,10 +1,26 @@
 """Collection of tools commonly used in cli applications.
 
-Very minimal usage example:
+Minimal usage example:
 
-    parser = cli_tools.ArgParser(description="populate stand")
+    parser = cli_tools.ArgParser(
+        description="common tool description",
+        commands=[
+            ('cmd1', 'help cmd 1'),
+            ('cmd2', ('descr cmd2 argument', 'cmd2 description')),
+        ])
+
+    # common arg for all commands
+    parser.add_argument('-s', '--src-dir', help="arg descr")
+
+    pars_cmd1 = parser.get_cmd_parser('cmd1')
+    pars_cmd1.add_argument('-f', '--force', action='store_true', help="..")
+    pars_cmd1.add_argument('items', nargs='*', help="..")
+
     args = parser.parse_args()
-    cli_tools.std_app_configure(args)
+    cli_tools.std_app_configure(args)  # configures colors and logging
+
+    # use it to create Palette objects:
+    colors_conf = ak.color.get_global_colors_config()
 """
 
 import sys
@@ -161,7 +177,7 @@ class ArgParser:
 
         Same syntax as in stadard ArgumentParser.
 
-        In case multi-command parser adds the argument to all commands.
+        In case of multi-command parser adds the argument to all commands.
         """
         if self.command_parsers is None:
             # self is usual one-command parser
