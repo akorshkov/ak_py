@@ -8,7 +8,22 @@ ColoredText - objects of this class are string-like objects, which can be
     specifier when formatting such strings.
     ColoredText objects can be printed using format specifiers.
 
-ColorFmt - class which produces ColoredText objects.
+ColorFmt - produces simple (mono-colored) ColoredText objects.
+
+Palette - contains mapping {'syntax_type': ColorFmt} and produces
+    ColoredText objects containing parts of different colors.
+
+ColorsConfig - supposed to contain global colors configuration for the whole
+    application (so that it would be possible to configure all coloring in
+    a single place). Palette objects should be initialized from this global
+    config; it is available by ak.color.get_global_colors_config().
+    Default ColorsConfig contains common syntax names used in ak package,
+    check it out:
+    print(ak.color.get_global_colors_config().c_fmt())
+
+PaletteUser - may be used as a base for classes which create own Palette
+    from global ColorsConfig (helps to postpone Palette creation until
+    after the global ColorsConfig is initialized)
 
 ColorBytes - analog of ColorFmt, but for bytes.
     Both ColorFmt and ColorBytes produce a single mono-colored chunk, but
@@ -530,6 +545,34 @@ class Palette:
         """same behavior as get_color method"""
         return self.get_color(index)
 
+    def __call__(self, *items) -> ColoredText:
+        """Produce multi-colored ColoredText.
+
+        Arguments:
+        - items: each item me be
+          - plain text
+          - ('syntax_name', 'text')
+          - ColoredText
+        """
+        result = ColorFmt.get_plaintext_fmt()('')
+        for item in items:
+            result += self._item_to_colored_text(item)
+        return result
+
+    def _item_to_colored_text(self, item) -> ColoredText:
+        # process single item of __call__
+        if isinstance(item, ColoredText):
+            return item
+        elif isinstance(item, (list, tuple)):
+            if len(item) != 2:
+                raise ValueError(
+                    f"invalid syntax text item {item}. "
+                    f"expected pair ('syntax_name', 'text')")
+            syntax_name, text = item
+            return self.get_color(syntax_name)(text)
+
+        return ColorFmt.get_plaintext_fmt()(item)
+
 
 _COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
 
@@ -558,8 +601,8 @@ class ColorsConfig:
     to find this configuration without any explicit configuration.
 
     This global object is ak.color._COLORS_CONFIG. Use
-    ak.color.get_global_colors_config() and ak.color.set_global_colors_config() to access
-    this object.
+    ak.color.get_global_colors_config() and ak.color.set_global_colors_config()
+    to access this object.
     """
 
     _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
@@ -670,14 +713,18 @@ class ColorsConfig:
                         f"Invalid colors config: rule for syntax '{syntax_name}' "
                         f"referenses syntax '{src_syntax_name}' which does not exist")
                 # need to go deeper
-                color_name, next_src_syntax_name, modifiers = flat_init_data[src_syntax_name]
+                color_name, next_src_syntax_name, modifiers = (
+                    flat_init_data[src_syntax_name])
+
                 syntax_name, src_syntax_name = src_syntax_name, next_src_syntax_name
                 assert color_name is None or src_syntax_name is None
                 if any(syntax_name == x[0] for x in path):
                     # circular dependency detected
                     names_path = [x[0] for x in path]
                     names_path.append(syntax_name)
-                    raise Exception(f"circular syntax rules dependencies: {names_path}")
+                    raise Exception(
+                        f"circular syntax rules dependencies: {names_path}")
+
             # process all the rules accumulated in path
             for syntax_name, src_syntax_name, modifiers in path[::-1]:
                 assert src_syntax_name in syntax_attrs

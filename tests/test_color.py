@@ -460,19 +460,56 @@ class TestPalette(unittest.TestCase):
     """Test Palette functionality."""
 
     def test_palette(self):
-        palatte = Palette({
+        palette = Palette({
             'style_1': ColorFmt('GREEN'),
             'style_2': ColorFmt('BLUE'),
         })
 
-        t0 = palatte.get_color('style_1')("test text")
-        t1 = palatte['style_1']("test text")
+        t0 = palette.get_color('style_1')("test text")
+        t1 = palette['style_1']("test text")
 
         self.assertEqual(t0, t1)
 
         # unknown style does not raise error
-        t2 = palatte['unknown_style']("test text")
+        t2 = palette['unknown_style']("test text")
         self.assertEqual("test text", str(t2))
+
+    def test_color_text_creation(self):
+        """Test palette producing ColoredText"""
+        palette = Palette({
+            'style_1': ColorFmt('GREEN'),
+            'style_2': ColorFmt('BLUE'),
+        })
+
+        # single arguments of different types
+        self.assertEqual(
+            palette(('unknown', 'text0')), ColorFmt.get_plaintext_fmt()('text0'))
+
+        self.assertEqual(
+            palette(('style_1', 'text1')), ColorFmt('GREEN')('text1'))
+
+        self.assertEqual(
+            palette(['style_2', 'text2']), ColorFmt('BLUE')('text2'))
+
+        self.assertEqual(
+            palette('plain'), ColorFmt.get_plaintext_fmt()('plain'))
+
+        self.assertEqual(
+            palette(ColorFmt('RED')('red')), ColorFmt('RED')('red'))
+
+        self.assertEqual(
+            palette(), ColorFmt.get_plaintext_fmt()(''))
+
+        # and combination of several arguments of different types
+        t0 = palette(
+            'plain ',
+            ('style_1', 'text1'),
+            ' ',
+            ['style_1', 'text2'],
+            ' ',
+            ColorFmt('RED')('red'))
+
+        self.assertEqual('plain text1 text2 red', t0.plain_text())
 
 
 class TestColorsConfig(unittest.TestCase):
