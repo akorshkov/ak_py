@@ -147,6 +147,7 @@ class MockedGitRepo:
         (leading and trailing spaces in each section are ignored)
         """
         self.name = name
+        self.git_dir = f"/home/user/gits/{name}"
         self.all_commits = {}
         self.refs = {}
 
