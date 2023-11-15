@@ -603,15 +603,14 @@ def set_global_colors_config(colors_config):
 
 
 class ColorsConfig:
-    """Global color settings.
+    """Colors configuration. Usually a global object.
 
-    ColorsConfig contains default colors for miscelaneous syntax items such as
-    numbers in pretty-printed jsons or table borders.
+    ColorsConfig contains colors for miscelaneous syntax items such as
+    numbers in pretty-printed jsons or table borders. ColorsConfig creates
+    Palette objects to be used by misc pretty-printers for producing
+    colored text.
 
-    ColorsConfig is a global object - miscelaneous pretty-printers should be able
-    to find this configuration without any explicit configuration.
-
-    This global object is ak.color._COLORS_CONFIG. Use
+    Global ColorsConfig object is ak.color._COLORS_CONFIG. Use
     ak.color.get_global_colors_config() and ak.color.set_global_colors_config()
     to access this object.
     """
@@ -693,7 +692,7 @@ class ColorsConfig:
         if not use_effects:
             # no colors formatting will be used - and do not even try to parse
             # config data
-            self.config = {}
+            self.all_formats = {}
             return
 
         # {syntax_name: (color_name, other_syntax_name, modifiers)}
@@ -750,7 +749,7 @@ class ColorsConfig:
         # expects None. Fix this:
         fix_empty_color = lambda color: None if color == "" else color
 
-        self.config = {
+        self.all_formats = {
             syntax_name: ColorFmt(fix_empty_color(color), **modifiers)
             for syntax_name, (color, modifiers) in syntax_attrs.items()
         }
@@ -821,7 +820,24 @@ class ColorsConfig:
 
     def get_color(self, syntax_name) -> ColorFmt:
         """syntax_name -> ColorFmt"""
-        return self.config.get(syntax_name, self._NO_EFFECTS_FMT)
+        return self.all_formats.get(syntax_name, self._NO_EFFECTS_FMT)
+
+    def make_palette(self, group_name=None) -> Palette:
+        """Creates Palette object for a specified syntax group.
+
+        For example, for syntax group 'TABLE' the default ColorsConfig will produce
+        Palette with following items:
+            "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
+        """
+        prefix = "" if group_name is None else group_name + "."
+        prefix_len = len(prefix)
+        palette_colors = {}
+        for full_syntax_name, color_fmt in self.all_formats.items():
+            if not full_syntax_name.startswith(prefix):
+                continue
+            syntax_name = full_syntax_name[prefix_len:]
+            palette_colors[syntax_name] = color_fmt
+        return Palette(palette_colors)
 
     def make_report(self) -> str:
         """Create colored report of self."""
@@ -866,8 +882,9 @@ class PaletteUser:
 
     The global config is ColorsConfig object stored in ak.color._COLORS_CONFIG.
 
-    PaletteUser-defived class T provide class method cls.get_palette() which is
-    supposed to be used by objects of T to get properly configured palette.
+    PaletteUser-defived class T provide class method cls.get_palette() (and
+    shorter synonim 'c_fmt()') which is supposed to be used by objects of T to get
+    properly configured palette.
 
     Palette object returned by cls.get_palette() is created only once when
     this method is called first time. Make sure that the global colors
@@ -879,17 +896,39 @@ class PaletteUser:
 
     _PALETTE = None  # Palette of a class will be stored here
 
-    @classmethod
-    def _init_palette(cls, color_config):
-        # create palette for objects of this class
-        # to be implemented in derived class
-        pass
+    # _SYNTAX_GROUP may be specify in derived class.
+    # syntaxes from this group will be used to create Palette for this class
+    _SYNTAX_GROUP = None
 
     @classmethod
-    def get_palette(cls):
+    def _init_palette(cls, _colors_config):
+        # configure Palette for this class
+        #
+        # can be overridden in derived class
+        #
+        # method may return syntax group name or ready Palette object
+        return "" if cls._SYNTAX_GROUP is None else cls._SYNTAX_GROUP
+
+    @classmethod
+    def _init_palette_impl(cls) -> Palette:
+        # create Palette object based on _init_palette (which may be
+        # re-implemented in derived class)
+        global_colors_config = get_global_colors_config()
+        init_data = cls._init_palette(global_colors_config)
+        if isinstance(init_data, Palette):
+            return init_data
+        assert isinstance(init_data, str)
+        return global_colors_config.make_palette(init_data)
+
+    @classmethod
+    def get_palette(cls) -> Palette:
         """Get Palette object to be used by an object of cls class."""
         if cls._PALETTE is None:
-            global_colors_config = get_global_colors_config()
-            cls._PALETTE = cls._init_palette(global_colors_config)
+            cls._PALETTE = cls._init_palette_impl()
         assert cls._PALETTE is not None
         return cls._PALETTE
+
+    @classmethod
+    def c_fmt(cls) -> Palette:
+        """shorter synonim for get_palette()"""
+        return cls.get_palette()

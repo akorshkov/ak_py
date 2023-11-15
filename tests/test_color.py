@@ -656,24 +656,70 @@ class TestColorsConfig(unittest.TestCase):
         raw_text = "test"
 
         self.assertEqual(
-            colors_conf.get_color('TABLE.NAME')(raw_text),
-            ColorFmt("YELLOW")(raw_text),
+            str(colors_conf.get_color('TABLE.NAME')(raw_text)),
+            str(ColorFmt("YELLOW")(raw_text)),
             "'YELLOW' is apecified in extra_rules_02")
 
         self.assertEqual(
-            colors_conf.get_color('TABLE.BORDER')(raw_text),
-            ColorFmt("BLUE", bold=True)(raw_text),
+            str(colors_conf.get_color('TABLE.BORDER')(raw_text)),
+            str(ColorFmt("BLUE", bold=True)(raw_text)),
             "'BLUE:bold' is taken from TstColorsConfig.DFLT_CONFIG['NAME'] "
             "as specified in extra_rules_01")
 
         # first all specified rules are combined, after that rules resolved
         self.assertEqual(
-            colors_conf.get_color('VERY_COLORED')(raw_text),
-            ColorFmt("YELLOW")(raw_text),
+            str(colors_conf.get_color('VERY_COLORED')(raw_text)),
+            str(ColorFmt("YELLOW")(raw_text)),
             "'VERY_COLORED' -> extra_rules_01 -> 'TABLE.NAME' -> "
             " extra_rules_02 -> 'YELLOW'")
 
-    def test_palette_user_class(self):
+    def test_config_make_palette(self):
+        """Test Palette creation by ColorsConfig."""
+        extra_rules_01 = {
+            'TABLE': {
+                'NAME': "CYAN",
+                'BORDER': "NAME",  # "BLUE:bold"
+                'EXTRA': "YELLOW:bold",
+            },
+            'VERY_COLORED': "TABLE.NAME",
+        }
+        extra_rules_02 = {
+            'TABLE': {
+                'NAME': "YELLOW",
+            },
+        }
+        colors_conf = self.TstColorsConfig(extra_rules_01, extra_rules_02)
+
+        raw_text = "test"
+
+        # palette for printing tables
+        palette_table = colors_conf.make_palette('TABLE')
+        self.assertEqual(
+            # these colors are specified in TstColorsConfig and extra_rules_01
+            {'BORDER', 'NAME', 'ALT1_NAME', 'ALT2_NAME', 'EXTRA'},
+            palette_table.colors.keys()
+        )
+
+        self.assertEqual(
+            str(palette_table(('NAME', raw_text))),
+            str(ColorFmt('YELLOW')(raw_text)),
+            # 'YELLOW' is specified for 'TABLE.NAME' in extra_rules_02
+        )
+
+        self.assertEqual(
+            str(palette_table(('ALT2_NAME', raw_text))),
+            str(ColorFmt('YELLOW')(raw_text)),
+            # 'ALT2_NAME' -> 'TABLE.NAME' -> 'YELLOW'
+        )
+
+        # palette containing all colors from config
+        palette_all = colors_conf.make_palette()
+        all_syntaxes = palette_all.colors.keys()
+        self.assertIn('TEXT', all_syntaxes)
+        self.assertIn('VERY_COLORED', all_syntaxes)
+        self.assertIn('TABLE.BORDER', all_syntaxes)
+
+    def test_palette_user_class_init_palette(self):
         """Test behavior of a class which uses palette and global colors config."""
 
         # 0. make primitive PaletteUser class and object of this class
@@ -732,6 +778,37 @@ class TestColorsConfig(unittest.TestCase):
 
         self.assertEqual(raw_text, str(colored_texts['SYNTAX1']))
         self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
+
+    def test_palette_user_class_with_specified_syntax_group(self):
+        """Test behavior of a class which creates palette based on syntax group."""
+
+        # reset possible previous initialization
+        set_global_colors_config(None)
+
+        # 0. make primitive PaletteUser class and object of this class
+        class CPrinter(PaletteUser):
+            """Primitive class which uses Palette created from global config."""
+            _SYNTAX_GROUP = 'TABLE'
+
+            def get_my_palette(self):
+                """just return own Palette for further experiments"""
+                return self.c_fmt()
+
+        cp = CPrinter()
+        palette = cp.get_my_palette()
+
+        # created palette is created from global ColorsConfig
+        # default ColorsConfig may be changed in future, so this test
+        # checks only very basic properties of the created palette.
+        self.assertIsInstance(palette, Palette)
+
+        syntax_names = palette.colors.keys()
+
+        self.assertIn('BORDER', syntax_names)
+        self.assertIn('COL_TITLE', syntax_names)
+
+        self.assertNotIn('TABLE.BORDER', syntax_names)
+        self.assertNotIn('FUNC_NAME', syntax_names)
 
     def test_config_report(self):
         """Smoke test that make_report doesn't fail."""
