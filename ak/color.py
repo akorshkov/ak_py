@@ -653,15 +653,15 @@ class ColorsConfig:
 
     _COLORS_NAMES = _ColorSequences._COLORS.keys() | {""}
 
-    def __init__(self, modified_syntaxes, use_effects=True):
+    def __init__(self, *extra_rules, use_effects=True):
         """Constructor.
 
         Arguments:
-        - modified_syntaxes: dict of amendments to default config (*)
+        - extra_rules: dictionaries of amendments to default config (*)
         - use_effects: if False - ignores all other config settings and creates
           'no-color' config
 
-        (*) example:
+        (*) example of extra_rules:
         {
             "NAME": "BLUE:bold",
             "TABLE": {
@@ -687,7 +687,8 @@ class ColorsConfig:
         Check ColorsConfig.DFLT_CONFIG for names of syntaxes.
         """
         self.flat_init_conf = self._flatten_dict(self.DFLT_CONFIG)
-        self.flat_init_conf.update(self._flatten_dict(modified_syntaxes))
+        for additional_syntax in extra_rules:
+            self.flat_init_conf.update(self._flatten_dict(additional_syntax))
 
         if not use_effects:
             # no colors formatting will be used - and do not even try to parse

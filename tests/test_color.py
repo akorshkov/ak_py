@@ -555,7 +555,7 @@ class TestColorsConfig(unittest.TestCase):
         _ = get_global_colors_config().get_color("TEXT")
 
         # explicit initialization with using all the defaults
-        colors_conf = self.TstColorsConfig({})
+        colors_conf = self.TstColorsConfig()
 
         colored_texts = {
             syntax_name: colors_conf.get_color(syntax_name)(raw_text)
@@ -635,6 +635,43 @@ class TestColorsConfig(unittest.TestCase):
             "syntax coloring was tuned off for TABLE.NAME")
         self.assertEqual(
             colored_texts['VERY_COLORED'], colored_texts['TABLE.BORDER'])
+
+    def test_config_multiple_extras(self):
+        """Test ColorsConfig construction with multiple extra_rules."""
+        extra_rules_01 = {
+            'TABLE': {
+                'NAME': "CYAN",
+                'BORDER': "NAME",  # "BLUE:bold"
+            },
+            'VERY_COLORED': "TABLE.NAME",
+        }
+        extra_rules_02 = {
+            'TABLE': {
+                'NAME': "YELLOW",
+            },
+        }
+
+        colors_conf = self.TstColorsConfig(extra_rules_01, extra_rules_02)
+
+        raw_text = "test"
+
+        self.assertEqual(
+            colors_conf.get_color('TABLE.NAME')(raw_text),
+            ColorFmt("YELLOW")(raw_text),
+            "'YELLOW' is apecified in extra_rules_02")
+
+        self.assertEqual(
+            colors_conf.get_color('TABLE.BORDER')(raw_text),
+            ColorFmt("BLUE", bold=True)(raw_text),
+            "'BLUE:bold' is taken from TstColorsConfig.DFLT_CONFIG['NAME'] "
+            "as specified in extra_rules_01")
+
+        # first all specified rules are combined, after that rules resolved
+        self.assertEqual(
+            colors_conf.get_color('VERY_COLORED')(raw_text),
+            ColorFmt("YELLOW")(raw_text),
+            "'VERY_COLORED' -> extra_rules_01 -> 'TABLE.NAME' -> "
+            " extra_rules_02 -> 'YELLOW'")
 
     def test_palette_user_class(self):
         """Test behavior of a class which uses palette and global colors config."""
