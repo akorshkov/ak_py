@@ -17,7 +17,11 @@ Minimal usage example:
     pars_cmd1.add_argument('items', nargs='*', help="..")
 
     args = parser.parse_args()
-    cli_tools.std_app_configure(args)  # configures colors and logging
+    cli_tools.std_app_configure(
+        args, syntax_amends={
+            'TABLE': {'BORDER': 'CYAN:bold'},
+        }
+    )  # configures colors and logging
 
     # use it to create Palette objects:
     colors_conf = ak.color.get_global_colors_config()
@@ -202,7 +206,7 @@ class ArgParser:
 def std_app_configure(
         args, *,
         global_colors_config_class=None,
-        modified_syntaxes=None,
+        syntax_amends=None,
 ):
     """Perform standard configuration of script
 
@@ -211,8 +215,8 @@ def std_app_configure(
         by ak.cli_tools.ArgParser.
     - global_colors_config_class: optional ak.color.ColorsConfig-derived class,
         to be used if not a standard colors config is used
-    - modified_syntaxes: optional dictionary of amendments to colors config
-        implemented in global colors config.
+    - syntax_amends: optional dictionary of amendments to colors
+        config implemented in global colors config, or list of such dictionaries.
 
     Method adds 'color_stdout' boolean attribute to args: rest of script should use
     this value to decide if colored text should be produced.
@@ -229,8 +233,12 @@ def std_app_configure(
 
     # 2. configure global colors config
     conf_class = global_colors_config_class or ColorsConfig
-    conf_amendments = modified_syntaxes or {}
-    global_colors_conf = conf_class(conf_amendments, args.color_stdout)
+
+    syntax_amends = syntax_amends or []
+    if isinstance(syntax_amends, dict):
+        syntax_amends = [syntax_amends, ]
+
+    global_colors_conf = conf_class(*syntax_amends, use_effects=args.color_stdout)
     set_global_colors_config(global_colors_conf)
 
     # 3. configure logging
