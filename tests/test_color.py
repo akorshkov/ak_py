@@ -754,7 +754,35 @@ class TestColorsConfig(unittest.TestCase):
             # 'ALT2_NAME' -> 'TABLE.NAME' -> 'YELLOW'
         )
 
-        # palette containing all colors from config
+    def test_make_palette_extra_colors(self):
+        """Test creation of Palette with extra colors"""
+        colors_conf = self.TstColorsConfig()
+        palette = colors_conf.make_palette(
+            'TABLE',
+            VERY_COLORED='VERY_COLORED',
+            BORDER='NAME',
+        )
+
+        self.assertIn(
+            'VERY_COLORED', palette.colors,
+            "present in palette only because explicitely specified for make_palette"
+        )
+
+        sample = "sample"
+        self.assertEqual(
+            str(colors_conf.get_color('NAME')(sample)),
+            str(palette.get_color('BORDER')(sample)),
+        )
+        self.assertNotEqual(
+            str(colors_conf.get_color('TABLE.BORDER')(sample)),
+            str(palette.get_color('BORDER')(sample)),
+            "'BORDER' syntax is expected to be overridden"
+        )
+
+    def test_make_palette_all_colors(self):
+        """Test ceation of Palette containing all colors from config"""
+        colors_conf = self.TstColorsConfig()
+
         palette_all = colors_conf.make_palette()
         all_syntaxes = palette_all.colors.keys()
         self.assertIn('TEXT', all_syntaxes)

@@ -933,12 +933,16 @@ class ColorsConfig:
         """syntax_name -> ColorFmt"""
         return self.all_formats.get(syntax_name, self._NO_EFFECTS_FMT)
 
-    def make_palette(self, group_name=None) -> Palette:
+    def make_palette(self, group_name=None, **kwargs) -> Palette:
         """Creates Palette object for a specified syntax group.
 
         For example, for syntax group 'TABLE' the default ColorsConfig will produce
         Palette with following items:
             "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
+
+        Additional amendments to palette colors may be specified in kwargs.
+        kwargs format:
+        "PALETTE_SYNTAX_NAME": "CONF_SYNTAX_NAME"
         """
         prefix = "" if group_name is None else group_name + "."
         prefix_len = len(prefix)
@@ -948,6 +952,10 @@ class ColorsConfig:
                 continue
             syntax_name = full_syntax_name[prefix_len:]
             palette_colors[syntax_name] = color_fmt
+
+        for syntax, conf_syntax in kwargs.items():
+            palette_colors[syntax] = self.get_color(conf_syntax)
+
         return Palette(palette_colors)
 
     def make_report(self) -> str:
