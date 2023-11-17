@@ -3,7 +3,7 @@
 import unittest
 
 from ak.color import (
-    ColoredText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser,
+    ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser,
     get_global_colors_config, set_global_colors_config,
 )
 
@@ -522,6 +522,48 @@ class TestPalette(unittest.TestCase):
         lines = report.split('\n')
         self.assertEqual(2, len(lines))
         self.assertIn('style_1', report)
+
+
+class TestSHText(unittest.TestCase):
+    """Test SHText"""
+
+    def test_basic_sh_text_functionality(self):
+        """Test basic functionality of SHText"""
+
+        sh_descr = SHText("Some ", ("SYNTAX", "text"), " to test")
+
+        # SHText does not know actual colors corresponding to
+        # syntax regions, so conversion to str produces plain text
+        self.assertEqual("Some text to test", str(sh_descr))
+        self.assertEqual("Some text to test", sh_descr.plain_text())
+
+        # use palette to create ColoredText
+        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
+        ct = palette(sh_descr)
+        ct_expected = ColoredText(
+            "Some ",
+            ColorFmt('GREEN')("text"),
+            " to test")
+        self.assertEqual(
+            ct_expected, ct,
+            f"{ct_expected} != {ct}",
+        )
+
+        # unknown syntax name should not raise error
+        palette = Palette({})
+        ct = palette(sh_descr)
+        self.assertEqual("Some text to test", str(ct))
+
+    def test_sh_text_basic_propertirs(self):
+        """SHText corner cases."""
+
+        # empty constructior => empty result
+        sh_descr = SHText()
+
+        self.assertEqual("", str(sh_descr))
+
+        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
+        self.assertEqual("", palette(sh_descr))
 
 
 class TestColorsConfig(unittest.TestCase):
