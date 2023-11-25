@@ -5,8 +5,9 @@ Minimal usage example:
     parser = cli_tools.ArgParser(
         description="common tool description",
         commands=[
+            ('!opts_set1', 'some options to be used in other parsers'),
             ('cmd1', 'help cmd 1'),
-            ('cmd2', ('descr cmd2 argument', 'cmd2 description')),
+            ('cmd2:cmd1,opts_set1', ('descr cmd2 argument', 'cmd2 description')),
         ])
 
     # common arg for all commands
@@ -39,6 +40,33 @@ from . import utils
 
 Timer = utils.Timer
 
+class AkArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser with some additional functionality.
+
+    Using AkArgumentParser makes it possible to organize parsers into directed
+    graph.
+
+    When argument is added to AkArgumentParser the same argument is added to
+    all the dependent parsers.
+    """
+    __slots__ = ('_dependent_parsers', )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._dependent_parsers = {}
+
+    def register_dependent(self, name, parser):
+        """Register dependent parser"""
+        assert name not in self._dependent_parsers
+        self._dependent_parsers[name] = parser
+
+    def add_argument(self, *args, **kwargs):
+        propagate = kwargs.pop('_propagate', True)
+        if propagate:
+            for dependent_parser in self._dependent_parsers.values():
+                dependent_parser.add_argument(*args, _propagate=False, **kwargs)
+        super().add_argument(*args, **kwargs)
+
 
 class ArgParser:
     """Argument parser with support of multiple subparsers for different commands.
@@ -67,7 +95,7 @@ class ArgParser:
         - _no_log_file: does not affect arguments procesing, but in case it is
             specified, adds '_no_log_file' attribute to the result 'args'.
             (So, it behaves like a hidden argument. It's value is used
-            by ak.cli_tools.std_app_configure function.
+            by ak.cli_tools.std_app_configure function.)
         - _help_if_no_args: (dafault False) - indicates if help message should
             be printed if args list is empty.
         - kwargs: standard kwargs for argparse.ArgumentParser
@@ -98,21 +126,22 @@ class ArgParser:
 
         Arguments of this method are the same as in standard ArgumentParser.
         """
+        if args is None:
+            args = sys.argv[1:]
+
+        if not args and self._help_if_no_args:
+            print("appending help option")
+            args.append("--help")
+
         if self.command_parsers is not None:
             # this is a multi-command parser
             # some black magic is required to detect default command
-            if args is None:
-                args = sys.argv[1:]
-
-            if not args and self._help_if_no_args:
-                args.append("--help")
-            else:
-                first_arg = args[0] if args else None
-                if all(
-                    first_arg not in choices
-                    for choices in [['-h', '--help'], self.command_parsers]
-                ):
-                    args.insert(0, self.default_command)
+            first_arg = args[0] if args else None
+            if all(
+                first_arg not in choices
+                for choices in [['-h', '--help'], self.command_parsers]
+            ):
+                args.insert(0, self.default_command)
 
         args = self.parser.parse_args(args, namespace)
         if self._no_log_file:
@@ -137,7 +166,8 @@ class ArgParser:
             "--color", default='auto', nargs="?",
             choices=["auto", "always", "yes", "1", "never", "no", "0"],
             help=(
-                "when show colored output. '--color' is the same as '--color=always'. "
+                "when show colored output. "
+                "'--color' is the same as '--color=always'. "
                 "Default value is 'auto'.")
         )
 
@@ -150,31 +180,82 @@ class ArgParser:
         # configure self.parser to process arguments for different commands
         # (like git has different commands ('commit', 'log', 'push', etc.) and
         # these commands have different arguments)
-        if default_command is None:
-            default_command = commands[0][0]
-        self.default_command = default_command
 
-        subparsers = self.parser.add_subparsers(
-            dest='command', help="Available commands")
+        assert commands
 
-        # some options which are applicable for all commands
+        # parent for all other parsers, contains common options
         self.common_options = argparse.ArgumentParser(
-            add_help=False, description="Common options")
-
+            # add_help=False,
+            description="Common options")
         self._mk_std_args(self.common_options)
 
-        self.command_parsers = {}
+        commands_names = []  # names of commands
+        self.command_parsers = {}  # {parser_name: parser}
+
+        subparsers = self.parser.add_subparsers(
+            parser_class=AkArgumentParser,
+            dest='command', help="Available commands")
+
         for command, cmd_attrs in commands:
             if isinstance(cmd_attrs, str):
                 help_text = cmd_attrs
                 descr = None
             else:
                 help_text, descr = cmd_attrs
-            cmd_parser = subparsers.add_parser(
-                command,
-                parents=[self.common_options],
-                help=help_text, description=descr)
-            self.command_parsers[command] = cmd_parser
+
+            # command may look like "!cmd:parent,parent1"
+            chunks = command.split(':', maxsplit=1)
+            if len(chunks) == 2:
+                command, parents = chunks
+            else:
+                parents = ""
+
+            is_internal = command.startswith('!')
+            if is_internal:
+                command = command[1:]
+
+            parser_name = command
+            assert parser_name
+
+            parents = {
+                pp
+                for p in parents.split(',') if (pp := p.strip())
+            }
+
+            assert parser_name not in self.command_parsers, (
+                f"duble declaration of subparser '{parser_name}'")
+
+            for p in parents:
+                assert p in self.command_parsers, (
+                    f"unknown parent parser '{p}' specified for '{parser_name}'")
+
+            if is_internal:
+                cmd_parser = AkArgumentParser(
+                    parents=[self.common_options, ],
+                    add_help=False,
+                    description=descr or help_text)
+            else:
+                cmd_parser = subparsers.add_parser(
+                    parser_name,
+                    parents=[self.common_options, ],
+                    add_help=False,
+                    help=help_text, description=descr)
+                commands_names.append(parser_name)
+
+            # register newly created cmd_parser in parents...
+            for p in parents:
+                parent_parser = self.command_parsers[p]
+                parent_parser.register_dependent(parser_name, cmd_parser)
+                # ... and all ascendants
+                for parser in self.command_parsers.values():
+                    if p in parser._dependent_parsers:
+                        parser.register_dependent(parser_name, cmd_parser)
+
+            self.command_parsers[parser_name] = cmd_parser
+
+        if default_command is None and commands_names:
+            default_command = commands_names[0]
+        self.default_command = default_command
 
     def add_argument(self, *args, **kwargs):
         """Declare argument.
@@ -188,7 +269,7 @@ class ArgParser:
             self.parser.add_argument(*args, **kwargs)
         else:
             for cmd_parser in self.command_parsers.values():
-                cmd_parser.add_argument(*args, **kwargs)
+                cmd_parser.add_argument(*args, _propagate=False, **kwargs)
 
     def get_cmd_parser(self, command_name):
         """Get parser corresponding to a command."""

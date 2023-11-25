@@ -1,11 +1,45 @@
 """Test ak.cli_tools - misc helpers for command-line oriented scripts"""
 
 import unittest
+import sys
+import io
 from ak.cli_tools import ArgParser
 
 
 class TestArgParser(unittest.TestCase):
     """Test ak.cli_tools.ArgParser"""
+
+    class UnexpectedSuccessParsingArgs(Exception):
+        """Raised in case arg parser has not failed as expected"""
+        def __init__(self, args):
+            """'args' - result of successfull 'parse_args'"""
+            super().__init__(
+                f"unexpected success parsing args. Result: {args}")
+            self.result_args = args
+
+    def _assert_argparser_fails(self, parser, arguments):
+        # make sure parser can't fails to process given arguments
+        # return captured output
+        # in case of successfull parse raises exception
+        new_out, new_err = io.StringIO(), io.StringIO()
+        old_out, old_err = sys.stdout, sys.stderr
+        parse_failed = False
+        args = None  # result of 'parse_args'
+        try:
+            sys.stdout, sys.stderr = new_out, new_err
+            try:
+                args = parser.parse_args(arguments)
+            except SystemExit:
+                parse_failed = True
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
+
+        if not parse_failed:
+            raise self.UnexpectedSuccessParsingArgs(args)
+
+        new_out.seek(0)
+        new_err.seek(0)
+        return new_out.read(), new_err.read()
 
     def test_std_parser(self):
         """Test standard parser - no additional arguments."""
@@ -80,14 +114,19 @@ class TestArgParser(unittest.TestCase):
 
     def test_empty_args_list(self):
         """Test _help_if_no_args ArgParser option."""
-        parser = ArgParser(description="std descr", _help_if_no_args=False)
 
-        parser.parse_args([])
+        # 1. it is possible to print help if no options specified.
+        # by default this option is 'off'
+        parser = ArgParser(description="std descr")
+        args = parser.parse_args([])
+        self.assertIn('verbose', args)  # just to make sure args parsed
 
-        self.assertTrue(
-            True,
-            "should get here: parse_args should not exit because "
-            "_help_if_no_args option specified")
+        # 2. but it's possible to turn it on:
+        parser = ArgParser(description="std descr", _help_if_no_args=True)
+
+        # actually this is not a fail, just "print help and exit"
+        out_msg, _err_msg = self._assert_argparser_fails(parser, [])
+        self.assertIn("show this help message and exit", out_msg)
 
     def test_multicommand_argparse(self):
         """Test usual scenario with multi-command argparser"""
@@ -176,16 +215,79 @@ class TestArgParser(unittest.TestCase):
 
     def test_empty_args_list_multicmd_parser(self):
         """Test _help_if_no_args ArgParser option."""
+
+        # 1. it is possible to print help if no options specified.
+        # by default this option is 'off'
+        # Arguments will be parsed, default command will be executed
         parser = ArgParser(
             [("cmd1", "descr1"), ("cmd2", "descr2")],
-            description="std descr", _help_if_no_args=False,
+            description="std descr",
         )
 
         args = parser.parse_args([])
-
-        self.assertTrue(
-            True,
-            "should get here: parse_args should not exit because "
-            "_help_if_no_args option specified")
         self.assertEqual(
-            "cmd1", args.command, "first command is default one by default, hehe")
+            'cmd1', args.command,
+            "default command 'cmd1' selected because no arguments "
+            "specified and _help_if_no_args is not specified"
+        )
+
+        # 2. alternatively, show help if no arguments
+        parser = ArgParser(
+            [("cmd1", "descr1"), ("cmd2", "descr2")],
+            description="std descr", _help_if_no_args=True,
+        )
+        out_msg, _err_msg = self._assert_argparser_fails(parser, [])
+        # help in this case should mention both commands
+        self.assertIn("show this help message and exit", out_msg)
+        self.assertIn("cmd1", out_msg)
+        self.assertIn("cmd2", out_msg)
+
+    def test_multicmd_tree_structure(self):
+        """test mutli-cmd parser with nested sub-parsers."""
+
+        parser = ArgParser([
+            ("cmd1", ("help1", "descr1")),
+            ("!options", "common options"),
+            ("cmd2:cmd1,options", "cmd2 descr"),
+            ("cmd3:cmd2", "cmd3 descr"),
+            ("cmd4:cmd1", "cmd4 descr"),
+        ])
+
+        pars_cmd1 = parser.get_cmd_parser('cmd1')
+        pars_cmd1.add_argument('--arg-c1-a1', help="cmd1 arg1")
+
+        pars_opts = parser.get_cmd_parser('options')
+        pars_opts.add_argument('--arg-opt', help="ops arg")
+
+        pars_cmd2 = parser.get_cmd_parser('cmd2')
+        pars_cmd2.add_argument('--arg-c2-a2', help="cmd2 arg2")
+
+        # test cmd1
+        args = parser.parse_args(["cmd1", ])
+        self.assertIn('arg_c1_a1', args) # arg explicitely added to cmd1
+
+        # test options
+        # it is 'internal' parser, no command associated with it
+        _out_msg, err_msg = self._assert_argparser_fails(parser, ["options", ])
+        self.assertIn("invalid choice: 'options'", err_msg)
+
+        # test cmd2
+        # it should contain arguments added to 'cmd1' and 'options'
+        args = parser.parse_args(["cmd2", ])
+        self.assertIn('arg_opt', args)
+        self.assertIn('arg_c1_a1', args)
+        self.assertIn('arg_c2_a2', args)
+
+        # test cmd3
+        # it can process same arguments as cmd2
+        args = parser.parse_args(["cmd3", ])
+        self.assertIn('arg_opt', args)
+        self.assertIn('arg_c1_a1', args)
+        self.assertIn('arg_c2_a2', args)
+
+        # test cmd4
+        # it should have no args from 'options' parser
+        args = parser.parse_args(["cmd4", ])
+        self.assertNotIn('arg_opt', args)
+        self.assertIn('arg_c1_a1', args)
+        self.assertNotIn('arg_c2_a2', args)
