@@ -68,8 +68,8 @@ class TestParserTokenizer(unittest.TestCase):
 class TestArithmeticsParser(unittest.TestCase):
     """Test simple parser of arithmetic operations."""
 
-    def _make_test_parser(self, debug=False):
-        # make the parser
+    def _make_test_parser(self):
+        # make the parser for tests
 
         parser = LLParser(
             r"""
@@ -107,32 +107,32 @@ class TestArithmeticsParser(unittest.TestCase):
                     ('WORD',),
                 ]
             },
-            debug=debug,
         )
         return parser
 
     def test_simple_operations(self):
         """Parse very simple expressions."""
-        parser = self._make_test_parser(debug=False)
+        parser = self._make_test_parser()
 
-        # 1. one word
-        x = parser.parse("aa")
-        # x.printme()
-        x.cleanup()
-        # x.printme()
+        # 1. one word, cleanup later
+        x = parser.parse("aa", do_cleanup=False)
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
-        self.assertEqual(('E', 'WORD'), x.signature())
-        self.assertEqual('aa', x.value[0].value)
+        self.assertEqual(('E', 'SLAG'), x.signature())
+        self.assertEqual(('SLAG', 'WORD'), x.value[0].signature())
+        self.assertEqual("aa", x.value[0].value[0].value)
+
+        x.cleanup()
+        self.assertTrue(isinstance(x, TElement), f"{type(x)}")
+        self.assertEqual(('WORD', ), x.signature())
+        self.assertEqual('aa', x.value)
 
         # 2. single '+'
         x = parser.parse("aa + bb")
-        x.cleanup()
         self.assertEqual(('E', 'WORD', '+', 'WORD'), x.signature())
 
         # 3. single '*'
         x = parser.parse("aa * bb")
-        x = x.cleanup()
-        self.assertEqual(('E', 'WORD', '*', 'WORD'), x.signature())
+        self.assertEqual(('SLAG', 'WORD', '*', 'WORD'), x.signature())
 
     def test_multiple_operations(self):
         """parse expression with multiple aoprations"""
@@ -140,7 +140,6 @@ class TestArithmeticsParser(unittest.TestCase):
         # parser.print_detailed_descr()
 
         x = parser.parse("aa + bb * cc + dd")
-        x.cleanup()
 
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
         self.assertEqual(('E', 'WORD', '+', 'E'), x.signature())
@@ -160,7 +159,6 @@ class TestArithmeticsParser(unittest.TestCase):
         """Test more complex valid expression with braces"""
         parser = self._make_test_parser()
         x = parser.parse("(a) + ( b - c * d ) + ( x )")
-        x.cleanup()
         # x.printme()
         self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
 
@@ -168,7 +166,7 @@ class TestArithmeticsParser(unittest.TestCase):
         self.assertEqual(('SLAG', '(', 'WORD', ')'), first_slag.signature())
 
         second_slag = x.value[2]
-        self.assertEqual(('E', 'SLAG', '+', 'E'), second_slag.signature())
+        self.assertEqual(('E', 'SLAG', '+', 'SLAG'), second_slag.signature())
 
     def test_bad_expression(self):
         # test parsing bad expressions
@@ -178,10 +176,10 @@ class TestArithmeticsParser(unittest.TestCase):
             parser.parse("aa )")
 
 
-class TestListParser(unittest.TestCase):
-    """Test simple parser of list."""
+class TestListParsers(unittest.TestCase):
+    """Test misc parsers of list."""
 
-    def test_list_parser(self):
+    def test_list_parser_01(self):
         """Test simple parser of list."""
         parser = LLParser(
             r"""
@@ -201,24 +199,76 @@ class TestListParser(unittest.TestCase):
                     ('LIST',),
                 ],
                 'LIST': [
-                    ('[', 'WORD', 'OPT_LIST', ']'),
+                    ('[', 'ITEM', 'OPT_LIST', ']'),
                 ],
                 'OPT_LIST': [
-                    (',', 'WORD', 'OPT_LIST'),
+                    (',', 'ITEM', 'OPT_LIST'),
                     (',', ),
                     None,
                 ],
+                'ITEM': [
+                    ('WORD', ),
+                    ('LIST', ),
+                ],
             },
-            #debug=True,
+            keep_symbols={'E', 'LIST'},
+            lists={
+                'LIST': ('[', ',', 'OPT_LIST', ']'),
+            },
         )
+        # parser.print_detailed_descr()
 
         x = parser.parse("[ a, b, c, d]")
-        x.cleanup(keep_symbols={'LIST'})
         self.assertEqual(('E', 'LIST'), x.signature())
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
+            x.value[0].signature())
 
-        x = parser.parse("[a, b, c,]")
-        x.cleanup(keep_symbols={'LIST'})
+        x = parser.parse("[a, b, [d, e, f], c,]")
+        #x.printme()
         self.assertEqual(('E', 'LIST'), x.signature())
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'LIST', 'WORD'),
+            x.value[0].signature())
+
+    def test_list_parser_02(self):
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+            },
+            productions={
+                'E': [
+                    ('LIST', ),
+                ],
+                'LIST': [
+                    ('[', 'LIST_TAIL', ']'),
+                ],
+                'LIST_TAIL': [
+                    ('LIST_ITEM', ',', 'LIST_TAIL'),
+                    ('LIST_ITEM', ),
+                    None,
+                ],
+                'LIST_ITEM': [
+                    ('WORD', ),
+                    ('LIST', ),
+                ],
+            },
+            lists = {'LIST': ('[', ',', 'LIST_TAIL', ']')},
+        )
+        # parser.print_detailed_descr()
+        x = parser.parse("[ a, b, c, d]")
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
+            x.signature())
 
 
 class TestBadGrammar(unittest.TestCase):
@@ -226,6 +276,7 @@ class TestBadGrammar(unittest.TestCase):
 
     def test_resursive_grammar(self):
         """GrammarIsRecursive should be reported in parser constructor."""
+
         with self.assertRaises(llparser.GrammarIsRecursive) as exc:
             LLParser(
                 r"""
@@ -301,7 +352,6 @@ class TestParserWithNullProductions(unittest.TestCase):
                     ('(', 'E', ')'),
                 ],
             },
-            debug=False,
         )
 
         # parser.print_detailed_descr()

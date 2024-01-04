@@ -35,8 +35,8 @@ class GrammarIsRecursive(GrammarError):
     Means that when we expand some symbol X we can come to situation when no
     tokens consumed, but the next symbol to expand is the same symbol X.
     """
-    def __init__(self, cycle_data):
-        msg = "grammar is recursive:\n" + "\n".join(
+    def __init__(self, cycle_data, nullables):
+        msg = f"grammar is recursive:\n{nullables=}\n" + "\n".join(
             self._mk_prod_descr(cycle_element)
             for cycle_element in cycle_data
         )
@@ -95,14 +95,18 @@ class _Tokenizer:
 
     def get_all_token_names(self):
         """Get names of all tokens this tokenizer knows about."""
-        return {
-            self.synonyms.get(s, s) for s in self.matcher.groupindex.keys()
-        }
+        tokens = set(self.matcher.groupindex.keys())
+        tokens -= self.synonyms.keys()
+        tokens.update(self.synonyms.values())
+        tokens.update(self.keywords.values())
+        return tokens
 
     def tokenize(self, lines):
         """lines of text -> _Token objects"""
         if isinstance(lines, str):
             lines = list(lines.split('\n'))
+        else:
+            lines = [l.rstrip() for l in lines]
 
         line, col = 0, 0
         for line, text in enumerate(lines):
@@ -136,7 +140,7 @@ class TElement:
         self.value = value
 
     def __str__(self):
-        if self.is_leaf():
+        if not self.is_leaf():
             return f"TE<{self.name}>[" + ",".join(
                 str(x) for x in self.value) + "]"
         else:
@@ -160,9 +164,11 @@ class TElement:
         return tuple(signature)
 
     def gen_descr(self, offset=0):
+        """Generate lines of self description"""
         if isinstance(self.value, list):
             yield "  " * offset + f"{self.name}:"
             for child in self.value:
+                assert isinstance(child, TElement), f"{child=}"
                 yield from child.gen_descr(offset+1)
         else:
             yield "  " * offset + f"{self.name}: {self.value}"
@@ -172,7 +178,7 @@ class TElement:
         for x in self.gen_descr():
             print(x)
 
-    def cleanup(self, keep_symbols=None):
+    def cleanup(self, keep_symbols=None, lists=None):
         """Cleanup parsed tree.
 
         Syntax tree prepared by parser usually contains lots of nodes
@@ -180,16 +186,21 @@ class TElement:
         This method cleans up the tree. It may be more convenient to get
         usefull info from it after cleanup.
         """
-        keep_symbols = keep_symbols or set()
+        keep_symbols = keep_symbols if keep_symbols is not None else set()
+        lists = lists if lists is not None else {}
+        keep_symbols.update(lists.keys())
         if self.value is None and self.name not in keep_symbols:
             return None
         if self.is_leaf():
             return self
         values = []
+        if self.name in lists:
+            self.reduce_list(keep_symbols, lists, lists[self.name])
+            return self
         for value in self.value:
             if value is None:
                 continue
-            new_value = value.cleanup()
+            new_value = value.cleanup(keep_symbols, lists)
             if new_value is not None:
                 values.append(new_value)
         if not values:
@@ -199,11 +210,87 @@ class TElement:
         # ('E', [('SLAG', [('SOME', ('WORD', "value"))]])
         # -> ('E', [('WORD', "value")])
         if len(values) == 1:
-            if not values[0].is_leaf() and not values[0].name in keep_symbols:
-                values[0].name = self.name
-            return values[0]
+            if self.name in keep_symbols:
+                if values[0].name not in keep_symbols:
+                    self.value = values[0].value
+            else:
+                self.name = values[0].name
+                self.value = values[0].value
 
         return self
+
+    def reduce_list(self, keep_symbols, lists, list_properties):
+        """Transform self.value subtree into a [TElement, ] of list values."""
+        open_token, delimiter, tail_symbol, close_token = list_properties
+        assert isinstance(self.value, (list, tuple))
+
+        if self.value[0].name is None:
+            return
+
+        if open_token is not None:
+            assert self.value[0].name == open_token, f"{self=}, {open_token=}"
+            assert self.value[-1].name == close_token
+            self.value = self.value[1:-1]
+        new_values = []
+
+        # depending on grammar the first element may look
+        # like (item, opt_list) or like (opt_list)
+        assert len(self.value) <= 2
+        if len(self.value) == 2:
+            new_values.append(self.value[0].cleanup(keep_symbols, lists))
+            assert self.value[1].name == tail_symbol
+            tail_value = self.value[1]
+        else:
+            assert self.value[0].name == tail_symbol
+            tail_value = self.value[0]
+
+        next_elements = tail_value._reduce_tail_list(
+            keep_symbols, lists, delimiter, tail_symbol)
+        next_elements.reverse()
+        new_values.extend(next_elements)
+        self.value = new_values
+
+    def _reduce_tail_list(self, keep_symbols, lists, delimiter, tail_symbol):
+        # TElement corresponding to list tail -> [TElement, ] of list values
+        assert self.name == tail_symbol, (
+            f"{self.name=}, {tail_symbol=} {delimiter=}, {self=}")
+        assert isinstance(self.value, (list, tuple))
+        # depending on grammar implementaion, whether this is the last
+        # element or not and other factors current element may look differently
+
+        assert len(self.value) <= 3, f"{self.value=}"
+        prod_values = [
+            e for e in self.value if e.name is not None and e.name != delimiter]
+        if len(prod_values) == 2:
+            if prod_values[0].name == tail_symbol:
+                tail_elem = prod_values[0]
+                item_elem = prod_values[1]
+                assert item_elem.name != tail_symbol, f"{self.value=}"
+            else:
+                assert prod_values[1].name == tail_symbol, f"{self.value=}"
+                tail_elem = prod_values[1]
+                item_elem = prod_values[0]
+                assert item_elem.name != tail_symbol, f"{self.value=}"
+        elif len(prod_values) == 1:
+            item_elem = prod_values[0]
+            tail_elem = None
+        elif len(prod_values) == 0:
+            item_elem = None
+            tail_elem = None
+        else:
+            assert False, f"{self.value=}"
+
+        if tail_elem is not None:
+            assert item_elem is not None, f"{self.signature()=}"
+            list_values = tail_elem._reduce_tail_list(
+                keep_symbols, lists, delimiter, tail_symbol)
+        else:
+            list_values = []
+
+        if item_elem is not None:
+            list_values.append(item_elem.cleanup(keep_symbols, lists))
+
+        return list_values
 
 
 class _StackElement:
@@ -258,15 +345,17 @@ class LLParser:
             space_tokens=None,
             start_symbol_name='E',
             end_token_name="$END$",
-            debug=False,
+            keep_symbols=None,
+            lists=None,
         ):
         self.tokenizer = _Tokenizer(
             tokenizer_str,
             synonyms=synonyms, keywords=keywords, space_tokens=space_tokens)
         self.start_symbol_name = start_symbol_name
         self.end_token_name = end_token_name
+        self.keep_symbols = keep_symbols
+        self.lists = lists
         self.init_production_name = '$START$'
-        self._debug = debug
         self.productions = self._fix_empty_productions(productions)
 
         self.terminals = self.tokenizer.get_all_token_names()
@@ -293,7 +382,7 @@ class LLParser:
 
         self._verify_grammar_structure_part2(nullables)
 
-    def parse(self, lines):
+    def parse(self, lines, *, debug=False, do_cleanup=True):
         """Parse the text."""
         tokens = list(self.tokenizer.tokenize(lines))
 
@@ -301,15 +390,16 @@ class LLParser:
             self.init_production_name, 0,
             self.productions[self.init_production_name])]
         longest_stack = []
-        self._log_cur_prod(parse_stack, tokens)
+        if debug:
+            self._log_cur_prod(parse_stack, tokens)
 
         while True:
             top = parse_stack[-1]
             cur_prod = top.get_cur_prod()
-            # print(f"... trying {top.symbol} -> {cur_prod}; {top.values}")
             if len(top.values) == len(cur_prod):
                 # production matched
-                self._log_match_result(parse_stack, tokens)
+                if debug:
+                    self._log_match_result(parse_stack, tokens)
                 value = TElement(top.symbol, top.values)
                 new_token_pos = top.cur_token_pos
                 parse_stack.pop()
@@ -318,7 +408,16 @@ class LLParser:
                     # value now is the TElement corresponding to technical
                     # initial production '$START$' -> ('E', '$END$').
                     assert len(value.value) == 2
-                    return value.value[0]
+                    root = value.value[0]
+                    if debug:
+                        print("ROW RESULT:")
+                        root.printme()
+                    if do_cleanup:
+                        root.cleanup(self.keep_symbols, self.lists)
+                        if debug:
+                            print("FINAL RESULT:")
+                            root.printme()
+                    return root
                 top = parse_stack[-1]
                 top.next_matched(value, new_token_pos)
                 continue
@@ -344,13 +443,15 @@ class LLParser:
                 if prods is not None:
                     parse_stack.append(
                         _StackElement(cur_symbol, top.cur_token_pos, prods))
-                    self._log_cur_prod(parse_stack, tokens)
+                    if debug:
+                        self._log_cur_prod(parse_stack, tokens)
                     continue
 
             # current production does not match. Try to rollback
             # and attempt other options
             # Find rollback point
-            self._log_match_result(parse_stack, tokens)
+            if debug:
+                self._log_match_result(parse_stack, tokens)
             if (
                 not longest_stack
                 or longest_stack[-1].cur_token_pos < parse_stack[-1].cur_token_pos
@@ -367,7 +468,8 @@ class LLParser:
             if rollback_point >= 0:
                 parse_stack = parse_stack[:rollback_point+1]
                 parse_stack[-1].switch_to_next_prod()
-                self._log_cur_prod(parse_stack, tokens)
+                if debug:
+                    self._log_cur_prod(parse_stack, tokens)
                 continue
 
             # report fail. Looks like it's good idea to describe the path
@@ -422,6 +524,45 @@ class LLParser:
                 f"special start symbol '{self.init_production_name}' is explicitely "
                 f"used in productions")
 
+        if self.keep_symbols is not None:
+            for s in self.keep_symbols:
+                if s not in self.terminals and s not in non_terminals:
+                    raise GrammarError(
+                        f"unknown symbol '{s}' specified in {self.keep_symbols=}")
+
+        def _verify_is_terminal(symbol, descr="symbol"):
+            if symbol in self.terminals:
+                return
+            if symbol in non_terminals:
+                raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
+            raise GrammarError(f"{descr} '{symbol}' is unknown")
+
+        def _verify_is_non_terminal(symbol, descr="symbol"):
+            if symbol in non_terminals:
+                return
+            if symbol in self.terminals:
+                raise GrammarError(f"{descr} '{symbol}' is terminal")
+            raise GrammarError(f"{descr} '{symbol}' is unknown")
+
+        if self.lists is not None:
+            for list_symbol, properties in self.lists.items():
+                open_token, delimiter, tail_symbol, close_token = properties
+                _verify_is_non_terminal(list_symbol, "list symbol")
+                _verify_is_non_terminal(tail_symbol, "list tail symbol")
+                _verify_is_terminal(delimiter, "list delimiter symbol")
+                if open_token is not None:
+                    if close_token is None:
+                        raise GrammarError(
+                            f"list open symbol '{open_token}' is not None, "
+                            f"but close symbol is None")
+                else:
+                    if close_token is not None:
+                        raise GrammarError(
+                            f"list open symbol is None, "
+                            f"but close symbol '{close_token}' is not None")
+                _verify_is_terminal(open_token, "list open symbol")
+                _verify_is_terminal(close_token, "list close symbol")
+
     def _verify_grammar_structure_part2(self, nullables):
         # verification of grammar structure
         # to be called after parse_table is prepared
@@ -435,10 +576,14 @@ class LLParser:
             # depth-first-search of the same symbol
             if symbol in processed_symbols:
                 continue
-            stack = [[symbol, prods, 0, 0], ]  # (prods, cur_prod_id, cur_symbol_id)
+            # (symbol, prods, cur_prod_id, cur_symbol_id)
+            stack = [[symbol, prods, 0, 0], ]
             def _next_prod(_stack):
                 _stack[-1][2] += 1
                 _stack[-1][3] = 0
+
+            def _next_symbol(_stack):
+                _stack[-1][3] += 1
 
             while stack:
                 top = stack[-1]
@@ -447,7 +592,13 @@ class LLParser:
                     stack.pop()
                     processed_symbols.add(prod_symbol)
                     if stack:
-                        stack[-1][3] += 1
+                        top = stack[-1]
+                        cur_prod = top[1][top[2]]
+                        cur_prod_symbol = cur_prod[top[3]]
+                        if cur_prod_symbol in nullables:
+                            _next_symbol(stack)
+                        else:
+                            _next_prod(stack)
                     continue
                 cur_prod = prods[cur_prod_id]
                 if cur_symbol_id >= len(cur_prod):
@@ -460,9 +611,9 @@ class LLParser:
                         # found cycle
                         cycle_data = [
                             (s, prods[prod_id], symbol_id)
-                            for s, prods, prod_id, symbol_id in stack[i:]
+                            for s, prods, prod_id, symbol_id in stack[i:]  # stack[i:]
                         ]
-                        raise GrammarIsRecursive(cycle_data)
+                        raise GrammarIsRecursive(cycle_data, nullables)
 
                 if cur_symbol in processed_symbols:
                     _next_prod(stack)
@@ -470,17 +621,20 @@ class LLParser:
                 # cur_symbol is non-terminal. May need to go deeper
                 if cur_symbol_id > 0:
                     prev_symbol = cur_prod[cur_symbol_id-1]
-                    if prev_symbol not in nullables:
-                        # do not check current symbol because previous not nullable
-                        _next_prod(stack)
-                        continue
+                    prev_symbol_is_nullable = prev_symbol in nullables
+                else:
+                    prev_symbol_is_nullable = True
+
+                if not prev_symbol_is_nullable:
+                    # do not check current symbol because previous not nullable
+                    _next_prod(stack)
+                    continue
 
                 # do need to go deeper
                 stack.append([cur_symbol, self.productions[cur_symbol], 0, 0])
 
     def _log_cur_prod(self, parse_stack, tokens):
-        if not self._debug:
-            return
+        # log current production
         top = parse_stack[-1]
         prefix = "  "*(len(parse_stack) - 1)
         if top.cur_prod_id == 0:
@@ -493,9 +647,8 @@ class LLParser:
             top.cur_prod_id+1, len(top.prods), top.get_cur_prod())
 
     def _log_match_result(self, parse_stack, tokens):
-        if not self._debug:
-            return
-        prefix = " "*(len(parse_stack) - 1)
+        # log result of the match
+        prefix = "  "*(len(parse_stack) - 1)
         top = parse_stack[-1]
         cur_prod = top.get_cur_prod()
         is_success = len(top.values) == len(cur_prod)
@@ -530,20 +683,24 @@ class LLParser:
         for non_term, prods in productions.items():
             for prod in prods:
                 assert len(prod) > 0
-                first_symbol = prod[0]
-                if first_symbol is None:
-                    # non_term -> None productions
-                    for next_symbol in follow_sets[non_term]:
-                        parse_table[(non_term, next_symbol)].append(prod)
-                    continue
-                if first_symbol in terminals:
-                    parse_table[(non_term, first_symbol)].append(prod)
-                    continue
-                # first symbol in production is non-terminal
-                firsts = first_sets[first_symbol]
-                if non_term in nullables:
-                    firsts.update(follow_sets[non_term])
-                for first_symbol in firsts:
+                start_symbols = set()
+                for symbol in prod:
+                    if symbol is None:
+                        assert len(prod) == 1
+                        continue
+                    if symbol in terminals:
+                        start_symbols.add(symbol)
+                        break
+                    # symbol is non-terminal
+                    start_symbols |= first_sets[symbol]
+                    if symbol not in nullables:
+                        break
+                else:
+                    # all the symbols in prod are nullable
+                    assert non_term in nullables
+                    start_symbols |= follow_sets[non_term]
+
+                for first_symbol in start_symbols:
                     parse_table[(non_term, first_symbol)].append(prod)
 
         return parse_table, first_sets, follow_sets
@@ -679,11 +836,18 @@ class LLParser:
                             break
             if not fsets_updated:
                 break
+
         return fsets
 
     @staticmethod
     def _fix_empty_productions(prods_map):
         """Replace production 'None' with (None, )"""
+        for symbol, prods in prods_map.items():
+            for prod in prods:
+                assert not isinstance(prod, str), (
+                    f"invalid production {symbol} -> '{prod}'. "
+                    f"(result should be tuple, not string)")
+
         return {
             symbol: [(None, ) if prod is None else prod for prod in prods]
             for symbol, prods in prods_map.items()
