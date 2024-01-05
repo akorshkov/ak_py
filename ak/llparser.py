@@ -160,7 +160,10 @@ class TElement:
         """
         signature = [self.name]
         if not self.is_leaf():
-            signature.extend(x.name for x in self.value)
+            signature.extend(
+                x.name if x is not None else None
+                for x in self.value
+            )
         return tuple(signature)
 
     def gen_descr(self, offset=0):
@@ -168,8 +171,14 @@ class TElement:
         if isinstance(self.value, list):
             yield "  " * offset + f"{self.name}:"
             for child in self.value:
-                assert isinstance(child, TElement), f"{child=}"
-                yield from child.gen_descr(offset+1)
+                if child is None:
+                    # this should be possible only in case self is a list,
+                    # parsing results are cleaned-up, and the list contains
+                    # None values.
+                    yield "  " * (offset+1) + "None"
+                else:
+                    assert isinstance(child, TElement), f"{child=}"
+                    yield from child.gen_descr(offset+1)
         else:
             yield "  " * offset + f"{self.name}: {self.value}"
 
@@ -247,6 +256,10 @@ class TElement:
         next_elements = tail_value._reduce_tail_list(
             keep_symbols, lists, delimiter, tail_symbol)
         next_elements.reverse()
+        if next_elements and next_elements[-1] is None and delimiter is not None:
+            # this element corresponds to the empty space after the last delimiter
+            next_elements.pop()
+
         new_values.extend(next_elements)
         self.value = new_values
 

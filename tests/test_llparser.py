@@ -271,6 +271,67 @@ class TestListParsers(unittest.TestCase):
             x.signature())
 
 
+class TestListWithNoneValues(unittest.TestCase):
+    """Test list which may contain None values."""
+
+    def test_list_missing_values(self):
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<NUMBER>[0-9]+)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            |(?P<AT_SYMBOL>@)
+            |(?P<EQUAL>=)
+            |(?P<COLON>:)
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+            },
+            productions={
+                'E': [
+                    ('LIST_ITEMS', ),
+                ],
+                'LIST_ITEMS': [
+                    ('[', 'LIST_ITEMS_TAIL', ']'),
+                ],
+                'LIST_ITEMS_TAIL': [
+                    ('LIST_ITEM', ',', 'LIST_ITEMS_TAIL'),
+                    ('LIST_ITEM', ),
+                    None,
+                ],
+                'LIST_ITEM': [
+                    ('WORD', ),
+                    None,
+                ],
+            },
+            lists={
+                'LIST_ITEMS': ('[', ',', 'LIST_ITEMS_TAIL', ']'),
+            },
+        )
+        x = parser.parse("[]")
+        self.assertEqual(("LIST_ITEMS", ), x.signature())
+
+        x = parser.parse("[a]")
+        self.assertEqual(("LIST_ITEMS", "WORD"), x.signature())
+
+        x = parser.parse("[a, ]")
+        self.assertEqual(("LIST_ITEMS", "WORD"), x.signature())
+
+        x = parser.parse("[a,, ]")
+        self.assertEqual(("LIST_ITEMS", "WORD", None), x.signature())
+
+        x = parser.parse("[,]")
+        self.assertEqual(("LIST_ITEMS", None), x.signature())
+
+        x = parser.parse("[,a,]")
+        self.assertEqual(("LIST_ITEMS", None, "WORD"), x.signature())
+
+
 class TestBadGrammar(unittest.TestCase):
     """Test misc problems with grammar."""
 
