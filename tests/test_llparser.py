@@ -274,9 +274,9 @@ class TestListParsers(unittest.TestCase):
 class TextCommentsStripper(unittest.TestCase):
     """Text comments stripper."""
 
-    def test_comments_stripper(self):
-        """Text parser which supports comments in source text"""
-        parser = LLParser(
+    def _make_test_parser(self):
+        # prepare the parser for tests
+        return LLParser(
             r"""
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
@@ -316,22 +316,80 @@ class TextCommentsStripper(unittest.TestCase):
             },
         )
 
-        x = parser.parse("[a, b, /* c, d, */ c]")
+    def test_single_comment(self):
+        """Text has single comment"""
+        parser = self._make_test_parser()
+
+        x = parser.parse("[a, b, /* c, d, */ e]")
         self.assertEqual(('E', 'LIST'), x.signature())
         self.assertEqual(
             ('LIST', 'WORD', 'WORD', 'WORD'),
             x.value[0].signature())
 
+    def test_single_oneline_comment(self):
+        """Text has single comment"""
+        parser = self._make_test_parser()
+
         x = parser.parse(
             """
-/*some ;; text/* more text */ [ // no text
-a, b, /* c, d, */ c] /**/// omg
+            [a,
+            b, // x, y
+            // c, d,
+            e, f]// more comment
             """
         )
         self.assertEqual(('E', 'LIST'), x.signature())
         self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD'),
+            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
             x.value[0].signature())
+
+    def test_multiline_comment(self):
+        """Test multi-line comment."""
+        parser = self._make_test_parser()
+        x = parser.parse(
+            """
+            [a,
+            b, /* x, y
+            */ e, f]
+            """
+        )
+        self.assertEqual(('E', 'LIST'), x.signature())
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
+            x.value[0].signature())
+
+    def test_multiple_comments(self):
+        """Text has multiple comments of different types."""
+        parser = self._make_test_parser()
+
+        x = parser.parse(
+            """
+/*some ;; text/* more text */ [ // no text
+a, b, /* c, d, */ e, /**/// omg
+f /* g, h
+    */ ]//comment
+            """
+        )
+        self.assertEqual(('E', 'LIST'), x.signature())
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
+            x.value[0].signature())
+
+    def test_not_closed_comment(self):
+        """Test parsing invalid text: comment not closed."""
+        parser = self._make_test_parser()
+
+        with self.assertRaises(llparser.LexicalError) as exc:
+            parser.parse(
+                """[
+                a, /* b, c
+                ]
+                """
+            )
+
+        err_msg = str(exc.exception)
+        self.assertIn("comment is never closed", err_msg)
+        self.assertIn("(2, 19)", err_msg)
 
 
 class TestListWithNoneValues(unittest.TestCase):

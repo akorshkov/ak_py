@@ -15,12 +15,12 @@ class Error(Exception):
 
 class LexicalError(Error):
     """Error happened during lexical parsing"""
-    def __init__(self, line, col, text):
+    def __init__(self, line, col, text, descr="unexpected symbol at"):
         self.line = line
         self.col = col
         self.text = text
         super().__init__(
-            f"unexpected symbol at ({line}, {col}):\n{text}\n" +
+            f"{descr} ({line}, {col}):\n{text}\n" +
             " "*col + "^"*(len(text)-col))
 
 
@@ -530,9 +530,11 @@ class LLParser:
         if isinstance(lines, str):
             lines = [line.rstrip() for line in lines.split('\n')]
 
-        for line_id, text in enumerate(lines):
+        cur_ml_comment_end = None
+        cur_ml_comment_start_pos = None
+        cur_ml_start_line_text = None
+        for line_id, text in enumerate(lines, start=1):
             cur_pos = 0
-            cur_ml_comment_end = None
             while cur_pos < len(text):
                 if cur_ml_comment_end is not None:
                     end_pos = text.find(cur_ml_comment_end, cur_pos)
@@ -542,6 +544,8 @@ class LLParser:
                         continue
                     cur_pos = end_pos + len(cur_ml_comment_end)
                     cur_ml_comment_end = None
+                    cur_ml_comment_start_pos = None
+                    cur_ml_start_line_text = None
                     continue
                 # we are not inside a comment. Find comment start
                 comments_pos = {}
@@ -567,6 +571,8 @@ class LLParser:
                     # comment continues till end_comment_text
                     cur_pos = comment_start + len(start_comment_text)
                     cur_ml_comment_end = end_comment_text
+                    cur_ml_comment_start_pos = (line_id, comment_start)
+                    cur_ml_start_line_text = text
                 else:
                     # comments were not detected
                     if cur_pos == 0:
@@ -575,6 +581,12 @@ class LLParser:
                         yield _Tokenizer._Chunk(
                             line_id, cur_pos, text[cur_pos:], text)
                     cur_pos = len(text)
+        if cur_ml_comment_end is not None:
+            raise LexicalError(
+                cur_ml_comment_start_pos[0],
+                cur_ml_comment_start_pos[1],
+                cur_ml_start_line_text,
+                "comment is never closed")
 
     def _verify_grammar_structure_part1(self):
         # initial verification of grammar structure
