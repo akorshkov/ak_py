@@ -142,9 +142,15 @@ class _Tokenizer:
 class TElement:
     """Element of tree, which represents parsing results.
 
-    value can be:
+    After initial parse the value can be:
         - string - for terminal symbols
         - [TElement, ] - for non-terminal symbols
+
+    After cleanup the value can be:
+        - string - for terminal symbols
+        - [TElement, ] - for non-list non-terminal symbols
+        - [TElement|None, ] - for lists
+        - {key: TElement} - for maps
     """
     def __init__(self, name, value):
         self.name = name
@@ -177,10 +183,11 @@ class TElement:
             )
         return tuple(signature)
 
-    def gen_descr(self, offset=0):
+    def gen_descr(self, offset=0, print_name=True):
         """Generate lines of self description"""
         if isinstance(self.value, list):
-            yield "  " * offset + f"{self.name}:"
+            if print_name:
+                yield "  " * offset + f"{self.name}:"
             for child in self.value:
                 if child is None:
                     # this should be possible only in case self is a list,
@@ -190,6 +197,18 @@ class TElement:
                 else:
                     assert isinstance(child, TElement), f"{child=}"
                     yield from child.gen_descr(offset+1)
+        elif isinstance(self.value, dict):
+            if print_name:
+                yield "  " * offset + f"{self.name}:"
+            for map_key, map_value in self.value.items():
+                assert isinstance(map_value, TElement), f"{map_value=}"
+                if map_value.is_leaf() and not isinstance(map_value.value, dict):
+                    # make a single-line description: key: elem_name: value
+                    elem_descr = "".join(map_value.gen_descr())
+                    yield "  " * (offset+1) + f"{map_key}: {elem_descr}"
+                    continue
+                yield "  " * (offset+1) + f"{map_key}: {map_value.name}:"
+                yield from map_value.gen_descr(offset+1, print_name=False)
         else:
             yield "  " * offset + f"{self.name}: {self.value}"
 
@@ -198,7 +217,26 @@ class TElement:
         for x in self.gen_descr():
             print(x)
 
-    def cleanup(self, keep_symbols=None, lists=None):
+    def get(self, name, default=None):
+        """Get child TElement by name.
+
+        Exception is raised if more than one element with the same name exists.
+        """
+        if isinstance(self.value, dict):
+            return self.value.get(name, default)
+        matches = [
+            e
+            for e in self.value
+            if isinstance(e, TElement) and e.name == name
+        ]
+        if len(matches) == 0:
+            return default
+        elif len(matches) == 1:
+            return matches[0]
+        raise ValueError(
+            f"{self} has {len(matches)} child elements with name '{name}'")
+
+    def cleanup(self, keep_symbols=None, lists=None, maps=None):
         """Cleanup parsed tree.
 
         Syntax tree prepared by parser usually contains lots of nodes
@@ -208,6 +246,7 @@ class TElement:
         """
         keep_symbols = keep_symbols if keep_symbols is not None else set()
         lists = lists if lists is not None else {}
+        maps = maps if maps is not None else {}
         keep_symbols.update(lists.keys())
         if self.value is None and self.name not in keep_symbols:
             return None
@@ -215,12 +254,15 @@ class TElement:
             return self
         values = []
         if self.name in lists:
-            self.reduce_list(keep_symbols, lists, lists[self.name])
+            self.reduce_list(keep_symbols, lists, maps, lists[self.name])
+            return self
+        elif self.name in maps:
+            self.reduce_map(keep_symbols, lists, maps, maps[self.name])
             return self
         for value in self.value:
             if value is None:
                 continue
-            new_value = value.cleanup(keep_symbols, lists)
+            new_value = value.cleanup(keep_symbols, lists, maps)
             if new_value is not None:
                 values.append(new_value)
         if not values:
@@ -239,7 +281,7 @@ class TElement:
 
         return self
 
-    def reduce_list(self, keep_symbols, lists, list_properties):
+    def reduce_list(self, keep_symbols, lists, maps, list_properties):
         """Transform self.value subtree into a [TElement, ] of list values."""
         open_token, delimiter, tail_symbol, close_token = list_properties
         assert isinstance(self.value, (list, tuple))
@@ -257,7 +299,7 @@ class TElement:
         # like (item, opt_list) or like (opt_list)
         assert len(self.value) <= 2
         if len(self.value) == 2:
-            new_values.append(self.value[0].cleanup(keep_symbols, lists))
+            new_values.append(self.value[0].cleanup(keep_symbols, lists, maps))
             assert self.value[1].name == tail_symbol
             tail_value = self.value[1]
         else:
@@ -265,7 +307,7 @@ class TElement:
             tail_value = self.value[0]
 
         next_elements = tail_value._reduce_tail_list(
-            keep_symbols, lists, delimiter, tail_symbol)
+            keep_symbols, lists, maps, delimiter, tail_symbol)
         next_elements.reverse()
         if next_elements and next_elements[-1] is None and delimiter is not None:
             # this element corresponds to the empty space after the last delimiter
@@ -274,7 +316,7 @@ class TElement:
         new_values.extend(next_elements)
         self.value = new_values
 
-    def _reduce_tail_list(self, keep_symbols, lists, delimiter, tail_symbol):
+    def _reduce_tail_list(self, keep_symbols, lists, maps, delimiter, tail_symbol):
         # TElement corresponding to list tail -> [TElement, ] of list values
         assert self.name == tail_symbol, (
             f"{self.name=}, {tail_symbol=} {delimiter=}, {self=}")
@@ -307,14 +349,78 @@ class TElement:
         if tail_elem is not None:
             assert item_elem is not None, f"{self.signature()=}"
             list_values = tail_elem._reduce_tail_list(
-                keep_symbols, lists, delimiter, tail_symbol)
+                keep_symbols, lists, maps, delimiter, tail_symbol)
         else:
             list_values = []
 
         if item_elem is not None:
-            list_values.append(item_elem.cleanup(keep_symbols, lists))
+            list_values.append(item_elem.cleanup(keep_symbols, lists, maps))
 
         return list_values
+
+    def reduce_map(self, keep_symbols, lists, maps, map_properties):
+        """Transform self.value subtree into {name: TElement}"""
+        (
+            open_token,
+            map_elements_name,
+            _items_delimiter,
+            _map_element_name,
+            _delimiter,
+            close_token
+        ) = map_properties
+        assert isinstance(self.value, (list, tuple))
+
+        if self.value[0].name is None:
+            return
+
+        assert len(self.value) == 3, "f{e}"
+        assert self.value[0].name == open_token
+        assert self.value[1].name == map_elements_name
+        assert self.value[2].name == close_token
+
+        self.value = self.value[1]._reduce_elements_map_tail(
+            keep_symbols, lists, maps, map_properties)
+
+        return
+
+    def _reduce_elements_map_tail(self, keep_symbols, lists, maps, map_properties):
+        (
+            _open_token,
+            map_elements_name,
+            items_delimiter,
+            map_element_name,
+            delimiter,
+            _close_token
+        ) = map_properties
+
+        assert self.name == map_elements_name
+
+        if len(self.value) == 0:
+            return {}
+
+        if self.value[-1].name != map_elements_name:
+            the_map = {}
+        else:
+            the_map = self.value[-1]._reduce_elements_map_tail(
+                keep_symbols, lists, maps, map_properties)
+
+        child_elements = []
+        for e in self.value:
+            if e.name == map_element_name:
+                child_elements.append(e)
+            elif e.name in (items_delimiter, map_elements_name):
+                continue
+            else:
+                assert False, f"unexpected element {e}"
+
+        for item_element in child_elements:
+            assert len(item_element.value) == 3
+            assert item_element.value[1].name == delimiter
+            key = item_element.value[0].value
+            value = item_element.value[2].cleanup(keep_symbols, lists, maps)
+            the_map[key] = value
+
+        return the_map
 
 
 class _StackElement:
@@ -372,6 +478,7 @@ class LLParser:
             end_token_name="$END$",
             keep_symbols=None,
             lists=None,
+            maps=None,
         ):
         self.tokenizer = _Tokenizer(
             tokenizer_str,
@@ -399,6 +506,7 @@ class LLParser:
         self.end_token_name = end_token_name
         self.keep_symbols = keep_symbols
         self.lists = lists
+        self.maps = maps
         self.init_production_name = '$START$'
         self.productions = self._fix_empty_productions(productions)
 
@@ -459,7 +567,7 @@ class LLParser:
                         print("ROW RESULT:")
                         root.printme()
                     if do_cleanup:
-                        root.cleanup(self.keep_symbols, self.lists)
+                        root.cleanup(self.keep_symbols, self.lists, self.maps)
                         if debug:
                             print("FINAL RESULT:")
                             root.printme()

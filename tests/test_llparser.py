@@ -231,6 +231,22 @@ class TestListParsers(unittest.TestCase):
             ('LIST', 'WORD', 'WORD', 'LIST', 'WORD'),
             x.value[0].signature())
 
+        # get TElement.get method
+        list_elem = x.get('LIST')
+        self.assertIs(list_elem, x.value[0])
+
+        child_list = list_elem.get('LIST')
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD'),
+            child_list.signature())
+
+        with self.assertRaises(ValueError) as exc:
+            child_list.get('WORD')
+
+        err_msg = str(exc.exception)
+        self.assertIn("has 3 child elements", err_msg)
+        self.assertIn("'WORD'", err_msg)
+
     def test_list_parser_02(self):
         parser = LLParser(
             r"""
@@ -453,6 +469,83 @@ class TestListWithNoneValues(unittest.TestCase):
         self.assertEqual(("LIST_ITEMS", None, "WORD"), x.signature())
 
 
+class TestMapGrammar(unittest.TestCase):
+    """Test grammar of map"""
+
+    def test_map_grammar(self):
+        """Test grammar of map"""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            |(?P<BR_OPEN_CURL>\{)
+            |(?P<BR_CLOSE_CURL>\})
+            |(?P<COLON>:)
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN_CURL': '{',
+                'BR_CLOSE_CURL': '}',
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+                'COLON': ':',
+            },
+            productions={
+                'E': [
+                    ('LIST', ),
+                ],
+                'LIST': [
+                    ('[', 'LIST_ITEMS_TAIL', ']'),
+                ],
+                'LIST_ITEMS_TAIL': [
+                    ('LIST_ITEM', ',', 'LIST_ITEMS_TAIL'),
+                    ('LIST_ITEM', ),
+                    None,
+                ],
+                'LIST_ITEM': [
+                    ('VALUE', ),
+                    None,
+                ],
+                'VALUE': [
+                    ('WORD', ),
+                    ('LIST', ),
+                    ('MAP', ),
+                ],
+                'MAP': [
+                    ('{', 'MAP_ELEMENTS', '}'),
+                ],
+                'MAP_ELEMENTS': [
+                    ('MAP_ELEMENT', ',', 'MAP_ELEMENTS'),
+                    ('MAP_ELEMENT', ),
+                    None,
+                ],
+                'MAP_ELEMENT': [
+                    ('WORD', ':', 'VALUE'),
+                ],
+            },
+            lists={
+                'LIST': ('[', ',', 'LIST_ITEMS_TAIL', ']'),
+            },
+            maps={
+                'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),
+            },
+        )
+
+        x = parser.parse(
+            """[
+            {
+                a:aa, b: bb, c: cc, x: [a1, b1, c1], d: dd,
+                y: {q: qq, z: {r: rr}}
+            }]
+            """)
+        self.assertEqual(('LIST', 'MAP'), x.signature())
+        the_map = x.value[0]
+        self.assertEqual(('MAP', ), the_map.signature())
+
+
 class TestBadGrammar(unittest.TestCase):
     """Test misc problems with grammar."""
 
@@ -536,8 +629,5 @@ class TestParserWithNullProductions(unittest.TestCase):
             },
         )
 
-        # parser.print_detailed_descr()
-
         x = parser.parse("a + b + c*x*y*z + d")
         x.cleanup()
-        # x.printme()
