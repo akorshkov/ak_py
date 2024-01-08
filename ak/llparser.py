@@ -80,6 +80,16 @@ class _Token:
 
 
 class _Tokenizer:
+    # split line of text into tokens
+    class _Chunk:
+        # line of text to tokenize
+        __slots__ = "line_number", "start_pos", "text", "orig_text"
+        def __init__(self, line_number, start_pos, text, orig_text):
+            self.line_number = line_number
+            self.start_pos = start_pos
+            self.text = text
+            self.orig_text = text if orig_text is None else orig_text
+
     def __init__(
             self,
             tokenizer_str,
@@ -101,20 +111,21 @@ class _Tokenizer:
         tokens.update(self.keywords.values())
         return tokens
 
-    def tokenize(self, lines):
-        """lines of text -> _Token objects"""
-        if isinstance(lines, str):
-            lines = list(lines.split('\n'))
-        else:
-            lines = [l.rstrip() for l in lines]
+    def tokenize(self, chunks):
+        """chunks of text -> _Token objects"""
+        if isinstance(chunks, str):
+            chunks = [
+                self._Chunk(i, 0, line.rstrip(), None)
+                for i, line in enumerate(chunks.split('\n'))
+            ]
 
         line, col = 0, 0
-        for line, text in enumerate(lines):
+        for chunk in chunks:
             col = 0
-            while col < len(text):
-                match = self.matcher.match(text, col)
+            while col < len(chunk.text):
+                match = self.matcher.match(chunk.text, col)
                 if match is None:
-                    raise LexicalError(line, col, text)
+                    raise LexicalError(line, col, chunk.text)
                 token_name = match.lastgroup
                 value = match.group(token_name)
                 token_name = self.synonyms.get(token_name, token_name)
@@ -123,7 +134,7 @@ class _Tokenizer:
                     # this token is not a word, but keyword
                     token_name = keyword_token
                 if token_name not in self.space_tokens:
-                    yield _Token(token_name, line, col, value)
+                    yield _Token(token_name, line, chunk.start_pos + col, value)
                 col = match.end()
         yield _Token(self.end_token_name, line, col, None)
 
@@ -353,6 +364,7 @@ class LLParser:
             tokenizer_str,
             *,
             productions,
+            comments=None,
             synonyms=None,
             keywords=None,
             space_tokens=None,
@@ -364,6 +376,25 @@ class LLParser:
         self.tokenizer = _Tokenizer(
             tokenizer_str,
             synonyms=synonyms, keywords=keywords, space_tokens=space_tokens)
+
+        assert comments is None or isinstance(comments, (list, tuple)), (
+            f"'comments' must be list or tuple of comments descriptions, "
+            f"got: {comments}")
+        comments = comments if comments is not None else []
+        self.eol_comments = set()
+        self.ml_comments = {}  # {start_comment_text: end_comment_text}
+        for comment_data in comments:
+            if isinstance(comment_data, str):
+                # this is 'to-end-of-line' comment
+                self.eol_comments.add(comment_data)
+            elif isinstance(comment_data, (list, tuple)):
+                assert len(comment_data) == 2, (
+                    f"expected (start_comment_text, end_comment_text), "
+                    f"got {comment_data}")
+                self.ml_comments[comment_data[0]] = comment_data[1]
+            else:
+                assert False
+
         self.start_symbol_name = start_symbol_name
         self.end_token_name = end_token_name
         self.keep_symbols = keep_symbols
@@ -397,7 +428,9 @@ class LLParser:
 
     def parse(self, lines, *, debug=False, do_cleanup=True):
         """Parse the text."""
-        tokens = list(self.tokenizer.tokenize(lines))
+        tokens = list(
+            self.tokenizer.tokenize(self._strip_comments(lines))
+        )
 
         parse_stack = [_StackElement(
             self.init_production_name, 0,
@@ -491,6 +524,57 @@ class LLParser:
             next_tokens = tokens[top.start_token_pos:top.start_token_pos+5]
             attempted_prods = top.prods
             raise ParsingError(top.symbol, next_tokens, attempted_prods)
+
+    def _strip_comments(self, lines):
+        # remove comments from source text, yield _Tokenizer._Chunk
+        if isinstance(lines, str):
+            lines = [line.rstrip() for line in lines.split('\n')]
+
+        for line_id, text in enumerate(lines):
+            cur_pos = 0
+            cur_ml_comment_end = None
+            while cur_pos < len(text):
+                if cur_ml_comment_end is not None:
+                    end_pos = text.find(cur_ml_comment_end, cur_pos)
+                    if end_pos == -1:
+                        # the comment continues till end of line
+                        cur_pos = len(text)
+                        continue
+                    cur_pos = end_pos + len(cur_ml_comment_end)
+                    cur_ml_comment_end = None
+                    continue
+                # we are not inside a comment. Find comment start
+                comments_pos = {}
+                for start_comment_text, end_comment_text in self.ml_comments.items():
+                    start = text.find(start_comment_text, cur_pos)
+                    if start != -1:
+                        comments_pos[start] = (start_comment_text, end_comment_text)
+                for start_comment_text in self.eol_comments:
+                    start = text.find(start_comment_text, cur_pos)
+                    if start != -1:
+                        comments_pos[start] = (start_comment_text, None)
+                if comments_pos:
+                    comment_start = min(comments_pos.keys())
+                    start_comment_text, end_comment_text = comments_pos[comment_start]
+                    if comment_start > cur_pos:
+                        # report chunk of uncommented text
+                        yield _Tokenizer._Chunk(
+                            line_id, cur_pos, text[cur_pos:comment_start], text)
+                    if end_comment_text is None:
+                        # comment continues till end of line
+                        cur_pos = len(text)
+                        break
+                    # comment continues till end_comment_text
+                    cur_pos = comment_start + len(start_comment_text)
+                    cur_ml_comment_end = end_comment_text
+                else:
+                    # comments were not detected
+                    if cur_pos == 0:
+                        yield _Tokenizer._Chunk(line_id, 0, text, text)
+                    else:
+                        yield _Tokenizer._Chunk(
+                            line_id, cur_pos, text[cur_pos:], text)
+                    cur_pos = len(text)
 
     def _verify_grammar_structure_part1(self):
         # initial verification of grammar structure

@@ -271,6 +271,69 @@ class TestListParsers(unittest.TestCase):
             x.signature())
 
 
+class TextCommentsStripper(unittest.TestCase):
+    """Text comments stripper."""
+
+    def test_comments_stripper(self):
+        """Text parser which supports comments in source text"""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+            },
+            comments=[
+                "//",
+                ('/*', '*/'),
+            ],
+            productions={
+                'E': [
+                    ('LIST',),
+                ],
+                'LIST': [
+                    ('[', 'ITEM', 'OPT_LIST', ']'),
+                ],
+                'OPT_LIST': [
+                    (',', 'ITEM', 'OPT_LIST'),
+                    (',', ),
+                    None,
+                ],
+                'ITEM': [
+                    ('WORD', ),
+                    ('LIST', ),
+                ],
+            },
+            keep_symbols={'E', 'LIST'},
+            lists={
+                'LIST': ('[', ',', 'OPT_LIST', ']'),
+            },
+        )
+
+        x = parser.parse("[a, b, /* c, d, */ c]")
+        self.assertEqual(('E', 'LIST'), x.signature())
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD'),
+            x.value[0].signature())
+
+        x = parser.parse(
+            """
+/*some ;; text/* more text */ [ // no text
+a, b, /* c, d, */ c] /**/// omg
+            """
+        )
+        self.assertEqual(('E', 'LIST'), x.signature())
+        self.assertEqual(
+            ('LIST', 'WORD', 'WORD', 'WORD'),
+            x.value[0].signature())
+
+
 class TestListWithNoneValues(unittest.TestCase):
     """Test list which may contain None values."""
 
