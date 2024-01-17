@@ -225,13 +225,13 @@ class TestListParsers(unittest.TestCase):
             x.value[0].signature())
 
         x = parser.parse("[a, b, [d, e, f], c,]")
-        #x.printme()
+        # x.printme()
         self.assertEqual(('E', 'LIST'), x.signature())
         self.assertEqual(
             ('LIST', 'WORD', 'WORD', 'LIST', 'WORD'),
             x.value[0].signature())
 
-        # get TElement.get method
+        # test TElement.get method
         list_elem = x.get('LIST')
         self.assertIs(list_elem, x.value[0])
 
@@ -246,6 +246,14 @@ class TestListParsers(unittest.TestCase):
         err_msg = str(exc.exception)
         self.assertIn("has 3 child elements", err_msg)
         self.assertIn("'WORD'", err_msg)
+
+        # test TElement.get_path_val method
+        inner_list = x.get_path_val("LIST.LIST")
+        self.assertIsInstance(inner_list, list)
+        self.assertEqual(3, len(inner_list))
+
+        missing_elem = x.get_path_val("LIST.E")
+        self.assertIsNone(missing_elem)
 
     def test_list_parser_02(self):
         parser = LLParser(
@@ -472,9 +480,9 @@ class TestListWithNoneValues(unittest.TestCase):
 class TestMapGrammar(unittest.TestCase):
     """Test grammar of map"""
 
-    def test_map_grammar(self):
-        """Test grammar of map"""
-        parser = LLParser(
+    def _make_test_parser(self):
+        # prepare the parser for tests
+        return LLParser(
             r"""
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
@@ -534,6 +542,10 @@ class TestMapGrammar(unittest.TestCase):
             },
         )
 
+    def test_map_grammar(self):
+        """Test grammar of map"""
+        parser = self._make_test_parser()
+
         x = parser.parse(
             """[
             {
@@ -544,6 +556,19 @@ class TestMapGrammar(unittest.TestCase):
         self.assertEqual(('LIST', 'MAP'), x.signature())
         the_map = x.value[0]
         self.assertEqual(('MAP', ), the_map.signature())
+
+    def test_map_trailing_comma(self):
+        """Test parsing of a map with trailing comma"""
+        parser = self._make_test_parser()
+
+        x = parser.parse("[{a: aa,}]")
+        # x.printme()
+        the_map = x.value[0].value
+        self.assertEqual({'a'}, the_map.keys())
+
+        val = the_map['a']
+        self.assertIsInstance(val, TElement)
+        self.assertEqual('aa', val.value)
 
 
 class TestBadGrammar(unittest.TestCase):

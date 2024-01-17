@@ -236,6 +236,24 @@ class TElement:
         raise ValueError(
             f"{self} has {len(matches)} child elements with name '{name}'")
 
+    def get_path_val(self, path, default=None):
+        """Get value of descendant by path.
+
+        Exception is raised if on some step more than one element with the expected
+        name exists.
+        """
+        if isinstance(path, str):
+            path = path.split('.')
+
+        cur_elem = self
+        for p in path:
+            if not isinstance(cur_elem, TElement):
+                return default
+            cur_elem = cur_elem.get(p)
+        if not isinstance(cur_elem, TElement):
+            return default
+        return cur_elem.value
+
     def cleanup(self, keep_symbols=None, lists=None, maps=None):
         """Cleanup parsed tree.
 
@@ -410,6 +428,11 @@ class TElement:
                 child_elements.append(e)
             elif e.name in (items_delimiter, map_elements_name):
                 continue
+            elif e.name is None:
+                # self is a map tail, but it contains no elements
+                # (there is a ',' after last element)
+                assert len(self.value) == 1
+                break
             else:
                 assert False, f"unexpected element {e}"
 
