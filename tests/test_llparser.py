@@ -121,7 +121,7 @@ class TestArithmeticsParser(unittest.TestCase):
         self.assertEqual(('SLAG', 'WORD'), x.value[0].signature())
         self.assertEqual("aa", x.value[0].value[0].value)
 
-        x.cleanup()
+        parser.cleanup(x)
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
         self.assertEqual(('WORD', ), x.signature())
         self.assertEqual('aa', x.value)
@@ -248,12 +248,20 @@ class TestListParsers(unittest.TestCase):
         self.assertIn("'WORD'", err_msg)
 
         # test TElement.get_path_val method
+        inner_elem = x.get_path_elem("LIST.LIST")
+        self.assertIsInstance(inner_elem, TElement)
+
         inner_list = x.get_path_val("LIST.LIST")
         self.assertIsInstance(inner_list, list)
         self.assertEqual(3, len(inner_list))
 
-        missing_elem = x.get_path_val("LIST.E")
+        self.assertIs(inner_list, inner_elem.value)
+
+        missing_elem = x.get_path_elem("LIST.E")
         self.assertIsNone(missing_elem)
+
+        missing_val = x.get_path_val("LIST.E")
+        self.assertIsNone(missing_val)
 
     def test_list_parser_02(self):
         parser = LLParser(
@@ -459,7 +467,7 @@ class TestListWithNoneValues(unittest.TestCase):
             },
         )
         x = parser.parse("[]")
-        self.assertEqual(("LIST_ITEMS", ), x.signature())
+        self.assertEqual(("LIST_ITEMS", ), x.signature(), f"{x}")
 
         x = parser.parse("[a]")
         self.assertEqual(("LIST_ITEMS", "WORD"), x.signature())
@@ -562,13 +570,40 @@ class TestMapGrammar(unittest.TestCase):
         parser = self._make_test_parser()
 
         x = parser.parse("[{a: aa,}]")
-        # x.printme()
+
         the_map = x.value[0].value
         self.assertEqual({'a'}, the_map.keys())
 
         val = the_map['a']
         self.assertIsInstance(val, TElement)
         self.assertEqual('aa', val.value)
+
+    def test_telements_clone(self):
+        """Test TElement helper methods"""
+        parser = self._make_test_parser()
+
+        x = parser.parse(
+            """[
+            {
+                a:aa, b: bb, c: cc, x: [a1, b1, c1], d: dd,
+                y: {q: qq, z: {r: rr}}
+            }]
+            """,
+            do_cleanup=False,
+        )
+
+        orig_x_descr = str(x)
+        cloned_x = x.clone()
+        clone_x_descr = str(cloned_x)
+        self.assertEqual(orig_x_descr, clone_x_descr)
+
+        parser.cleanup(x)
+        # make sure cleanup of the tree does not affect the clone
+        new_clone_descr = str(cloned_x)
+        self.assertEqual(clone_x_descr, new_clone_descr)
+
+        cleanuped = str(x)
+        self.assertNotEqual(orig_x_descr, cleanuped)
 
 
 class TestBadGrammar(unittest.TestCase):
@@ -609,10 +644,47 @@ class TestBadGrammar(unittest.TestCase):
         self.assertIn("'NN' -> ['GG', <'TT'>, 'WORD']", err_msg)
 
 
-class TestParserWithNullProductions(unittest.TestCase):
+class TestSimpleParserWithNullProductions(unittest.TestCase):
+    """Test very primitive parser with nullable productions."""
+
+    def test_parser(self):
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            """,
+            productions={
+                'E': [
+                    ('WORD', 'OPT_WORD'),
+                ],
+                'OPT_WORD': [
+                    ('WORD', ),
+                    None,
+                ],
+            },
+            keep_symbols={'E'},
+        )
+
+        x = parser.parse("aaa", do_cleanup=False)
+        self.assertEqual(
+            ('E', 'WORD', 'OPT_WORD'), x.signature(),
+            f"subtree is:\n{x}",
+        )
+        opt_word_elem = x.get("OPT_WORD")
+        self.assertIsInstance(opt_word_elem, TElement)
+        self.assertIsNone(opt_word_elem.value)
+
+        x = parser.parse("aaa")
+        self.assertEqual(
+            ('E', 'WORD'), x.signature(),
+            f"subtree is:\n{x}",
+        )
+
+
+class TestMathParserWithNullProductions(unittest.TestCase):
     """Test arithmetic parser with null productions"""
 
-    def test_parser_null_productins(self):
+    def test_math_parser_null_productins(self):
         parser = LLParser(
             r"""
             (?P<SPACE>\s+)
@@ -655,4 +727,6 @@ class TestParserWithNullProductions(unittest.TestCase):
         )
 
         x = parser.parse("a + b + c*x*y*z + d")
-        x.cleanup()
+        # x.printme()
+        self.assertEqual("E", x.name)
+        self.assertEqual("b", x.get_path_val("EE.E.WORD"))
