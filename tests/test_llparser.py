@@ -211,7 +211,7 @@ class TestListParsers(unittest.TestCase):
                     ('LIST', ),
                 ],
             },
-            keep_symbols={'E', 'LIST'},
+            keep_symbols={'E'},
             lists={
                 'LIST': ('[', ',', 'OPT_LIST', ']'),
             },
@@ -427,8 +427,9 @@ f /* g, h
 class TestListWithNoneValues(unittest.TestCase):
     """Test list which may contain None values."""
 
-    def test_list_missing_values(self):
-        parser = LLParser(
+    def _make_test_parser(self):
+        # prepare the parser for tests
+        return LLParser(
             r"""
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
@@ -466,8 +467,18 @@ class TestListWithNoneValues(unittest.TestCase):
                 'LIST_ITEMS': ('[', ',', 'LIST_ITEMS_TAIL', ']'),
             },
         )
+
+    def test_list_missing_values(self):
+        """Test list with 'missing' values.
+
+        For example [a, , b,].
+        """
+        parser = self._make_test_parser()
+
         x = parser.parse("[]")
         self.assertEqual(("LIST_ITEMS", ), x.signature(), f"{x}")
+        self.assertIsInstance(x.value, list, "actual x:\n{x}")
+        self.assertEqual(0, len(x.value))
 
         x = parser.parse("[a]")
         self.assertEqual(("LIST_ITEMS", "WORD"), x.signature())
@@ -483,6 +494,131 @@ class TestListWithNoneValues(unittest.TestCase):
 
         x = parser.parse("[,a,]")
         self.assertEqual(("LIST_ITEMS", None, "WORD"), x.signature())
+
+
+class TestOptionalLists(unittest.TestCase):
+    """Test processing of elements which can expand to null or list"""
+
+    _PARSER = LLParser(
+        r"""
+        (?P<SPACE>\s+)
+        |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+        |(?P<NUMBER>[0-9]+)
+        """,
+        productions={
+            'E': [
+                ('LIST_WORDS', 'NUMBER'),
+            ],
+            'LIST_WORDS': [
+                ('WORD', 'LIST_WORDS'),
+                None,
+            ]
+        },
+        lists={
+            'LIST_WORDS': (None, None, 'LIST_WORDS', None),
+        }
+    )
+
+    def test_not_empty_list(self):
+        """just to make sure parser works correctly."""
+
+        x = self._PARSER.parse("a b c 10")
+        the_list = x.get_path_val('LIST_WORDS')
+        self.assertIsInstance(the_list, list, f"parsed tree:\n{x}")
+        self.assertEqual(3, len(the_list), f"parsed tree:\n{x}")
+
+    def test_empty_list(self):
+        """Test situation when the optional list is not present in source text."""
+
+        x = self._PARSER.parse("10", do_cleanup=False)
+        list_tree_elem = x.get_path_elem('LIST_WORDS')
+        self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
+        # LIST_WORDS is nullable, it is exapnded to None, so, the list is not
+        # present in source, so, the value is None
+        self.assertIsNone(list_tree_elem.value, f"parsed tree:\n{x}")
+
+        x = self._PARSER.parse("10")
+        list_tree_elem = x.get_path_elem('LIST_WORDS')
+        # cleanup operation removes LIST_WORDS element because it's value is None
+        self.assertIsNone(
+            list_tree_elem,
+            f"parsed tree:\n{x}\ntree element corresponding to list:"
+            f"\n{list_tree_elem}"
+        )
+
+
+class TestOptionalListsWithBracers(unittest.TestCase):
+    """Test processing of elemets which can expand to null or list.
+
+    Test is similar to TestOptionalLists, but in this grammar the list is
+    explicitely enclosed in bracers.
+    """
+
+    _PARSER = LLParser(
+        r"""
+        (?P<SPACE>\s+)
+        |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+        |(?P<NUMBER>[0-9]+)
+        |(?P<BR_OPEN>\[)
+        |(?P<BR_CLOSE>\])
+        """,
+        synonyms={
+            'BR_OPEN': '[',
+            'BR_CLOSE': ']',
+        },
+        productions={
+            'E': [
+                ('LIST_WORDS', 'NUMBER'),
+            ],
+            'LIST_WORDS': [
+                ('[', 'LIST_WORDS_TAIL', ']'),
+                None,
+            ],
+            'LIST_WORDS_TAIL': [
+                ('WORD', 'LIST_WORDS_TAIL'),
+                None,
+            ],
+        },
+        lists={
+            'LIST_WORDS': ('[', None, 'LIST_WORDS_TAIL', ']'),
+        }
+    )
+
+    def test_not_empty_list(self):
+        """just to make sure parser works correctly."""
+
+        x = self._PARSER.parse("[a b c] 10")
+        the_list = x.get_path_val('LIST_WORDS')
+        self.assertIsInstance(the_list, list, f"parsed tree:\n{x}")
+        self.assertEqual(3, len(the_list), f"parsed tree:\n{x}")
+
+    def test_missing_list(self):
+        """The list is not present => element removed from result tree."""
+
+        x = self._PARSER.parse("10", do_cleanup=False)
+        list_tree_elem = x.get_path_elem('LIST_WORDS')
+        self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
+        # LIST_WORDS is nullable, it is exapnded to None, so, the list is not
+        # present in source, so, the value is None
+        self.assertIsNone(list_tree_elem.value, f"parsed tree:\n{x}")
+
+        x = self._PARSER.parse("10")
+        list_tree_elem = x.get_path_elem('LIST_WORDS')
+        # cleanup operation removes LIST_WORDS element because it's value is None
+        self.assertIsNone(
+            list_tree_elem,
+            f"parsed tree:\n{x}\ntree element corresponding to list:"
+            f"\n{list_tree_elem}"
+        )
+
+    def test_empty_list(self):
+        """The list is empty => element is still present in result."""
+
+        x = self._PARSER.parse("[] 10")
+        list_tree_elem = x.get_path_elem('LIST_WORDS')
+        self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
+        self.assertIsInstance(list_tree_elem.value, list, f"parsed tree:\n{x}")
+        self.assertEqual(0, len(list_tree_elem.value), f"parsed tree:\n{x}")
 
 
 class TestMapGrammar(unittest.TestCase):

@@ -296,7 +296,6 @@ class TElement:
         keep_symbols = keep_symbols if keep_symbols is not None else set()
         lists = lists if lists is not None else {}
         maps = maps if maps is not None else {}
-        keep_symbols.update(lists.keys())
         if self.value is None and self.name not in keep_symbols:
             return
 
@@ -354,10 +353,12 @@ class TElement:
                 # null production - that is there is no list element.
                 list_element.cleanup(keep_symbols, lists, maps)
                 new_values.append(list_element)
-            assert self.value[1].name == tail_symbol
+            assert self.value[1].name == tail_symbol, (
+                f"expected {tail_symbol}; got:\n{self.value[0]}")
             tail_value = self.value[1]
         else:
-            assert self.value[0].name == tail_symbol
+            assert self.value[0].name == tail_symbol, (
+                f"expected {tail_symbol}; got:\n{self.value[0]}")
             tail_value = self.value[0]
 
         next_elements = tail_value._reduce_tail_list(
