@@ -139,24 +139,129 @@ class _Tokenizer:
         yield _Token(self.end_token_name, line, col, None)
 
 
+class TElementCleanupRules:
+    """Rules for transforming TElement tree.
+
+    Results of the parsing are presented in a form of a tree of TElement.
+    The tree can be simplified (for example, subtree corresponding to a list
+    can be substituted with actual list). This object contains rules of
+    such transformations.
+    """
+
+    def __init__(self, *, keep_symbols=None, reducing_symbols=None, lists=None, maps=None):
+        self.keep_symbols = set() if keep_symbols is None else keep_symbols
+        self.reducing_symbols = {} if reducing_symbols is None else reducing_symbols
+        self.lists = lists if lists is not None else {}
+        self.maps = maps if maps is not None else {}
+
+    def verify_integrity(self, terminals, non_terminals):
+        """Verify correctness of rules."""
+
+        for s in self.keep_symbols:
+            if s not in terminals and s not in non_terminals:
+                raise GrammarError(
+                    f"unknown symbol '{s}' specified in {self.keep_symbols=}")
+
+        for s in self.reducing_symbols.keys():
+            if s not in terminals and s not in non_terminals:
+                raise GrammarError(
+                    f"unknown symbol '{s}' specified in {self.reducing_symbols=}")
+
+        def _verify_is_terminal(symbol, descr="symbol"):
+            if symbol in terminals:
+                return
+            if symbol in non_terminals:
+                raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
+            raise GrammarError(f"{descr} '{symbol}' is unknown")
+
+        def _verify_is_non_terminal(symbol, descr="symbol"):
+            if symbol in non_terminals:
+                return
+            if symbol in terminals:
+                raise GrammarError(f"{descr} '{symbol}' is terminal")
+            raise GrammarError(f"{descr} '{symbol}' is unknown")
+
+        for list_symbol, properties in self.lists.items():
+            if len(properties) != 4:
+                raise GrammarError(
+                    f"invalid cleanup rules for list symbol "
+                    f"'{list_symbol}': {properties}. \n"
+                    f"Expected tuple: "
+                    f"(open_token, delimiter, tail_symbol, close_token)")
+            open_token, delimiter, tail_symbol, close_token = properties
+            _verify_is_non_terminal(list_symbol, "list symbol")
+            _verify_is_non_terminal(tail_symbol, "list tail symbol")
+            _verify_is_terminal(delimiter, "list delimiter symbol")
+            if open_token is not None:
+                if close_token is None:
+                    raise GrammarError(
+                        f"list open symbol '{open_token}' is not None, "
+                        f"but close symbol is None")
+            else:
+                if close_token is not None:
+                    raise GrammarError(
+                        f"list open symbol is None, "
+                        f"but close symbol '{close_token}' is not None")
+            _verify_is_terminal(open_token, "list open symbol")
+            _verify_is_terminal(close_token, "list close symbol")
+
+        for map_symbol, properties in self.maps.items():
+            if len(properties) != 6:
+                raise GrammarError(
+                    f"invalid cleanup rules for map symbol "
+                    f"'{map_symbol}': {properties}. \n"
+                    f"Expected tuple: "
+                    f"(open_token, map_elements_name, items_delimiter, "
+                    f"map_element_name, delimiter, close_token)"
+                )
+            (
+                open_token,
+                map_elements_name,
+                items_delimiter,
+                map_element_name,
+                delimiter,
+                close_token
+            ) = properties
+            _verify_is_non_terminal(map_elements_name, "map symbol")
+            _verify_is_non_terminal(map_element_name, "map element symbol")
+            _verify_is_terminal(open_token, "map open symbol")
+            _verify_is_terminal(close_token, "map close symbol")
+            _verify_is_terminal(items_delimiter, "map items_delimiter symbol")
+            _verify_is_terminal(delimiter, "map delimiter symbol")
+            if open_token is not None:
+                if close_token is None:
+                    raise GrammarError(
+                        f"map open symbol '{open_token}' is not None, "
+                        f"but close symbol is None")
+            else:
+                if close_token is not None:
+                    raise GrammarError(
+                        f"map open symbol is None, "
+                        f"but close symbol '{close_token}' is not None")
+
+
 class TElement:
     """Element of tree, which represents parsing results.
 
-    After initial parse the value can be:
+    The value can be:
         - string - for terminal symbols
         - None - no values corresponding to the symbol (it must be nullable)
         - [TElement, ] - for non-terminal symbols
-
-    After cleanup the value can be:
-        - string - for terminal symbols
-        - None - no values corresponding to the symbol (it must be nullable)
-        - [TElement, ] - for non-list non-terminal symbols
-        - [TElement|None, ] - for lists
+        Following cases are possible after cleanup process:
+        - [misc_value, ] - for nodes, corresponding to list productions
         - {key: TElement} - for maps
     """
-    def __init__(self, name, value):
+    __slots__ = 'name', 'value', '_is_leaf'
+
+    def __init__(self, name, value, is_leaf=None):
         self.name = name
         self.value = value
+        if is_leaf is None:
+            self._is_leaf = not (
+                isinstance(self.value, list)
+                and all(isinstance(x, TElement) for x in self.value))
+        else:
+            self._is_leaf = is_leaf
 
     def __str__(self):
         return "\n".join(self.gen_descr())
@@ -170,7 +275,7 @@ class TElement:
 
     def is_leaf(self) -> bool:
         """Check if self is a tree leaf."""
-        return not isinstance(self.value, list)
+        return self._is_leaf
 
     def signature(self):
         """Return tuple of symbols names.
@@ -187,27 +292,27 @@ class TElement:
 
     def clone(self):
         """Create a copy of self."""
-        return TElement(self.name, self._clone_value(self.value))
+        return TElement(
+            self.name, self._clone_value(self.value), is_leaf=self._is_leaf)
 
     @classmethod
     def _clone_value(cls, value):
         # helper method for 'clone'
+        _clone = lambda x: x.clone() if isinstance(x, TElement) else x
         if value is None or isinstance(value, str):
             return value
-        if isinstance(value, TElement):
-            return value.clone()
         if isinstance(value, list):
-            return [cls._clone_value(x) for x in value]
+            return [_clone(x) for x in value]
         if isinstance(value, dict):
             return {
-                k: cls._clone_value(v)
+                _clone(k): _clone(v)
                 for k, v in value.items()
             }
         assert False, f"unexpected value: {value=} of type {str(type(value))}"
 
     def gen_descr(self, offset=0, print_name=True):
         """Generate lines of self description"""
-        if isinstance(self.value, list):
+        if not self.is_leaf():
             if print_name:
                 yield "  " * offset + f"{self.name}:"
             for child in self.value:
@@ -219,6 +324,17 @@ class TElement:
                 else:
                     assert isinstance(child, TElement), f"{child=}"
                     yield from child.gen_descr(offset+1)
+        elif isinstance(self.value, list):
+            if len(self.value) == 0:
+                yield "  " * offset + f"{self.name}: []"
+            else:
+                yield "  " * offset + f"{self.name}: ["
+                for x in self.value:
+                    if isinstance(x, TElement):
+                        yield from x.gen_descr(offset+1)
+                    else:
+                        yield "  " * (offset + 1) + str(x)
+                yield "  " * offset + "]"
         elif isinstance(self.value, dict):
             if print_name:
                 yield "  " * offset + f"{self.name}:"
@@ -285,7 +401,10 @@ class TElement:
             return default
         return t_elem.value
 
-    def cleanup(self, keep_symbols=None, lists=None, maps=None):
+    def cleanup(
+        self, rules=None, *,
+        keep_symbols=None, reducing_symbols=None, lists=None, maps=None,
+    ):
         """Cleanup parsed tree.
 
         Syntax tree prepared by parser usually contains lots of nodes
@@ -293,28 +412,42 @@ class TElement:
         This method cleans up the tree. It may be more convenient to get
         usefull info from it after cleanup.
         """
-        keep_symbols = keep_symbols if keep_symbols is not None else set()
-        lists = lists if lists is not None else {}
-        maps = maps if maps is not None else {}
-        if self.value is None and self.name not in keep_symbols:
-            return
+        if rules is not None:
+            assert keep_symbols is None
+            assert reducing_symbols is None
+            assert lists is None
+            assert maps is None
+        else:
+            rules = TElementCleanupRules(
+                keep_symbols=keep_symbols,
+                reducing_symbols=reducing_symbols,
+                lists=lists,
+                maps=maps)
+        self._cleanup(rules)
+
+    def _cleanup(self, rules):
+        # do all the work of cleanup method
 
         if self.is_leaf():
             return
 
-        if self.name in lists:
-            self.reduce_list(keep_symbols, lists, maps, lists[self.name])
+        if self.name in rules.lists:
+            self.reduce_list(rules, rules.lists[self.name])
             return
-        elif self.name in maps:
-            self.reduce_map(keep_symbols, lists, maps, maps[self.name])
+        elif self.name in rules.maps:
+            self.reduce_map(rules, rules.maps[self.name])
             return
 
         values = []
         for child_elem in self.value:
             if child_elem is None:
                 continue
-            child_elem.cleanup(keep_symbols, lists, maps)
-            if child_elem.value is not None or child_elem.name in keep_symbols:
+            if not hasattr(child_elem, 'cleanup'):
+                print(f"{self}")
+                print(f"{self._is_leaf=}")
+                print(self.value)
+            child_elem.cleanup(rules)
+            if child_elem.value is not None or child_elem.name in rules.keep_symbols:
                 values.append(child_elem)
 
         if not values:
@@ -322,17 +455,51 @@ class TElement:
             return
 
         self.value = values
+        reduce_up = rules.reducing_symbols.get(self.name)
+        if reduce_up is not None and self.value is not None:
+            assert isinstance(self.value, list)
+            assert len(self.value) == 1
+            child_elem = self.value[0]
+            if reduce_up and child_elem.name not in rules.keep_symbols:
+                self.value = child_elem.value
+                self._is_leaf = child_elem._is_leaf
+            elif not reduce_up and self.name not in rules.keep_symbols:
+                self.name = child_elem.name
+                self.value = child_elem.value
+                self._is_leaf = child_elem._is_leaf
+
+        #if (
+        #    self.value is not None
+        #    and isinstance(self.value, (list, tuple))
+        #    and len(self.value) == 1
+        #    and isinstance(self.value[0], TElement)
+        #):
+        #    if reduce_up is not None:
+        #        if not reduce_up:
+
+        #if (
+        #    self.name in rules.reducing_symbols
+        #    and self.value is not None
+        #    and len(self.value) == 1
+        #):
+        #    the_value = self.value[0]
+        #    if isinstance(the_value, TElement):
+        #        self.value = the_value.value
+
         # reduce a chain of elements having a single value.
         # ('E', [('SLAG', [('SOME', ('WORD', "value"))]])
         # -> ('E', [('WORD', "value")])
-        if len(values) == 1 and self.name not in keep_symbols:
-            self.name = values[0].name
-            self.value = values[0].value
 
-    def reduce_list(self, keep_symbols, lists, maps, list_properties):
+        #if len(values) == 1 and self.name not in rules.keep_symbols:
+        #    self.name = values[0].name
+        #    self.value = values[0].value
+
+    def reduce_list(self, rules, list_properties):
         """Transform self.value subtree into a [TElement, ] of list values."""
         open_token, delimiter, tail_symbol, close_token = list_properties
         assert isinstance(self.value, (list, tuple))
+
+        self._is_leaf = True
 
         if self.value is None:
             return
@@ -345,13 +512,13 @@ class TElement:
 
         # depending on grammar the first element may look
         # like (item, opt_list) or like (opt_list)
-        assert len(self.value) <= 2
+        assert len(self.value) <= 2, f"{self}"
         if len(self.value) == 2:
             list_element = self.value[0]
             if list_element.value is not None:
                 # None value here means that this list_element corresponds to
                 # null production - that is there is no list element.
-                list_element.cleanup(keep_symbols, lists, maps)
+                list_element.cleanup(rules)
                 new_values.append(list_element)
             assert self.value[1].name == tail_symbol, (
                 f"expected {tail_symbol}; got:\n{self.value[0]}")
@@ -362,16 +529,22 @@ class TElement:
             tail_value = self.value[0]
 
         next_elements = tail_value._reduce_tail_list(
-            keep_symbols, lists, maps, delimiter, tail_symbol)
+            rules, delimiter, tail_symbol)
         next_elements.reverse()
         if next_elements and next_elements[-1] is None and delimiter is not None:
             # this element corresponds to the empty space after the last delimiter
             next_elements.pop()
 
         new_values.extend(next_elements)
+        # new_values now contains TElement objects and Nones.
+        # If some TElement is a leaf - replace it with it's value
+        new_values = [
+            x.value if isinstance(x, TElement) and x.is_leaf() else x
+            for x in new_values
+        ]
         self.value = new_values
 
-    def _reduce_tail_list(self, keep_symbols, lists, maps, delimiter, tail_symbol):
+    def _reduce_tail_list(self, rules, delimiter, tail_symbol):
         # TElement corresponding to list tail -> [TElement, ] of list values
         assert self.name == tail_symbol, (
             f"{self.name=}, {tail_symbol=} {delimiter=}, {self=}")
@@ -408,12 +581,12 @@ class TElement:
         if tail_elem is not None:
             assert item_elem is not None, f"{self.signature()=}"
             list_values = tail_elem._reduce_tail_list(
-                keep_symbols, lists, maps, delimiter, tail_symbol)
+                rules, delimiter, tail_symbol)
         else:
             list_values = []
 
         if item_elem is not None:
-            item_elem.cleanup(keep_symbols, lists, maps)
+            item_elem.cleanup(rules)
             if item_elem.value is None:
                 list_values.append(None)
             else:
@@ -421,7 +594,7 @@ class TElement:
 
         return list_values
 
-    def reduce_map(self, keep_symbols, lists, maps, map_properties):
+    def reduce_map(self, rules, map_properties):
         """Transform self.value subtree into {name: TElement}"""
         (
             open_token,
@@ -433,6 +606,8 @@ class TElement:
         ) = map_properties
         assert isinstance(self.value, (list, tuple))
 
+        self._is_leaf = True
+
         if self.value is None:
             return
 
@@ -442,9 +617,9 @@ class TElement:
         assert self.value[2].name == close_token
 
         self.value = self.value[1]._reduce_elements_map_tail(
-            keep_symbols, lists, maps, map_properties)
+            rules, map_properties)
 
-    def _reduce_elements_map_tail(self, keep_symbols, lists, maps, map_properties):
+    def _reduce_elements_map_tail(self, rules, map_properties):
         (
             _open_token,
             map_elements_name,
@@ -463,7 +638,7 @@ class TElement:
             the_map = {}
         else:
             the_map = self.value[-1]._reduce_elements_map_tail(
-                keep_symbols, lists, maps, map_properties)
+                rules, map_properties)
 
         child_elements = []
         for e in self.value:
@@ -482,10 +657,19 @@ class TElement:
         for item_element in child_elements:
             assert len(item_element.value) == 3
             assert item_element.value[1].name == delimiter
-            key = item_element.value[0].value
+            key_elem = item_element.value[0]
+            if key_elem.is_leaf() and (
+                key_elem.value is None or isinstance(key_elem.value, str)
+            ):
+                key = key_elem.value
+            else:
+                key = key_elem
             value_element = item_element.value[2]
-            value_element.cleanup(keep_symbols, lists, maps)
-            the_map[key] = value_element
+            value_element.cleanup(rules)
+            if value_element.is_leaf():
+                the_map[key] = value_element.value
+            else:
+                the_map[key] = value_element
 
         return the_map
 
@@ -579,12 +763,8 @@ class LLParser:
 
         self.start_symbol_name = start_symbol_name
         self.end_token_name = end_token_name
-        self.keep_symbols = keep_symbols
-        self.lists = lists
-        self.maps = maps
         self.init_production_name = '$START$'
         self.productions = self._fix_empty_productions(productions)
-
         self.terminals = self.tokenizer.get_all_token_names()
         self.terminals.add(None)
         self.terminals.add(self.end_token_name)
@@ -595,6 +775,16 @@ class LLParser:
         self.productions[self.init_production_name] = [
             (self.start_symbol_name, self.end_token_name)
         ]
+
+        self.cleanup_rules = TElementCleanupRules(
+            keep_symbols=keep_symbols,
+            reducing_symbols=dict(
+                self.make_reductable_symbols_map(self.productions)),
+            lists=lists,
+            maps=maps)
+        self.cleanup_rules.verify_integrity(
+            self.terminals,
+            set(self.productions.keys()))
 
         self.parse_table, first_sets, follow_sets = self._make_llone_table(
             self.productions, start_symbol_name, end_token_name,
@@ -719,7 +909,7 @@ class LLParser:
         no need to repeat the cleanup. Use this method only if parse was called
         with do_cleanup=False.
         """
-        t_element.cleanup(self.keep_symbols, self.lists, self.maps)
+        t_element.cleanup(self.cleanup_rules)
 
     def _strip_comments(self, lines):
         # remove comments from source text, yield _Tokenizer._Chunk
@@ -828,45 +1018,6 @@ class LLParser:
             raise GrammarError(
                 f"special start symbol '{self.init_production_name}' is explicitely "
                 f"used in productions")
-
-        if self.keep_symbols is not None:
-            for s in self.keep_symbols:
-                if s not in self.terminals and s not in non_terminals:
-                    raise GrammarError(
-                        f"unknown symbol '{s}' specified in {self.keep_symbols=}")
-
-        def _verify_is_terminal(symbol, descr="symbol"):
-            if symbol in self.terminals:
-                return
-            if symbol in non_terminals:
-                raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
-            raise GrammarError(f"{descr} '{symbol}' is unknown")
-
-        def _verify_is_non_terminal(symbol, descr="symbol"):
-            if symbol in non_terminals:
-                return
-            if symbol in self.terminals:
-                raise GrammarError(f"{descr} '{symbol}' is terminal")
-            raise GrammarError(f"{descr} '{symbol}' is unknown")
-
-        if self.lists is not None:
-            for list_symbol, properties in self.lists.items():
-                open_token, delimiter, tail_symbol, close_token = properties
-                _verify_is_non_terminal(list_symbol, "list symbol")
-                _verify_is_non_terminal(tail_symbol, "list tail symbol")
-                _verify_is_terminal(delimiter, "list delimiter symbol")
-                if open_token is not None:
-                    if close_token is None:
-                        raise GrammarError(
-                            f"list open symbol '{open_token}' is not None, "
-                            f"but close symbol is None")
-                else:
-                    if close_token is not None:
-                        raise GrammarError(
-                            f"list open symbol is None, "
-                            f"but close symbol '{close_token}' is not None")
-                _verify_is_terminal(open_token, "list open symbol")
-                _verify_is_terminal(close_token, "list close symbol")
 
     def _verify_grammar_structure_part2(self, nullables):
         # verification of grammar structure
@@ -1157,3 +1308,36 @@ class LLParser:
             symbol: [(None, ) if prod is None else prod for prod in prods]
             for symbol, prods in prods_map.items()
         }
+
+    @staticmethod
+    def make_reductable_symbols_map(prods_map):
+        """Make map of reducable symbols (for cleanup procedure).
+
+        Returns {symbol: if_reduce_up}
+
+        if_reduce_up = True - means the production for this symbol looks like
+        'A': [('B', )] - that is 'A' is just alternative name of 'B'.
+        Only name 'A' will remain in cleaned up tree.
+
+        if_reduce_up = False - means the production for this symbol looks like
+        'A': [
+          ('B', ),
+          ('C', ),
+          ('D', ),
+        ] - that is 'A' may be either 'B' or 'C' or 'D'.
+        Name 'A' will be cleaned up from the tree.
+        """
+        for symbol, prods_list in prods_map.items():
+            n_one_val_prods = sum(
+                1 if prod is not None and len(prod) == 1 else 0
+                for prod in prods_list)
+            n_null_prods = sum(
+                1 if prod is None or len(prod) == 0 else 0
+                for prod in prods_list)
+
+            if n_one_val_prods + n_null_prods < len(prods_list):
+                # there are more complex prods, no reduction is possible
+                continue
+
+            if_up = n_one_val_prods == 1
+            yield symbol, if_up

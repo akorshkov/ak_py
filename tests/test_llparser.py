@@ -65,6 +65,171 @@ class TestParserTokenizer(unittest.TestCase):
             ], tokens_values)
 
 
+class TestSimpleParserWithNullProductions(unittest.TestCase):
+    """Test very primitive parser with nullable productions."""
+
+    def test_parser(self):
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            """,
+            productions={
+                'E': [
+                    ('WORD', 'OPT_WORD'),
+                ],
+                'OPT_WORD': [
+                    ('WORD', ),
+                    None,
+                ],
+            },
+            keep_symbols={'E'},
+        )
+
+        x = parser.parse("aaa", do_cleanup=False)
+        # x.printme()
+        self.assertEqual(
+            ('E', 'WORD', 'OPT_WORD'), x.signature(),
+            f"subtree is:\n{x}",
+        )
+        opt_word_elem = x.get("OPT_WORD")
+        self.assertIsInstance(opt_word_elem, TElement)
+        self.assertIsNone(opt_word_elem.value)
+
+        x = parser.parse("aaa")
+        self.assertEqual(
+            ('E', 'WORD'), x.signature(),
+            f"subtree is:\n{x}",
+        )
+
+
+class TestParsingClasslookingObj(unittest.TestCase):
+    """Test parsing of class-like object."""
+
+    def _make_test_parser(self, keep_symbols=None):
+        # prepare the parser for tests
+        return LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN_CURL>\{)
+            |(?P<BR_CLOSE_CURL>\})
+            |(?P<COLON>:)
+            |(?P<SEMI_COLON>;)
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN_CURL': '{',
+                'BR_CLOSE_CURL': '}',
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+                'COLON': ':',
+                'SEMI_COLON': ';',
+            },
+            keywords={
+                ('WORD', 'class'): '$CLASS',
+            },
+            productions={
+                'E': [
+                    ('CLASSES_LIST', ),
+                ],
+                'CLASSES_LIST': [
+                    ('CLASS', 'CLASSES_LIST'),
+                    None,
+                ],
+                'CLASS': [
+                    ('$CLASS', 'OBJ_NAME', 'OPT_PARENT', '{', 'CONTENTS', '}', ';'),
+                ],
+                'OPT_PARENT': [
+                    (':', 'OBJ_NAME'),
+                    None,
+                ],
+                'OBJ_NAME': [
+                    ('WORD', ),
+                ],
+                'CONTENTS': [
+                    ('WORD', ),
+                ],
+            },
+            lists={
+                'CLASSES_LIST': (None, ';', 'CLASSES_LIST', None),
+            },
+            keep_symbols=keep_symbols,
+        )
+
+    def test_parsing_text_of_class(self):
+        """Test parsing of a primitive class-looking object."""
+
+        parser = self._make_test_parser()
+
+        x = parser.parse("class MyClass : Base { some };")
+        self.assertIsInstance(x, TElement)
+        self.assertEqual(x.name, 'E')
+        self.assertEqual(('E', ), x.signature())
+        self.assertIsInstance(x.value, list)
+        self.assertEqual(len(x.value), 1)  # one class in source text
+
+        c = x.value[0]
+        self.assertEqual(c.get_path_val('OBJ_NAME'), 'MyClass')
+
+    def test_parsking_keep_symbols(self):
+        """Test prohibit to remove some nodes during cleanup."""
+
+        parser = self._make_test_parser(keep_symbols={'CLASSES_LIST', })
+        x = parser.parse("class MyClass : Base { some };")
+        self.assertEqual(x.name, 'E')
+        self.assertEqual(('E', 'CLASSES_LIST'), x.signature())
+
+        classes_list = x.get_path_val('CLASSES_LIST')
+        self.assertIsInstance(classes_list, list)
+        self.assertIsInstance(classes_list[0], TElement)
+        self.assertEqual(classes_list[0].name, 'CLASS')
+
+    def test_get_methods(self):
+        """Test TElement get methods."""
+        parser = self._make_test_parser()
+
+        x = parser.parse(
+            "class MyClass : Base { some };"
+            "class MyClass1 : Base1 { some1 };"
+        )
+        # x.printme()
+        self.assertEqual(x.name, 'E')
+
+        c0 = x.value[0]
+        # c0 looks like this:
+        #   CLASS:
+        #    $CLASS: class
+        #    OBJ_NAME: MyClass
+        #    OPT_PARENT:
+        #      :: :
+        #      OBJ_NAME: Base
+        #    {: {
+        #    CONTENTS: some
+        #    }: }
+        #    ;: ;
+
+        self.assertIsInstance(c0, TElement)
+        self.assertEqual(c0.name, 'CLASS')
+
+        opt_parent = c0.get('OPT_PARENT')
+        self.assertIsInstance(opt_parent, TElement)
+        self.assertFalse(opt_parent.is_leaf())
+
+        base_name_elem = c0.get_path_elem('OPT_PARENT.OBJ_NAME')
+        self.assertIsInstance(base_name_elem, TElement)
+        self.assertEqual(base_name_elem.value, 'Base')
+
+        base_name = c0.get_path_val('OPT_PARENT.OBJ_NAME')
+        self.assertEqual(base_name, 'Base')
+
+        # test non-existing paths
+        self.assertIsNone(c0.get('BAD_CHILD'))
+        self.assertIsNone(c0.get_path_elem('BAD_ELEM.PATH'))
+        self.assertIsNone(c0.get_path_val('BAD_ELEM.PATH'))
+
+
 class TestArithmeticsParser(unittest.TestCase):
     """Test simple parser of arithmetic operations."""
 
@@ -123,16 +288,19 @@ class TestArithmeticsParser(unittest.TestCase):
 
         parser.cleanup(x)
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
-        self.assertEqual(('WORD', ), x.signature())
-        self.assertEqual('aa', x.value)
+        self.assertEqual(('E', 'SLAG', ), x.signature())
+        self.assertEqual('aa', x.get_path_val('SLAG.WORD'))
 
         # 2. single '+'
         x = parser.parse("aa + bb")
-        self.assertEqual(('E', 'WORD', '+', 'WORD'), x.signature())
+        self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
 
         # 3. single '*'
         x = parser.parse("aa * bb")
-        self.assertEqual(('SLAG', 'WORD', '*', 'WORD'), x.signature())
+        self.assertEqual(('E', 'SLAG'), x.signature())
+
+        x = x.get('SLAG')
+        self.assertEqual(('SLAG', 'WORD', '*', 'SLAG'), x.signature())
 
     def test_multiple_operations(self):
         """parse expression with multiple aoprations"""
@@ -142,31 +310,39 @@ class TestArithmeticsParser(unittest.TestCase):
         x = parser.parse("aa + bb * cc + dd")
 
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
-        self.assertEqual(('E', 'WORD', '+', 'E'), x.signature())
+        self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
 
         first_slag = x.value[0]
-        self.assertEqual(('WORD', ), first_slag.signature())
-        self.assertEqual('aa', first_slag.value)
+        self.assertEqual(
+            ('SLAG', 'WORD'), first_slag.signature(),
+            f"the element:\n{first_slag}",
+        )
+        self.assertEqual('aa', first_slag.get_path_val('WORD'))
 
         second_slag = x.value[2]
-        self.assertEqual(('E', 'SLAG', '+', 'WORD'), second_slag.signature())
+        self.assertEqual(
+            ('E', 'SLAG', '+', 'E'), second_slag.signature(),
+            f"the element:\n{second_slag}",
+        )
 
         self.assertEqual(
-            ('SLAG', 'WORD', '*', 'WORD'),
-            second_slag.value[0].signature())
+            ('SLAG', 'WORD', '*', 'SLAG'),
+            second_slag.value[0].signature(),
+            f"the element:\n{second_slag}",
+        )
 
     def test_expression_with_braces(self):
         """Test more complex valid expression with braces"""
         parser = self._make_test_parser()
         x = parser.parse("(a) + ( b - c * d ) + ( x )")
-        # x.printme()
+
         self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
 
         first_slag = x.value[0]
-        self.assertEqual(('SLAG', '(', 'WORD', ')'), first_slag.signature())
+        self.assertEqual(('SLAG', '(', 'E', ')'), first_slag.signature())
 
         second_slag = x.value[2]
-        self.assertEqual(('E', 'SLAG', '+', 'SLAG'), second_slag.signature())
+        self.assertEqual(('E', 'SLAG', '+', 'E'), second_slag.signature())
 
     def test_bad_expression(self):
         # test parsing bad expressions
@@ -219,49 +395,17 @@ class TestListParsers(unittest.TestCase):
         # parser.print_detailed_descr()
 
         x = parser.parse("[ a, b, c, d]")
-        self.assertEqual(('E', 'LIST'), x.signature())
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
-            x.value[0].signature())
+        # x.printme()
+        self.assertEqual(('E', ), x.signature())
+        self.assertTrue(x.is_leaf(), f"it's not a tree node, so it's a leaf: {x}")
+        self.assertEqual(4, len(x.value))
 
         x = parser.parse("[a, b, [d, e, f], c,]")
         # x.printme()
-        self.assertEqual(('E', 'LIST'), x.signature())
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'LIST', 'WORD'),
-            x.value[0].signature())
-
-        # test TElement.get method
-        list_elem = x.get('LIST')
-        self.assertIs(list_elem, x.value[0])
-
-        child_list = list_elem.get('LIST')
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD'),
-            child_list.signature())
-
-        with self.assertRaises(ValueError) as exc:
-            child_list.get('WORD')
-
-        err_msg = str(exc.exception)
-        self.assertIn("has 3 child elements", err_msg)
-        self.assertIn("'WORD'", err_msg)
-
-        # test TElement.get_path_val method
-        inner_elem = x.get_path_elem("LIST.LIST")
-        self.assertIsInstance(inner_elem, TElement)
-
-        inner_list = x.get_path_val("LIST.LIST")
-        self.assertIsInstance(inner_list, list)
-        self.assertEqual(3, len(inner_list))
-
-        self.assertIs(inner_list, inner_elem.value)
-
-        missing_elem = x.get_path_elem("LIST.E")
-        self.assertIsNone(missing_elem)
-
-        missing_val = x.get_path_val("LIST.E")
-        self.assertIsNone(missing_val)
+        self.assertEqual(('E', ), x.signature())
+        self.assertEqual(4, len(x.value))
+        self.assertEqual(x.value[0], "a")
+        self.assertEqual(x.value[2], ["d", "e", "f"])
 
     def test_list_parser_02(self):
         parser = LLParser(
@@ -298,12 +442,11 @@ class TestListParsers(unittest.TestCase):
         )
         # parser.print_detailed_descr()
         x = parser.parse("[ a, b, c, d]")
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
-            x.signature())
+        # x.printme()
+        self.assertEqual(('E', ), x.signature())
 
 
-class TextCommentsStripper(unittest.TestCase):
+class TestCommentsStripper(unittest.TestCase):
     """Text comments stripper."""
 
     def _make_test_parser(self):
@@ -342,7 +485,6 @@ class TextCommentsStripper(unittest.TestCase):
                     ('LIST', ),
                 ],
             },
-            keep_symbols={'E', 'LIST'},
             lists={
                 'LIST': ('[', ',', 'OPT_LIST', ']'),
             },
@@ -353,10 +495,7 @@ class TextCommentsStripper(unittest.TestCase):
         parser = self._make_test_parser()
 
         x = parser.parse("[a, b, /* c, d, */ e]")
-        self.assertEqual(('E', 'LIST'), x.signature())
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD'),
-            x.value[0].signature())
+        self.assertEqual(x.value, ['a', 'b', 'e'])
 
     def test_single_oneline_comment(self):
         """Text has single comment"""
@@ -370,10 +509,7 @@ class TextCommentsStripper(unittest.TestCase):
             e, f]// more comment
             """
         )
-        self.assertEqual(('E', 'LIST'), x.signature())
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
-            x.value[0].signature())
+        self.assertEqual(x.value, ['a', 'b', 'e', 'f'])
 
     def test_multiline_comment(self):
         """Test multi-line comment."""
@@ -385,10 +521,7 @@ class TextCommentsStripper(unittest.TestCase):
             */ e, f]
             """
         )
-        self.assertEqual(('E', 'LIST'), x.signature())
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
-            x.value[0].signature())
+        self.assertEqual(x.value, ['a', 'b', 'e', 'f'])
 
     def test_multiple_comments(self):
         """Text has multiple comments of different types."""
@@ -402,10 +535,7 @@ f /* g, h
     */ ]//comment
             """
         )
-        self.assertEqual(('E', 'LIST'), x.signature())
-        self.assertEqual(
-            ('LIST', 'WORD', 'WORD', 'WORD', 'WORD'),
-            x.value[0].signature())
+        self.assertEqual(x.value, ['a', 'b', 'e', 'f'])
 
     def test_not_closed_comment(self):
         """Test parsing invalid text: comment not closed."""
@@ -476,24 +606,23 @@ class TestListWithNoneValues(unittest.TestCase):
         parser = self._make_test_parser()
 
         x = parser.parse("[]")
-        self.assertEqual(("LIST_ITEMS", ), x.signature(), f"{x}")
-        self.assertIsInstance(x.value, list, "actual x:\n{x}")
-        self.assertEqual(0, len(x.value))
+        self.assertEqual(x.name, 'E', f"{x}")
+        self.assertEqual(x.value, [])
 
         x = parser.parse("[a]")
-        self.assertEqual(("LIST_ITEMS", "WORD"), x.signature())
+        self.assertEqual(x.value, ["a"])
 
         x = parser.parse("[a, ]")
-        self.assertEqual(("LIST_ITEMS", "WORD"), x.signature())
+        self.assertEqual(x.value, ["a"])
 
         x = parser.parse("[a,, ]")
-        self.assertEqual(("LIST_ITEMS", "WORD", None), x.signature())
+        self.assertEqual(x.value, ["a", None])
 
         x = parser.parse("[,]")
-        self.assertEqual(("LIST_ITEMS", None), x.signature())
+        self.assertEqual(x.value, [None])
 
         x = parser.parse("[,a,]")
-        self.assertEqual(("LIST_ITEMS", None, "WORD"), x.signature())
+        self.assertEqual(x.value, [None, "a"])
 
 
 class TestOptionalLists(unittest.TestCase):
@@ -697,22 +826,26 @@ class TestMapGrammar(unittest.TestCase):
                 y: {q: qq, z: {r: rr}}
             }]
             """)
-        self.assertEqual(('LIST', 'MAP'), x.signature())
+        self.assertEqual(x.name, 'E', x.signature())
         the_map = x.value[0]
-        self.assertEqual(('MAP', ), the_map.signature())
+        self.assertIsInstance(the_map, dict)
+        self.assertEqual(the_map['a'], 'aa')
+
+        self.assertEqual(the_map['x'][1], 'b1')
+
+        self.assertEqual(the_map['y']['z']['r'], 'rr')
 
     def test_map_trailing_comma(self):
         """Test parsing of a map with trailing comma"""
         parser = self._make_test_parser()
 
         x = parser.parse("[{a: aa,}]")
+        # x.printme()
 
-        the_map = x.value[0].value
+        the_map = x.value[0]
         self.assertEqual({'a'}, the_map.keys())
 
-        val = the_map['a']
-        self.assertIsInstance(val, TElement)
-        self.assertEqual('aa', val.value)
+        self.assertEqual(the_map['a'], 'aa')
 
     def test_telements_clone(self):
         """Test TElement helper methods"""
@@ -780,43 +913,6 @@ class TestBadGrammar(unittest.TestCase):
         self.assertIn("'NN' -> ['GG', <'TT'>, 'WORD']", err_msg)
 
 
-class TestSimpleParserWithNullProductions(unittest.TestCase):
-    """Test very primitive parser with nullable productions."""
-
-    def test_parser(self):
-        parser = LLParser(
-            r"""
-            (?P<SPACE>\s+)
-            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
-            """,
-            productions={
-                'E': [
-                    ('WORD', 'OPT_WORD'),
-                ],
-                'OPT_WORD': [
-                    ('WORD', ),
-                    None,
-                ],
-            },
-            keep_symbols={'E'},
-        )
-
-        x = parser.parse("aaa", do_cleanup=False)
-        self.assertEqual(
-            ('E', 'WORD', 'OPT_WORD'), x.signature(),
-            f"subtree is:\n{x}",
-        )
-        opt_word_elem = x.get("OPT_WORD")
-        self.assertIsInstance(opt_word_elem, TElement)
-        self.assertIsNone(opt_word_elem.value)
-
-        x = parser.parse("aaa")
-        self.assertEqual(
-            ('E', 'WORD'), x.signature(),
-            f"subtree is:\n{x}",
-        )
-
-
 class TestMathParserWithNullProductions(unittest.TestCase):
     """Test arithmetic parser with null productions"""
 
@@ -865,4 +961,4 @@ class TestMathParserWithNullProductions(unittest.TestCase):
         x = parser.parse("a + b + c*x*y*z + d")
         # x.printme()
         self.assertEqual("E", x.name)
-        self.assertEqual("b", x.get_path_val("EE.E.WORD"))
+        self.assertEqual("b", x.get_path_val("EE.E.T.F.WORD"))
