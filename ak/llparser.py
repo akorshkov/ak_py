@@ -2,6 +2,7 @@
 
 import re
 from collections import defaultdict
+import collections.abc
 import logging
 
 
@@ -51,6 +52,25 @@ class GrammarIsRecursive(GrammarError):
             for i, s in enumerate(prod)) + "]"
 
 
+class SrcPos:
+    """Human-readable description of a position in source text."""
+    __slots__ = 'src_name', 'coords'
+
+    def __init__(self, src_name, line, col):
+        self.src_name = src_name
+        self.coords = (line, col)
+
+    @property
+    def line(self):
+        """Return line number of the position (first line has number 1)"""
+        return self.coords[0]
+
+    @property
+    def col(self):
+        """Return column number of the position (first column has number 1)"""
+        return self.coords[1]
+
+
 class ParsingError(Error):
     """Unexpected token kind of errors."""
     def __init__(self, symbol, next_tokens, attempted_prods):
@@ -64,16 +84,19 @@ class ParsingError(Error):
 class _Token:
     # information about a single token
     # (first phase of parsing is to split text into tokens)
-    __slots__ = 'name', 'line', 'col', 'value'
+    __slots__ = 'name', 'src_pos', 'value'
 
-    def __init__(self, name, line, col, value):
+    def __init__(self, name, src_pos, value):
         self.name = name
-        self.line = line
-        self.col = col
+        self.src_pos = src_pos
         self.value = value
 
     def __str__(self):
-        return f"{self.name}({self.line},{self.col}){{{self.value}}}"
+        if self.src_pos is not None:
+            s = f"{self.name}({self.src_pos.line},{self.src_pos.col}){{{self.value}}}"
+        else:
+            s = f"{self.name}(-,-){{{self.value}}}"
+        return s
 
     def __repr__(self):
         return str(self)
@@ -83,9 +106,9 @@ class _Tokenizer:
     # split line of text into tokens
     class _Chunk:
         # line of text to tokenize
-        __slots__ = "line_number", "start_pos", "text", "orig_text"
-        def __init__(self, line_number, start_pos, text, orig_text):
-            self.line_number = line_number
+        __slots__ = "line_id", "start_pos", "text", "orig_text"
+        def __init__(self, line_id, start_pos, text, orig_text):
+            self.line_id = line_id
             self.start_pos = start_pos
             self.text = text
             self.orig_text = text if orig_text is None else orig_text
@@ -94,14 +117,40 @@ class _Tokenizer:
             self,
             tokenizer_str,
             *,
+            comments=None,
             synonyms=None, keywords=None,
             space_tokens=None, end_token_name="$END$",
         ):
+        """_Tokenizer constructor.
+
+        Arguments:
+        - end_token_name: name of special token which corresponds to no text
+            and indicates end of the text.
+        - Check LLParser class for description of other arguments.
+        """
         self.matcher = re.compile(tokenizer_str, re.VERBOSE)
         self.synonyms = synonyms or {}
         self.keywords = keywords or {}
         self.space_tokens = space_tokens or {'SPACE', 'COMMENT'}
         self.end_token_name = end_token_name
+
+        assert comments is None or isinstance(comments, (list, tuple)), (
+            f"'comments' must be list or tuple of comments descriptions, "
+            f"got: {comments}")
+        comments = comments if comments is not None else []
+        self.eol_comments = set()
+        self.ml_comments = {}  # {start_comment_text: end_comment_text}
+        for comment_data in comments:
+            if isinstance(comment_data, str):
+                # this is 'to-end-of-line' comment
+                self.eol_comments.add(comment_data)
+            elif isinstance(comment_data, (list, tuple)):
+                assert len(comment_data) == 2, (
+                    f"expected (start_comment_text, end_comment_text), "
+                    f"got {comment_data}")
+                self.ml_comments[comment_data[0]] = comment_data[1]
+            else:
+                assert False, f"invalid 'comments' item: {comment_data}"
 
     def get_all_token_names(self):
         """Get names of all tokens this tokenizer knows about."""
@@ -111,21 +160,37 @@ class _Tokenizer:
         tokens.update(self.keywords.values())
         return tokens
 
-    def tokenize(self, chunks):
-        """chunks of text -> _Token objects"""
-        if isinstance(chunks, str):
-            chunks = [
-                self._Chunk(i, 0, line.rstrip(), None)
-                for i, line in enumerate(chunks.split('\n'))
-            ]
+    def tokenize(self, text, src_name=""):
+        """text -> _Token objects
 
-        line, col = 0, 0
+        Arguments:
+        - text: text to split into tokens. It may be:
+          - string. In this case it is split into lines first
+          - Iterable[str]
+
+        Parsing is performed in two phases: first all comments are removed,
+        then remaining text is split into tokens.
+        Comments and 'space' tokens are not yielded.
+        """
+
+        if isinstance(text, str):
+            enumereted_lines = enumerate(
+                (t.rstrip() for t in text.split('\n')),
+                start=1)
+        elif isinstance(text, collections.abc.Iterable):
+            enumereted_lines = enumerate(text, start=1)
+        else:
+            assert False, (
+                f"unexpected type of the object to parse: {str(type(text))}")
+
+        chunks = self._strip_comments(enumereted_lines)
+
         for chunk in chunks:
             col = 0
             while col < len(chunk.text):
                 match = self.matcher.match(chunk.text, col)
                 if match is None:
-                    raise LexicalError(line, col, chunk.text)
+                    raise LexicalError(chunk.line_id, col, chunk.text)
                 token_name = match.lastgroup
                 value = match.group(token_name)
                 token_name = self.synonyms.get(token_name, token_name)
@@ -134,9 +199,74 @@ class _Tokenizer:
                     # this token is not a word, but keyword
                     token_name = keyword_token
                 if token_name not in self.space_tokens:
-                    yield _Token(token_name, line, chunk.start_pos + col, value)
+                    yield _Token(
+                        token_name,
+                        SrcPos(src_name, chunk.line_id, chunk.start_pos + col + 1),
+                        value)
                 col = match.end()
-        yield _Token(self.end_token_name, line, col, None)
+        yield _Token(
+            self.end_token_name, None, None)
+
+    def _strip_comments(self, enumereted_lines):
+        # remove comments from source text, yield _Tokenizer._Chunk
+
+        cur_ml_comment_end = None
+        cur_ml_comment_start_pos = None
+        cur_ml_start_line_text = None
+        for line_id, text in enumereted_lines:
+            cur_pos = 0
+            while cur_pos < len(text):
+                if cur_ml_comment_end is not None:
+                    end_pos = text.find(cur_ml_comment_end, cur_pos)
+                    if end_pos == -1:
+                        # the comment continues till end of line
+                        cur_pos = len(text)
+                        continue
+                    cur_pos = end_pos + len(cur_ml_comment_end)
+                    cur_ml_comment_end = None
+                    cur_ml_comment_start_pos = None
+                    cur_ml_start_line_text = None
+                    continue
+                # we are not inside a comment. Find comment start
+                comments_pos = {}
+                for start_comment_text, end_comment_text in self.ml_comments.items():
+                    start = text.find(start_comment_text, cur_pos)
+                    if start != -1:
+                        comments_pos[start] = (start_comment_text, end_comment_text)
+                for start_comment_text in self.eol_comments:
+                    start = text.find(start_comment_text, cur_pos)
+                    if start != -1:
+                        comments_pos[start] = (start_comment_text, None)
+                if comments_pos:
+                    comment_start = min(comments_pos.keys())
+                    start_comment_text, end_comment_text = comments_pos[comment_start]
+                    if comment_start > cur_pos:
+                        # report chunk of uncommented text
+                        yield _Tokenizer._Chunk(
+                            line_id, cur_pos, text[cur_pos:comment_start], text)
+                    if end_comment_text is None:
+                        # comment continues till end of line
+                        cur_pos = len(text)
+                        break
+                    # comment continues till end_comment_text
+                    cur_pos = comment_start + len(start_comment_text)
+                    cur_ml_comment_end = end_comment_text
+                    cur_ml_comment_start_pos = (line_id, comment_start)
+                    cur_ml_start_line_text = text
+                else:
+                    # comments were not detected
+                    if cur_pos == 0:
+                        yield _Tokenizer._Chunk(line_id, 0, text, text)
+                    else:
+                        yield _Tokenizer._Chunk(
+                            line_id, cur_pos, text[cur_pos:], text)
+                    cur_pos = len(text)
+        if cur_ml_comment_end is not None:
+            raise LexicalError(
+                cur_ml_comment_start_pos[0],
+                cur_ml_comment_start_pos[1],
+                cur_ml_start_line_text,
+                "comment is never closed")
 
 
 class TElementCleanupRules:
@@ -148,7 +278,10 @@ class TElementCleanupRules:
     such transformations.
     """
 
-    def __init__(self, *, keep_symbols=None, reducing_symbols=None, lists=None, maps=None):
+    def __init__(
+            self, *,
+            keep_symbols=None, reducing_symbols=None, lists=None, maps=None
+        ):
         self.keep_symbols = set() if keep_symbols is None else keep_symbols
         self.reducing_symbols = {} if reducing_symbols is None else reducing_symbols
         self.lists = lists if lists is not None else {}
@@ -251,17 +384,44 @@ class TElement:
         - [misc_value, ] - for nodes, corresponding to list productions
         - {key: TElement} - for maps
     """
-    __slots__ = 'name', 'value', '_is_leaf'
+    __slots__ = 'name', 'value', '_is_leaf', 'src_pos'
 
-    def __init__(self, name, value, is_leaf=None):
+    def __init__(self, name, value, *, src_pos=None, is_leaf=None):
         self.name = name
         self.value = value
+        is_valid_inner_node = (
+            isinstance(self.value, list)
+            and all(isinstance(x, TElement) for x in self.value)
+        )
+
         if is_leaf is None:
-            self._is_leaf = not (
-                isinstance(self.value, list)
-                and all(isinstance(x, TElement) for x in self.value))
+            self._is_leaf = not is_valid_inner_node
         else:
             self._is_leaf = is_leaf
+            if not self._is_leaf:
+                assert is_valid_inner_node, (
+                    "for not-leaf elements the value must be a "
+                    "list of TElement objects")
+
+        if self._is_leaf:
+            if self.value is not None:
+                assert src_pos is not None, (
+                    "src position must be explicitely specified for "
+                    "not-null leaf elements")
+            self.src_pos = src_pos
+        else:
+            if src_pos is not None:
+                self.src_pos = src_pos
+            else:
+                assert is_valid_inner_node
+                for t_elem in self.value:
+                    if t_elem.src_pos is not None:
+                        self.src_pos = t_elem.src_pos
+                        break
+                else:
+                    # all the child elements of this TElement are nulls - there
+                    # is no source text corresponding to this TElement
+                    self.src_pos = None
 
     def __str__(self):
         return "\n".join(self.gen_descr())
@@ -293,7 +453,8 @@ class TElement:
     def clone(self):
         """Create a copy of self."""
         return TElement(
-            self.name, self._clone_value(self.value), is_leaf=self._is_leaf)
+            self.name, self._clone_value(self.value),
+            src_pos=self.src_pos, is_leaf=self._is_leaf)
 
     @classmethod
     def _clone_value(cls, value):
@@ -467,32 +628,6 @@ class TElement:
                 self.name = child_elem.name
                 self.value = child_elem.value
                 self._is_leaf = child_elem._is_leaf
-
-        #if (
-        #    self.value is not None
-        #    and isinstance(self.value, (list, tuple))
-        #    and len(self.value) == 1
-        #    and isinstance(self.value[0], TElement)
-        #):
-        #    if reduce_up is not None:
-        #        if not reduce_up:
-
-        #if (
-        #    self.name in rules.reducing_symbols
-        #    and self.value is not None
-        #    and len(self.value) == 1
-        #):
-        #    the_value = self.value[0]
-        #    if isinstance(the_value, TElement):
-        #        self.value = the_value.value
-
-        # reduce a chain of elements having a single value.
-        # ('E', [('SLAG', [('SOME', ('WORD', "value"))]])
-        # -> ('E', [('WORD', "value")])
-
-        #if len(values) == 1 and self.name not in rules.keep_symbols:
-        #    self.name = values[0].name
-        #    self.value = values[0].value
 
     def reduce_list(self, rules, list_properties):
         """Transform self.value subtree into a [TElement, ] of list values."""
@@ -724,6 +859,10 @@ class _StackElement:
 
 class LLParser:
     """LLParser. Mostly LL1, but can deal with ambiguities in LL1 parsing table."""
+
+    _END_TOKEN_NAME = '$END$'
+    _INIT_PRODUCTION_NAME = '$START$'
+
     def __init__(
             self,
             tokenizer_str,
@@ -734,46 +873,60 @@ class LLParser:
             keywords=None,
             space_tokens=None,
             start_symbol_name='E',
-            end_token_name="$END$",
             keep_symbols=None,
             lists=None,
             maps=None,
         ):
+        """Constructor of LLParser.
+
+        Arguments:
+        - tokenizer_str: re pattern for tokenizer. Example:
+            r'''
+            "(?P<DQ_STRING>[^"]*)"
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<MINUS>-)
+            '''
+        - productions: {symbol: [production, ]}
+        - synonyms: {name_of_re_pattern: name_of_token}.
+            Usually used to replace names like 'PLUS' -> '+', and in case when
+            different patterns correspond to same token (doble-quote string and
+            single-quote string correspond to the same token type 'STRING')
+        - keywords: {(token_name, value): token_name}. Some token (name, value)
+            combinations indicate are reported as token of other type. For
+            example:
+            {('WORD', 'class'): 'CLASS'}
+        - space_tokens: set of names of tokens which should be skipped - usually
+            tokens corresponding to empty spaces.
+        - start_symbol_name: name of the symbol
+        - comments: optional list of comments indicators. Each item of the list
+            can be either str or (str, str). Examples:
+            - '//'  - indicates comment to end of line
+            - ('/*', '*/')  - specifies start and end of comment section
+        - keep_symbols: names of symbols which should not be cleaned-up during
+            optional cleanup procedure. Check doc of 'cleanup' method.
+        - lists: rules for cleanup. The cleanup procedure replaces subtree
+            corresponding to list with actual list of values. This argument contains
+            names of tokens wich correspond to list and list elements:
+                {'LIST': ('[', ',', 'OPT_LIST', ']')}
+        - maps: similar to 'lists', but describes maps. Example:
+                {'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),}
+        """
         self.tokenizer = _Tokenizer(
             tokenizer_str,
+            comments=comments,
             synonyms=synonyms, keywords=keywords, space_tokens=space_tokens)
 
-        assert comments is None or isinstance(comments, (list, tuple)), (
-            f"'comments' must be list or tuple of comments descriptions, "
-            f"got: {comments}")
-        comments = comments if comments is not None else []
-        self.eol_comments = set()
-        self.ml_comments = {}  # {start_comment_text: end_comment_text}
-        for comment_data in comments:
-            if isinstance(comment_data, str):
-                # this is 'to-end-of-line' comment
-                self.eol_comments.add(comment_data)
-            elif isinstance(comment_data, (list, tuple)):
-                assert len(comment_data) == 2, (
-                    f"expected (start_comment_text, end_comment_text), "
-                    f"got {comment_data}")
-                self.ml_comments[comment_data[0]] = comment_data[1]
-            else:
-                assert False
-
         self.start_symbol_name = start_symbol_name
-        self.end_token_name = end_token_name
-        self.init_production_name = '$START$'
         self.productions = self._fix_empty_productions(productions)
         self.terminals = self.tokenizer.get_all_token_names()
         self.terminals.add(None)
-        self.terminals.add(self.end_token_name)
+        self.terminals.add(self._END_TOKEN_NAME)
         nullables = self._get_nullables(self.productions)
 
         self._verify_grammar_structure_part1()
 
-        self.productions[self.init_production_name] = [
-            (self.start_symbol_name, self.end_token_name)
+        self.productions[self._INIT_PRODUCTION_NAME] = [
+            (self.start_symbol_name, self._END_TOKEN_NAME)
         ]
 
         self.cleanup_rules = TElementCleanupRules(
@@ -787,8 +940,9 @@ class LLParser:
             set(self.productions.keys()))
 
         self.parse_table, first_sets, follow_sets = self._make_llone_table(
-            self.productions, start_symbol_name, end_token_name,
-            self.terminals, nullables)
+            self.productions, self.terminals, nullables,
+            self.start_symbol_name,
+        )
 
         # used only for printing detailed description of the parser
         self._summary = (
@@ -799,15 +953,13 @@ class LLParser:
 
         self._verify_grammar_structure_part2(nullables)
 
-    def parse(self, lines, *, debug=False, do_cleanup=True):
+    def parse(self, text, *, src_name="", debug=False, do_cleanup=True):
         """Parse the text."""
-        tokens = list(
-            self.tokenizer.tokenize(self._strip_comments(lines))
-        )
+        tokens = list(self.tokenizer.tokenize(text, src_name))
 
         parse_stack = [_StackElement(
-            self.init_production_name, 0,
-            self.productions[self.init_production_name])]
+            self._INIT_PRODUCTION_NAME, 0,
+            self.productions[self._INIT_PRODUCTION_NAME])]
         longest_stack = []
         if debug:
             self._log_cur_prod(parse_stack, tokens)
@@ -856,7 +1008,10 @@ class LLParser:
                     continue
                 if next_token.name == cur_symbol:
                     top.next_matched(
-                        TElement(cur_symbol, next_token.value),
+                        TElement(
+                            cur_symbol, next_token.value,
+                            src_pos=next_token.src_pos,
+                        ),
                         top.cur_token_pos+1)
                     continue
             else:
@@ -911,69 +1066,6 @@ class LLParser:
         """
         t_element.cleanup(self.cleanup_rules)
 
-    def _strip_comments(self, lines):
-        # remove comments from source text, yield _Tokenizer._Chunk
-        if isinstance(lines, str):
-            lines = [line.rstrip() for line in lines.split('\n')]
-
-        cur_ml_comment_end = None
-        cur_ml_comment_start_pos = None
-        cur_ml_start_line_text = None
-        for line_id, text in enumerate(lines, start=1):
-            cur_pos = 0
-            while cur_pos < len(text):
-                if cur_ml_comment_end is not None:
-                    end_pos = text.find(cur_ml_comment_end, cur_pos)
-                    if end_pos == -1:
-                        # the comment continues till end of line
-                        cur_pos = len(text)
-                        continue
-                    cur_pos = end_pos + len(cur_ml_comment_end)
-                    cur_ml_comment_end = None
-                    cur_ml_comment_start_pos = None
-                    cur_ml_start_line_text = None
-                    continue
-                # we are not inside a comment. Find comment start
-                comments_pos = {}
-                for start_comment_text, end_comment_text in self.ml_comments.items():
-                    start = text.find(start_comment_text, cur_pos)
-                    if start != -1:
-                        comments_pos[start] = (start_comment_text, end_comment_text)
-                for start_comment_text in self.eol_comments:
-                    start = text.find(start_comment_text, cur_pos)
-                    if start != -1:
-                        comments_pos[start] = (start_comment_text, None)
-                if comments_pos:
-                    comment_start = min(comments_pos.keys())
-                    start_comment_text, end_comment_text = comments_pos[comment_start]
-                    if comment_start > cur_pos:
-                        # report chunk of uncommented text
-                        yield _Tokenizer._Chunk(
-                            line_id, cur_pos, text[cur_pos:comment_start], text)
-                    if end_comment_text is None:
-                        # comment continues till end of line
-                        cur_pos = len(text)
-                        break
-                    # comment continues till end_comment_text
-                    cur_pos = comment_start + len(start_comment_text)
-                    cur_ml_comment_end = end_comment_text
-                    cur_ml_comment_start_pos = (line_id, comment_start)
-                    cur_ml_start_line_text = text
-                else:
-                    # comments were not detected
-                    if cur_pos == 0:
-                        yield _Tokenizer._Chunk(line_id, 0, text, text)
-                    else:
-                        yield _Tokenizer._Chunk(
-                            line_id, cur_pos, text[cur_pos:], text)
-                    cur_pos = len(text)
-        if cur_ml_comment_end is not None:
-            raise LexicalError(
-                cur_ml_comment_start_pos[0],
-                cur_ml_comment_start_pos[1],
-                cur_ml_start_line_text,
-                "comment is never closed")
-
     def _verify_grammar_structure_part1(self):
         # initial verification of grammar structure
         # to be called before parse_table is prepared
@@ -981,14 +1073,14 @@ class LLParser:
             raise GrammarError(
                 f"no productions for start symbol '{self.start_symbol_name}'")
 
-        if self.end_token_name in self.productions:
+        if self._END_TOKEN_NAME in self.productions:
             raise GrammarError(
-                f"production specified for end symbol '{self.end_token_name}'")
+                f"production specified for end symbol '{self._END_TOKEN_NAME}'")
 
-        if self.init_production_name in self.productions:
+        if self._INIT_PRODUCTION_NAME in self.productions:
             raise GrammarError(
                 f"production specified explicitely for "
-                f"special symbol '{self.init_production_name}'")
+                f"special symbol '{self._INIT_PRODUCTION_NAME}'")
 
         non_terminals = set(self.productions.keys())
         bad_tokens = non_terminals.intersection(self.terminals)
@@ -1009,14 +1101,14 @@ class LLParser:
             raise GrammarError(
                 f"unexpected symbols {unknown_symbols} used in productions")
 
-        if self.end_token_name in all_prod_symbols:
+        if self._END_TOKEN_NAME in all_prod_symbols:
             raise GrammarError(
-                f"special end token '{self.end_token_name}' is explicitely "
+                f"special end token '{self._END_TOKEN_NAME}' is explicitely "
                 f"used in productions")
 
-        if self.init_production_name in all_prod_symbols:
+        if self._INIT_PRODUCTION_NAME in all_prod_symbols:
             raise GrammarError(
-                f"special start symbol '{self.init_production_name}' is explicitely "
+                f"special start symbol '{self._INIT_PRODUCTION_NAME}' is explicitely "
                 f"used in productions")
 
     def _verify_grammar_structure_part2(self, nullables):
@@ -1122,9 +1214,7 @@ class LLParser:
         logger.error(*args, **kwargs)
 
     @classmethod
-    def _make_llone_table(
-            cls, productions, start_symbol_name, end_token_name,
-            terminals, nullables):
+    def _make_llone_table(cls, productions, terminals, nullables, start_symbol_name):
         """Make Parsing Table.
 
         Returns possible productions for non-terminal-symbol and next token:
@@ -1132,8 +1222,7 @@ class LLParser:
         """
         first_sets = cls._calc_first_sets(productions, terminals, nullables)
         follow_sets = cls._calc_follow_sets(
-            productions, terminals, nullables, first_sets,
-            start_symbol_name, end_token_name)
+            productions, terminals, nullables, first_sets, start_symbol_name)
 
         parse_table = defaultdict(list)
         for non_term, prods in productions.items():
@@ -1163,8 +1252,7 @@ class LLParser:
 
     @classmethod
     def _calc_follow_sets(
-        cls, productions, terminals, nullables, first_sets,
-        start_symbol_name, end_token_name,
+        cls, productions, terminals, nullables, first_sets, start_symbol_name,
     ):
         """Calculate 'follow-sets'
 
@@ -1175,7 +1263,7 @@ class LLParser:
             f"start symbol '{start_symbol_name}'")
 
         follow_sets = {non_term: set() for non_term in productions.keys()}
-        follow_sets[start_symbol_name].add(end_token_name)
+        follow_sets[start_symbol_name].add(cls._END_TOKEN_NAME)
 
         # follows dependencies rules: follow set for a symbol must include
         # follow sets of all the dependent symbols

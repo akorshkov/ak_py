@@ -8,16 +8,14 @@ from ak.llparser import LLParser, _Tokenizer, TElement
 class TestParserTokenizer(unittest.TestCase):
     """Test tokenizer used by LLParser"""
 
-    def test_tokenizer(self):
-        """Test tokenizer"""
+    def _make_tokenizer(self):
 
-        tokenizer = _Tokenizer(
+        return _Tokenizer(
             r"""
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             |"(?P<DQ_STRING>[^"]*)"
             |'(?P<SQ_STRING>[^']*)'
-            |(?P<COMMENT>//.*$)
             |(?P<PLUS>\+)
             |(?P<MINUS>-)
             |(?P<MULT>\*)
@@ -39,7 +37,16 @@ class TestParserTokenizer(unittest.TestCase):
                 'DQ_STRING': 'STRING',
                 'SQ_STRING': 'STRING',
             },
+            comments = [
+                '//',
+                ('/*', '*/'),
+            ],
         )
+
+    def test_tokenizer(self):
+        """Test tokenizer"""
+
+        tokenizer = self._make_tokenizer()
 
         tokens = list(tokenizer.tokenize(
             """
@@ -63,6 +70,48 @@ class TestParserTokenizer(unittest.TestCase):
                 'aaa', 'bb', '+', '-', 'xx', '*', '+ -', '/', '(', ')', 'x86', 'c',
                 'c', 'class', None,
             ], tokens_values)
+
+        t = tokens[0]
+        self.assertEqual(t.src_pos.coords, (2, 13))
+
+        t = tokens[-2]  # the last 'class' keyword before comment
+        self.assertEqual(t.src_pos.coords, (5, 15))
+
+        # just to make sure that 'line', 'col' and 'coords' report same data
+        self.assertEqual(t.src_pos.line, 5)
+        self.assertEqual(t.src_pos.col, 15)
+
+    def test_tokenize_text_with_comments(self):
+        """Test misc combinations of comments."""
+
+        tokenizer = self._make_tokenizer()
+
+        tokens = list(tokenizer.tokenize(
+            """
+            "str0" // commented "strA"
+            "str1" /* commented "strB" */ "str2"
+            // "strC" /* who cares */ "strD"
+            "str3"  /*
+            still comment "strE" // who cares
+            still comment "strF"
+            "strG" /* who cares
+            but here comment ends:*/"str4"
+            """)
+        )
+
+        tokens_values = [t.value for t in tokens]
+        self.assertEqual(
+            ["str0", "str1", "str2", "str3", "str4", None],
+            tokens_values)
+
+        # make sure positions of tokens are not affected by comments
+        tt_coords = {
+            t.value: t.src_pos.coords for t in tokens if t.value is not None}
+        self.assertEqual(tt_coords['str0'], (2, 13))
+        self.assertEqual(tt_coords['str1'], (3, 13))
+        self.assertEqual(tt_coords['str2'], (3, 43))
+        self.assertEqual(tt_coords['str3'], (5, 13))
+        self.assertEqual(tt_coords['str4'], (9, 37))
 
 
 class TestSimpleParserWithNullProductions(unittest.TestCase):
@@ -101,6 +150,12 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
             ('E', 'WORD'), x.signature(),
             f"subtree is:\n{x}",
         )
+
+        self.assertEqual(x.src_pos.coords, (1, 1))
+
+        word_elem = x.value[0]
+        self.assertEqual(word_elem.name, 'WORD')
+        self.assertEqual(word_elem.src_pos.coords, (1, 1))
 
 
 class TestParsingClasslookingObj(unittest.TestCase):
@@ -163,17 +218,36 @@ class TestParsingClasslookingObj(unittest.TestCase):
 
         parser = self._make_test_parser()
 
+        #                          1         2
+        #                 123456789 123456789 123456789
         x = parser.parse("class MyClass : Base { some };")
+
         self.assertIsInstance(x, TElement)
         self.assertEqual(x.name, 'E')
         self.assertEqual(('E', ), x.signature())
         self.assertIsInstance(x.value, list)
         self.assertEqual(len(x.value), 1)  # one class in source text
+        self.assertEqual(x.src_pos.coords, (1, 1))
 
+        # tree element which corresponds to the whole class
         c = x.value[0]
+        # c.printme()
         self.assertEqual(c.get_path_val('OBJ_NAME'), 'MyClass')
+        self.assertEqual(c.src_pos.coords, (1, 1))
 
-    def test_parsking_keep_symbols(self):
+        # corresponds to text ": Base"
+        opt_base_elem = c.get('OPT_PARENT')
+        self.assertEqual(opt_base_elem.src_pos.coords, (1, 15))
+
+        base_elem = opt_base_elem.get('OBJ_NAME')
+        self.assertEqual(base_elem.value, "Base")
+        self.assertEqual(base_elem.src_pos.coords, (1, 17))
+
+        # contents elem: coresponds to text "some"
+        cnt_elem = c.get('CONTENTS')
+        self.assertEqual(cnt_elem.src_pos.coords, (1, 24))
+
+    def test_parsing_keep_symbols(self):
         """Test prohibit to remove some nodes during cleanup."""
 
         parser = self._make_test_parser(keep_symbols={'CLASSES_LIST', })
@@ -258,7 +332,6 @@ class TestArithmeticsParser(unittest.TestCase):
             keywords=None,
             space_tokens={'SPACE'},
             start_symbol_name='E',
-            end_token_name='$END$',
             productions={
                 'E': [
                     ('SLAG', '+', 'E'),
@@ -281,6 +354,7 @@ class TestArithmeticsParser(unittest.TestCase):
 
         # 1. one word, cleanup later
         x = parser.parse("aa", do_cleanup=False)
+
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
         self.assertEqual(('E', 'SLAG'), x.signature())
         self.assertEqual(('SLAG', 'WORD'), x.value[0].signature())
@@ -297,10 +371,29 @@ class TestArithmeticsParser(unittest.TestCase):
 
         # 3. single '*'
         x = parser.parse("aa * bb")
+        # x.printme()
+        #E:
+        #  SLAG:
+        #    WORD: aa
+        #    *: *
+        #    SLAG:
+        #      WORD: bb
+
         self.assertEqual(('E', 'SLAG'), x.signature())
+        self.assertEqual(x.src_pos.coords, (1, 1))
 
         x = x.get('SLAG')
         self.assertEqual(('SLAG', 'WORD', '*', 'SLAG'), x.signature())
+        self.assertEqual(x.src_pos.coords, (1, 1))
+
+        self.assertEqual(
+            x.value[2].src_pos.coords, (1, 6),
+            "corresponds to source text 'bb'")
+
+        self.assertEqual(
+            x.value[2].get('WORD').src_pos.coords, (1, 6),
+            "corresponds to source text 'bb'")
+
 
     def test_multiple_operations(self):
         """parse expression with multiple aoprations"""
@@ -334,6 +427,7 @@ class TestArithmeticsParser(unittest.TestCase):
     def test_expression_with_braces(self):
         """Test more complex valid expression with braces"""
         parser = self._make_test_parser()
+        #                 123456789 123456789
         x = parser.parse("(a) + ( b - c * d ) + ( x )")
 
         self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
@@ -343,6 +437,9 @@ class TestArithmeticsParser(unittest.TestCase):
 
         second_slag = x.value[2]
         self.assertEqual(('E', 'SLAG', '+', 'E'), second_slag.signature())
+        self.assertEqual(
+            second_slag.src_pos.coords, (1, 7),
+            "corresponds to text '( b - c * d )'")
 
     def test_bad_expression(self):
         # test parsing bad expressions
@@ -394,18 +491,21 @@ class TestListParsers(unittest.TestCase):
         )
         # parser.print_detailed_descr()
 
-        x = parser.parse("[ a, b, c, d]")
+        x = parser.parse("  [ a, b, c, d]")
         # x.printme()
         self.assertEqual(('E', ), x.signature())
         self.assertTrue(x.is_leaf(), f"it's not a tree node, so it's a leaf: {x}")
         self.assertEqual(4, len(x.value))
+        self.assertEqual(x.src_pos.coords, (1, 3))
 
+        #                 123456789 123456789
         x = parser.parse("[a, b, [d, e, f], c,]")
         # x.printme()
         self.assertEqual(('E', ), x.signature())
         self.assertEqual(4, len(x.value))
         self.assertEqual(x.value[0], "a")
         self.assertEqual(x.value[2], ["d", "e", "f"])
+        self.assertEqual(x.src_pos.coords, (1, 1))
 
     def test_list_parser_02(self):
         parser = LLParser(
@@ -935,7 +1035,6 @@ class TestMathParserWithNullProductions(unittest.TestCase):
             keywords=None,
             space_tokens={'SPACE'},
             start_symbol_name='E',
-            end_token_name='$END$',
             productions={
                 'E': [
                     ('T', 'EE'),
