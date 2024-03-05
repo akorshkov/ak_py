@@ -14,11 +14,31 @@ class Error(Exception):
     pass
 
 
+class SrcPos:
+    """Human-readable description of a position in source text."""
+    __slots__ = 'src_name', 'coords'
+
+    def __init__(self, src_name, line, col):
+        self.src_name = src_name
+        self.coords = (line, col)
+
+    @property
+    def line(self):
+        """Return line number of the position (first line has number 1)"""
+        return self.coords[0]
+
+    @property
+    def col(self):
+        """Return column number of the position (first column has number 1)"""
+        return self.coords[1]
+
+
 class LexicalError(Error):
     """Error happened during lexical parsing"""
-    def __init__(self, line, col, text, descr="unexpected symbol at"):
-        self.line = line
-        self.col = col
+
+    def __init__(self, src_pos, text, descr="unexpected symbol at"):
+        self.src_pos = src_pos
+        line, col = src_pos.coords
         self.text = text
         super().__init__(
             f"{descr} ({line}, {col}):\n{text}\n" +
@@ -52,29 +72,10 @@ class GrammarIsRecursive(GrammarError):
             for i, s in enumerate(prod)) + "]"
 
 
-class SrcPos:
-    """Human-readable description of a position in source text."""
-    __slots__ = 'src_name', 'coords'
-
-    def __init__(self, src_name, line, col):
-        self.src_name = src_name
-        self.coords = (line, col)
-
-    @property
-    def line(self):
-        """Return line number of the position (first line has number 1)"""
-        return self.coords[0]
-
-    @property
-    def col(self):
-        """Return column number of the position (first column has number 1)"""
-        return self.coords[1]
-
-
 class ParsingError(Error):
     """Unexpected token kind of errors."""
     def __init__(self, symbol, next_tokens, attempted_prods):
-        # if len():
+        self.src_pos = next_tokens[0].src_pos
         msg = (
             f"fail at {next_tokens}.\n"
             f"tried productions '{symbol}' -> {attempted_prods}")
@@ -160,7 +161,7 @@ class _Tokenizer:
         tokens.update(self.keywords.values())
         return tokens
 
-    def tokenize(self, text, src_name=""):
+    def tokenize(self, text, src_name):
         """text -> _Token objects
 
         Arguments:
@@ -183,14 +184,16 @@ class _Tokenizer:
             assert False, (
                 f"unexpected type of the object to parse: {str(type(text))}")
 
-        chunks = self._strip_comments(enumereted_lines)
+        chunks = self._strip_comments(enumereted_lines, src_name)
 
         for chunk in chunks:
             col = 0
             while col < len(chunk.text):
                 match = self.matcher.match(chunk.text, col)
                 if match is None:
-                    raise LexicalError(chunk.line_id, col, chunk.text)
+                    raise LexicalError(
+                        SrcPos(src_name, chunk.line_id, col),
+                        chunk.text)
                 token_name = match.lastgroup
                 value = match.group(token_name)
                 token_name = self.synonyms.get(token_name, token_name)
@@ -207,7 +210,7 @@ class _Tokenizer:
         yield _Token(
             self.end_token_name, None, None)
 
-    def _strip_comments(self, enumereted_lines):
+    def _strip_comments(self, enumereted_lines, src_name):
         # remove comments from source text, yield _Tokenizer._Chunk
 
         cur_ml_comment_end = None
@@ -263,8 +266,11 @@ class _Tokenizer:
                     cur_pos = len(text)
         if cur_ml_comment_end is not None:
             raise LexicalError(
-                cur_ml_comment_start_pos[0],
-                cur_ml_comment_start_pos[1],
+                SrcPos(
+                    src_name,
+                    cur_ml_comment_start_pos[0],
+                    cur_ml_comment_start_pos[1],
+                ),
                 cur_ml_start_line_text,
                 "comment is never closed")
 
@@ -953,7 +959,7 @@ class LLParser:
 
         self._verify_grammar_structure_part2(nullables)
 
-    def parse(self, text, *, src_name="", debug=False, do_cleanup=True):
+    def parse(self, text, *, src_name="input text", debug=False, do_cleanup=True):
         """Parse the text."""
         tokens = list(self.tokenizer.tokenize(text, src_name))
 

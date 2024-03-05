@@ -53,7 +53,8 @@ class TestParserTokenizer(unittest.TestCase):
             aaa "bb" '+' - xx* '+ -' / () x86  \n \t     c
 
             c class // a + b
-            """)
+            """,
+            src_name="test string")
         )
         self.assertEqual(15, len(tokens), str(tokens))
 
@@ -96,7 +97,8 @@ class TestParserTokenizer(unittest.TestCase):
             still comment "strF"
             "strG" /* who cares
             but here comment ends:*/"str4"
-            """)
+            """,
+            src_name="test string")
         )
 
         tokens_values = [t.value for t in tokens]
@@ -445,8 +447,14 @@ class TestArithmeticsParser(unittest.TestCase):
         # test parsing bad expressions
         parser = self._make_test_parser()
 
-        with self.assertRaises(llparser.ParsingError):
+        with self.assertRaises(llparser.ParsingError) as exc:
             parser.parse("aa )")
+
+        # reporting position of error is not very good.
+        # but better than nothing!
+        src_pos = exc.exception.src_pos
+        self.assertEqual(src_pos.coords, (1, 1), "first line, first column")
+        self.assertEqual("input text", src_pos.src_name)  # hardcoded string
 
 
 class TestListParsers(unittest.TestCase):
