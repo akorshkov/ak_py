@@ -868,6 +868,8 @@ class TestMapGrammar(unittest.TestCase):
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             |(?P<COMMA>,)
+            |(?P<SIGN_LESS><)
+            |(?P<SIGN_MORE>>)
             |(?P<BR_OPEN>\[)
             |(?P<BR_CLOSE>\])
             |(?P<BR_OPEN_CURL>\{)
@@ -876,15 +878,17 @@ class TestMapGrammar(unittest.TestCase):
             """,
             synonyms={
                 'COMMA': ',',
-                'BR_OPEN_CURL': '{',
-                'BR_CLOSE_CURL': '}',
+                'SIGN_LESS': '<',
+                'SIGN_MORE': '>',
                 'BR_OPEN': '[',
                 'BR_CLOSE': ']',
+                'BR_OPEN_CURL': '{',
+                'BR_CLOSE_CURL': '}',
                 'COLON': ':',
             },
             productions={
                 'E': [
-                    ('LIST', ),
+                    ('VALUE', ),
                 ],
                 'LIST': [
                     ('[', 'LIST_ITEMS_TAIL', ']'),
@@ -902,6 +906,10 @@ class TestMapGrammar(unittest.TestCase):
                     ('WORD', ),
                     ('LIST', ),
                     ('MAP', ),
+                    ('OBJECT', ),
+                ],
+                'OBJECT': [
+                    ('<', 'VALUE', '>'),
                 ],
                 'MAP': [
                     ('{', 'MAP_ELEMENTS', '}'),
@@ -923,7 +931,95 @@ class TestMapGrammar(unittest.TestCase):
             },
         )
 
-    def test_map_grammar(self):
+    def test_simple_map(self):
+        """Test grammar: just make sure grammar works ok."""
+        parser = self._make_test_parser()
+
+        x = parser.parse("{}")
+        self.assertIsInstance(x, TElement)
+        self.assertEqual(x.name, 'E', x.signature())
+
+        x_descr = f"{x}"
+        self.assertEqual(x_descr, "E: {}")
+
+    def test_simple_map_in_map(self):
+        """Test combination of lists and maps."""
+        parser = self._make_test_parser()
+
+        x = parser.parse("{a:{}, b:[]}")
+        self.assertIsInstance(x, TElement)
+        self.assertEqual(x.name, 'E', x.signature())
+
+        expected_descr = (
+            "E: {",
+            "  b: []",
+            "  a: {}",
+            "}",
+        )
+        actual_descr = tuple(f"{x}".split('\n'))
+        self.assertEqual(expected_descr, actual_descr)
+
+    def test_complex_lists_maps_object(self):
+        """Text complex lists/maps object."""
+        parser = self._make_test_parser()
+
+        x = parser.parse("""
+            [
+              a, [], {}, <x1>,
+              {
+                k1: <{k11: v11, k12: {}}>,
+                k2: v2,
+                k3: [v31, v31, v33],
+                k4: {},
+                k5: {
+                  k11: [],
+                  k12: {k112: v112},
+                }
+              }
+            ]
+        """)
+        self.assertIsInstance(x, TElement)
+        self.assertEqual(x.name, 'E', x.signature())
+
+        # probably less strict test is required here
+        expected_descr = (
+            "E: [",
+            "  a",
+            "  []",
+            "  {}",
+            "  OBJECT:",
+            "    <: <",
+            "    WORD: x1",
+            "    >: >",
+            "  {",
+            "    k5: {",
+            "      k12: {",
+            "        k112: v112",
+            "      }",
+            "      k11: []",
+            "    }",
+            "    k4: {}",
+            "    k3: [",
+            "      v31",
+            "      v31",
+            "      v33",
+            "    ]",
+            "    k2: v2",
+            "    k1: OBJECT:",
+            "      <: <",
+            "      MAP: {",
+            "        k12: {}",
+            "        k11: v11",
+            "      }",
+            "      >: >",
+            "  }",
+            "]",
+        )
+        actual_descr = set(f"{x}".split('\n'))
+        for line in expected_descr:
+            self.assertIn(line, actual_descr)
+
+    def test_map_in_list(self):
         """Test grammar of map"""
         parser = self._make_test_parser()
 
@@ -948,7 +1044,6 @@ class TestMapGrammar(unittest.TestCase):
         parser = self._make_test_parser()
 
         x = parser.parse("[{a: aa,}]")
-        # x.printme()
 
         the_map = x.value[0]
         self.assertEqual({'a'}, the_map.keys())

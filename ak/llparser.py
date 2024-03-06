@@ -477,11 +477,18 @@ class TElement:
             }
         assert False, f"unexpected value: {value=} of type {str(type(value))}"
 
-    def gen_descr(self, offset=0, print_name=True):
-        """Generate lines of self description"""
+    def gen_descr(self, offset=0, out_name=None):
+        """Generate lines of self description.
+
+        Arguments:
+        - out_name: 'outer' name of the self. For example, if
+            TElement is a value of dictionary, we may want to generate the
+            description including corresponding key. Disctionary key
+            in this case is 'outer' name.
+        """
+        obj_descr = f"{self.name}" if out_name is None else f"{out_name}: {self.name}"
         if not self.is_leaf():
-            if print_name:
-                yield "  " * offset + f"{self.name}:"
+            yield "  " * offset + f"{obj_descr}:"
             for child in self.value:
                 if child is None:
                     # this should be possible only in case self is a list,
@@ -491,31 +498,34 @@ class TElement:
                 else:
                     assert isinstance(child, TElement), f"{child=}"
                     yield from child.gen_descr(offset+1)
-        elif isinstance(self.value, list):
-            if len(self.value) == 0:
-                yield "  " * offset + f"{self.name}: []"
-            else:
-                yield "  " * offset + f"{self.name}: ["
-                for x in self.value:
-                    if isinstance(x, TElement):
-                        yield from x.gen_descr(offset+1)
-                    else:
-                        yield "  " * (offset + 1) + str(x)
-                yield "  " * offset + "]"
-        elif isinstance(self.value, dict):
-            if print_name:
-                yield "  " * offset + f"{self.name}:"
-            for map_key, map_value in self.value.items():
-                assert isinstance(map_value, TElement), f"{map_value=}"
-                if map_value.is_leaf() and not isinstance(map_value.value, dict):
-                    # make a single-line description: key: elem_name: value
-                    elem_descr = "".join(map_value.gen_descr())
-                    yield "  " * (offset+1) + f"{map_key}: {elem_descr}"
-                    continue
-                yield "  " * (offset+1) + f"{map_key}: {map_value.name}:"
-                yield from map_value.gen_descr(offset+1, print_name=False)
         else:
-            yield "  " * offset + f"{self.name}: {self.value}"
+            yield from self._gen_obj_descr(self.value, offset, obj_descr)
+
+    @classmethod
+    def _gen_obj_descr(cls, obj, offset, out_name):
+        # helper method for 'gen_descr'. Generates description of
+        # objects which may be not TElement.
+        prefix = f"{out_name}: " if out_name is not None else ""
+        if isinstance(obj, dict):
+            if len(obj) == 0:
+                yield "  " * offset + f"{prefix}{{}}"
+            else:
+                yield "  " * offset + f"{prefix}{{"
+                for map_key, map_value in obj.items():
+                    yield from cls._gen_obj_descr(map_value, offset+1, map_key)
+                yield "  " * offset + "}"
+        elif isinstance(obj, list):
+            if len(obj) == 0:
+                yield "  " * offset + f"{prefix}[]"
+            else:
+                yield "  " * offset + f"{prefix}["
+                for list_value in obj:
+                    yield from cls._gen_obj_descr(list_value, offset+1, None)
+                yield "  " * offset + "]"
+        elif isinstance(obj, TElement):
+            yield from obj.gen_descr(offset, out_name)
+        else:
+            yield "  " * offset + f"{prefix}{obj}"
 
     def printme(self):
         """Pretty-print the tree with root in self"""
