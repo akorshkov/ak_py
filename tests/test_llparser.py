@@ -1,9 +1,33 @@
 """Test LL Parser"""
 
+import os
 import unittest
+
 from ak import llparser
 from ak.llparser import LLParser, _Tokenizer, TElement
 
+
+#########################
+# modify LLParser to print detailed debug info if 'LLP_DBG' env is set
+
+if os.environ.get('LLP_DBG'):
+    # print detailed description of the parser after creation
+    _ORIG_INIT = LLParser.__init__
+    def _hooked_init(self, *args, **kwargs):
+        _ORIG_INIT(self, *args, **kwargs)
+        self.print_detailed_descr()
+    LLParser.__init__ = _hooked_init
+    # print detailed description of parse process
+    _ORIG_PARSE_MTD = LLParser.parse
+    def _hooked_parse_mtd(self, *args, **kwargs):
+        if 'debug' not in kwargs:
+            return _ORIG_PARSE_MTD(self, *args, **kwargs, debug=True)
+        return _ORIG_PARSE_MTD(self, *args, **kwargs)
+    LLParser.parse = _hooked_parse_mtd
+
+
+#########################
+# tests
 
 class TestParserTokenizer(unittest.TestCase):
     """Test tokenizer used by LLParser"""
@@ -134,7 +158,6 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
                     None,
                 ],
             },
-            keep_symbols={'E'},
         )
 
         x = parser.parse("aaa", do_cleanup=False)
@@ -158,6 +181,354 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
         word_elem = x.value[0]
         self.assertEqual(word_elem.name, 'WORD')
         self.assertEqual(word_elem.src_pos.coords, (1, 1))
+
+
+class TestSquashing(unittest.TestCase):
+    """Test squashing elements during TElement cleanup."""
+
+    def _make_test_parser(self, c_productions, keep_symbols=None):
+        return LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            |(?P<SIGN_LESS><)
+            |(?P<SIGN_MORE>>)
+            """,
+            synonyms={
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+                'SIGN_LESS': '<',
+                'SIGN_MORE': '>',
+            },
+            productions={
+                'E': [
+                    ('A', ),
+                ],
+                'A': [
+                    ('B', ),
+                ],
+                'B': [
+                    ('C', ),
+                ],
+                # this production will be different in different tests
+                'C': c_productions,
+                # list-releated productions
+                'LIST': [
+                    ('[', 'LIST_TAIL', ']'),
+                ],
+                'LIST_TAIL': [
+                    ('WORD', 'LIST_TAIL'),
+                    ('WORD', ),
+                    None,
+                ],
+                # non-trivial production
+                'OBJECT': [
+                    ('<', 'WORD', '>'),
+                ],
+            },
+            lists = {'LIST': ('[', None, 'LIST_TAIL', ']')},
+            keep_symbols=keep_symbols,
+        )
+
+    def _make_test_parser_01(self, keep_symbols=None):
+        return LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<DEC>@[a-zA-Z0-9_]*)
+            |(?P<INT>[0-9]*)
+            """,
+            productions={
+                'E': [
+                    ('A', ),
+                ],
+                'A': [
+                    ('B1', ),
+                    ('B2', ),
+                ],
+                'B1': [
+                    ('C1', ),
+                ],
+                'C1': [
+                    ('WORD', ),
+                ],
+                'B2': [
+                    ('C2', ),
+                ],
+                'C2': [
+                    ('D2', ),
+                ],
+                'D2': [
+                    ('E2', ),
+                    ('E3', ),
+                ],
+                'E2': [
+                    ('F2', ),
+                ],
+                'F2': [
+                    ('INT', ),
+                ],
+                'E3': [
+                    ('F3', ),
+                ],
+                'F3': [
+                    ('DEC', ),
+                ],
+            },
+            keep_symbols=keep_symbols,
+        )
+
+    @staticmethod
+    def _get_telems_names_chain(t_elem):
+        # it is supposed that t_elem is a root of a 'chain' part of the tree
+        # (where each element has only one child)
+        #
+        # returns list containing names of elements and the value of last element:
+        # ['E', 'A', 'B', 'C', the_value]
+        result = []
+        final_value = None
+        loop_detector = set()
+        while True:
+            assert t_elem not in loop_detector
+            loop_detector.add(t_elem)
+            result.append(t_elem.name)
+            if t_elem.is_leaf() or len(t_elem.value) != 1:
+                final_value = t_elem.value
+                break
+            t_elem = t_elem.value[0]
+            assert isinstance(t_elem, TElement), f"{type(t_elem)}: {t_elem}"
+
+        return result, final_value
+
+    def test_squash_chain_ending_terminal(self):
+        """Test chain ending with a terminal."""
+
+        parser = self._make_test_parser(c_productions=[('WORD', ), ])
+        # parser.print_detailed_descr()
+
+        # w/o cleanup we have a full chain of elements
+        x = parser.parse("test_word", do_cleanup=False)
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'A', 'B', 'C', 'WORD'], 'test_word'))
+
+        parser = self._make_test_parser(c_productions=[('WORD', ), ])
+
+        x = parser.parse("test_word")
+        # we have a chain of productions:
+        # E: A: B: C: WORD: test_word
+        # which is interpreted as "'E' is an alternative name of 'WORD'"
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E'], 'test_word'))
+
+        # we want to keep symbol in the middle of the chain (symbol 'B').
+        # So, chain ['E', 'A', 'B', 'C'] is squashed to ['E', 'B']
+        # ('E' remains because it's the start symbol of production)
+        parser = self._make_test_parser(
+            c_productions=[('WORD', ), ], keep_symbols={'B'})
+        x = parser.parse("test_word")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'B'], 'test_word'))
+
+        # keep last symbol
+        parser = self._make_test_parser(
+            c_productions=[('WORD', ), ], keep_symbols={'WORD', })
+        x = parser.parse("test_word")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'WORD'], 'test_word'))
+
+        # keep several symbols
+        parser = self._make_test_parser(
+            c_productions=[('WORD', ), ], keep_symbols={'B', 'A'})
+        x = parser.parse("test_word")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'A', 'B'], 'test_word'))
+
+        # keep all symbols
+        parser = self._make_test_parser(
+            c_productions=[('WORD', ), ], keep_symbols={'E', 'B', 'A', 'C', 'WORD'})
+        x = parser.parse("test_word")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'A', 'B', 'C', 'WORD'], 'test_word'))
+
+    def test_squash_chain_ending_list(self):
+        """Test chain ending with a list."""
+
+        parser = self._make_test_parser(c_productions=[('LIST', ), ])
+
+        x = parser.parse("[x1 x2]", do_cleanup=False)
+        self.assertEqual(
+            self._get_telems_names_chain(x)[0],
+            ['E', 'A', 'B', 'C', 'LIST'])
+
+        # we have a chain of productions:
+        # E: A: B: C: LIST: ['x1', 'x2']
+        # which is interpreted as "'E' is an alternative name of 'LIST'"
+        x = parser.parse("[x1 x2]")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E'], ['x1', 'x2']))
+
+    def test_squash_chain_ending_obj(self):
+        """Test chain ending with a obj."""
+
+        parser = self._make_test_parser(c_productions=[('OBJECT', ), ])
+        # parser.print_detailed_descr()
+
+        x = parser.parse("<x1>", do_cleanup=False)
+        self.assertEqual(
+            self._get_telems_names_chain(x)[0],
+            ['E', 'A', 'B', 'C', 'OBJECT'])
+
+        # we have a chain of productions:
+        # E: A: B: C: OBJECT: TElement
+        # which is interpreted as "'E' is an alternative name of 'OBJECT'"
+        x = parser.parse("<x1>")
+        self.assertEqual(
+            self._get_telems_names_chain(x)[0],
+            ['E'])
+
+    def test_squash_notsquashable_chain(self):
+        """Result tree is a chain, but squashing it is not possible """
+        parser = self._make_test_parser_01()
+
+        x = parser.parse("x1", do_cleanup=False)
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'A', 'B1', 'C1', 'WORD'], 'x1'))
+
+        # even though the result tree is a chain, there are two
+        # productions for 'A' symbol:
+        # 'A' -> ('B1', )
+        # 'A' -> ('B2', )
+        # To preserve info about which production was used, symbol 'B1'
+        # will not be cleaned up.
+
+        parser = self._make_test_parser_01()
+        x = parser.parse("x1")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'B1'], 'x1'))
+
+    def test_squash_twice_notsquashable(self):
+        """Result tree is a chain, but squashing it is not possible """
+        parser = self._make_test_parser_01()
+
+        x = parser.parse("@x1", do_cleanup=False)
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'A', 'B2', 'C2', 'D2', 'E3', 'F3', 'DEC'], '@x1'))
+
+        # even though the result tree is a chain, there are two
+        # symbols in this chain which have mupliple productions.
+        # To preserve info that productions
+        # 'A' -> ('B2', )
+        # and
+        # 'D2' -> ('E3', )
+        # were actually used, these symbols ('B2' and 'E3')
+        # will not be cleaned up.
+
+        x = parser.parse("@x1")
+        self.assertEqual(
+            self._get_telems_names_chain(x),
+            (['E', 'B2', 'E3'], '@x1'))
+
+
+class TestSquashingInList(unittest.TestCase):
+    """Test cleanup of list elements.
+
+    During cleanup auxiliary symbols such as 'LIST_TAIL' or 'LIST_ELEMENT'
+    shoud be squashed out.
+    """
+
+    def _make_test_parser(self, keep_symbols=None):
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            |(?P<TILDA>\~)
+            |(?P<HAT>\^)
+            |(?P<OR>\|)
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+                'TILDA': '~',
+                'HAT': '^',
+                'OR': '|',
+            },
+            productions={
+                'E': [
+                    ('LIST',),
+                ],
+                'LIST': [
+                    ('[', 'LIST_TAIL', ']'),
+                ],
+                'LIST_TAIL': [
+                    ('LIST_ITEM', ',', 'LIST_TAIL'),
+                    ('LIST_ITEM', ),
+                    None,
+                ],
+                'LIST_ITEM': [
+                    ('WORD', ),
+                    ('LIST', ),
+                    ('OBJECT_A', ),
+                    ('OBJECT_B', ),
+                ],
+                'OBJECT_A': [
+                    ('~', 'WORD', '~'),
+                    ('^', 'WORD', '^'),
+                ],
+                'OBJECT_B': [
+                    ('|', 'WORD', '|'),
+                ],
+            },
+            keep_symbols=keep_symbols,
+            lists={
+                'LIST': ('[', ',', 'LIST_TAIL', ']'),
+            },
+        )
+        return parser
+
+    def test_squashing_in_list(self):
+        """After cleanup 'LIST_TAIL' and 'LIST_ITEM' should not present in tree."""
+
+        parser = self._make_test_parser()
+
+        x = parser.parse("[a, ~x~, [], [i, ^y^, |z|]]")
+
+        self.assertEqual(x.name, 'E', f"{x}")
+        self.assertTrue(x.is_leaf(), f"{x}")
+
+        the_list = x.value
+        self.assertEqual(len(the_list), 4)
+
+        self.assertEqual(the_list[0], 'a')
+
+        self.assertIsInstance(the_list[1], TElement)
+        # no auxiliary elements 'LIST_TAIL' and 'LIST_ITEM' should be there!
+        self.assertEqual(the_list[1].name, 'OBJECT_A')
+
+        self.assertEqual(the_list[2], [])
+
+        self.assertIsInstance(the_list[3], list)
+        inn_list = the_list[3]
+        self.assertEqual(inn_list[0], 'i')
+        self.assertIsInstance(inn_list[1], TElement)
+        self.assertEqual(inn_list[1].name, 'OBJECT_A')
+
+        self.assertEqual(inn_list[2].name, 'OBJECT_B')
 
 
 class TestParsingClasslookingObj(unittest.TestCase):
@@ -233,7 +604,6 @@ class TestParsingClasslookingObj(unittest.TestCase):
 
         # tree element which corresponds to the whole class
         c = x.value[0]
-        # c.printme()
         self.assertEqual(c.get_path_val('OBJ_NAME'), 'MyClass')
         self.assertEqual(c.src_pos.coords, (1, 1))
 
@@ -252,7 +622,8 @@ class TestParsingClasslookingObj(unittest.TestCase):
     def test_parsing_keep_symbols(self):
         """Test prohibit to remove some nodes during cleanup."""
 
-        parser = self._make_test_parser(keep_symbols={'CLASSES_LIST', })
+        parser = self._make_test_parser(keep_symbols={'CLASSES_LIST'})
+
         x = parser.parse("class MyClass : Base { some };")
         self.assertEqual(x.name, 'E')
         self.assertEqual(('E', 'CLASSES_LIST'), x.signature())
@@ -492,7 +863,6 @@ class TestListParsers(unittest.TestCase):
                     ('LIST', ),
                 ],
             },
-            keep_symbols={'E'},
             lists={
                 'LIST': ('[', ',', 'OPT_LIST', ']'),
             },
@@ -736,30 +1106,32 @@ class TestListWithNoneValues(unittest.TestCase):
 class TestOptionalLists(unittest.TestCase):
     """Test processing of elements which can expand to null or list"""
 
-    _PARSER = LLParser(
-        r"""
-        (?P<SPACE>\s+)
-        |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
-        |(?P<NUMBER>[0-9]+)
-        """,
-        productions={
-            'E': [
-                ('LIST_WORDS', 'NUMBER'),
-            ],
-            'LIST_WORDS': [
-                ('WORD', 'LIST_WORDS'),
-                None,
-            ]
-        },
-        lists={
-            'LIST_WORDS': (None, None, 'LIST_WORDS', None),
-        }
-    )
+    @staticmethod
+    def _make_test_parser():
+        return LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<NUMBER>[0-9]+)
+            """,
+            productions={
+                'E': [
+                    ('LIST_WORDS', 'NUMBER'),
+                ],
+                'LIST_WORDS': [
+                    ('WORD', 'LIST_WORDS'),
+                    None,
+                ]
+            },
+            lists={
+                'LIST_WORDS': (None, None, 'LIST_WORDS', None),
+            }
+        )
 
     def test_not_empty_list(self):
         """just to make sure parser works correctly."""
 
-        x = self._PARSER.parse("a b c 10")
+        x = self._make_test_parser().parse("a b c 10")
         the_list = x.get_path_val('LIST_WORDS')
         self.assertIsInstance(the_list, list, f"parsed tree:\n{x}")
         self.assertEqual(3, len(the_list), f"parsed tree:\n{x}")
@@ -767,14 +1139,14 @@ class TestOptionalLists(unittest.TestCase):
     def test_empty_list(self):
         """Test situation when the optional list is not present in source text."""
 
-        x = self._PARSER.parse("10", do_cleanup=False)
+        x = self._make_test_parser().parse("10", do_cleanup=False)
         list_tree_elem = x.get_path_elem('LIST_WORDS')
         self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
         # LIST_WORDS is nullable, it is exapnded to None, so, the list is not
         # present in source, so, the value is None
         self.assertIsNone(list_tree_elem.value, f"parsed tree:\n{x}")
 
-        x = self._PARSER.parse("10")
+        x = self._make_test_parser().parse("10")
         list_tree_elem = x.get_path_elem('LIST_WORDS')
         # cleanup operation removes LIST_WORDS element because it's value is None
         self.assertIsNone(
@@ -791,40 +1163,42 @@ class TestOptionalListsWithBracers(unittest.TestCase):
     explicitely enclosed in bracers.
     """
 
-    _PARSER = LLParser(
-        r"""
-        (?P<SPACE>\s+)
-        |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
-        |(?P<NUMBER>[0-9]+)
-        |(?P<BR_OPEN>\[)
-        |(?P<BR_CLOSE>\])
-        """,
-        synonyms={
-            'BR_OPEN': '[',
-            'BR_CLOSE': ']',
-        },
-        productions={
-            'E': [
-                ('LIST_WORDS', 'NUMBER'),
-            ],
-            'LIST_WORDS': [
-                ('[', 'LIST_WORDS_TAIL', ']'),
-                None,
-            ],
-            'LIST_WORDS_TAIL': [
-                ('WORD', 'LIST_WORDS_TAIL'),
-                None,
-            ],
-        },
-        lists={
-            'LIST_WORDS': ('[', None, 'LIST_WORDS_TAIL', ']'),
-        }
-    )
+    @staticmethod
+    def _make_test_parser():
+        return LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<NUMBER>[0-9]+)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            """,
+            synonyms={
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+            },
+            productions={
+                'E': [
+                    ('LIST_WORDS', 'NUMBER'),
+                ],
+                'LIST_WORDS': [
+                    ('[', 'LIST_WORDS_TAIL', ']'),
+                    None,
+                ],
+                'LIST_WORDS_TAIL': [
+                    ('WORD', 'LIST_WORDS_TAIL'),
+                    None,
+                ],
+            },
+            lists={
+                'LIST_WORDS': ('[', None, 'LIST_WORDS_TAIL', ']'),
+            }
+        )
 
     def test_not_empty_list(self):
         """just to make sure parser works correctly."""
 
-        x = self._PARSER.parse("[a b c] 10")
+        x = self._make_test_parser().parse("[a b c] 10")
         the_list = x.get_path_val('LIST_WORDS')
         self.assertIsInstance(the_list, list, f"parsed tree:\n{x}")
         self.assertEqual(3, len(the_list), f"parsed tree:\n{x}")
@@ -832,14 +1206,14 @@ class TestOptionalListsWithBracers(unittest.TestCase):
     def test_missing_list(self):
         """The list is not present => element removed from result tree."""
 
-        x = self._PARSER.parse("10", do_cleanup=False)
+        x = self._make_test_parser().parse("10", do_cleanup=False)
         list_tree_elem = x.get_path_elem('LIST_WORDS')
         self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
         # LIST_WORDS is nullable, it is exapnded to None, so, the list is not
         # present in source, so, the value is None
         self.assertIsNone(list_tree_elem.value, f"parsed tree:\n{x}")
 
-        x = self._PARSER.parse("10")
+        x = self._make_test_parser().parse("10")
         list_tree_elem = x.get_path_elem('LIST_WORDS')
         # cleanup operation removes LIST_WORDS element because it's value is None
         self.assertIsNone(
@@ -851,7 +1225,7 @@ class TestOptionalListsWithBracers(unittest.TestCase):
     def test_empty_list(self):
         """The list is empty => element is still present in result."""
 
-        x = self._PARSER.parse("[] 10")
+        x = self._make_test_parser().parse("[] 10")
         list_tree_elem = x.get_path_elem('LIST_WORDS')
         self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
         self.assertIsInstance(list_tree_elem.value, list, f"parsed tree:\n{x}")
@@ -861,7 +1235,7 @@ class TestOptionalListsWithBracers(unittest.TestCase):
 class TestMapGrammar(unittest.TestCase):
     """Test grammar of map"""
 
-    def _make_test_parser(self):
+    def _make_test_parser(self, keep_symbols=None) -> LLParser:
         # prepare the parser for tests
         return LLParser(
             r"""
@@ -929,6 +1303,7 @@ class TestMapGrammar(unittest.TestCase):
             maps={
                 'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),
             },
+            keep_symbols=keep_symbols,
         )
 
     def test_simple_map(self):
@@ -939,8 +1314,11 @@ class TestMapGrammar(unittest.TestCase):
         self.assertIsInstance(x, TElement)
         self.assertEqual(x.name, 'E', x.signature())
 
-        x_descr = f"{x}"
-        self.assertEqual(x_descr, "E: {}")
+        #E:
+        #  MAP: {}
+
+        the_map = x.get_path_val('MAP')
+        self.assertEqual(the_map, {})
 
     def test_simple_map_in_map(self):
         """Test combination of lists and maps."""
@@ -951,19 +1329,45 @@ class TestMapGrammar(unittest.TestCase):
         self.assertEqual(x.name, 'E', x.signature())
 
         expected_descr = (
-            "E: {",
-            "  b: []",
-            "  a: {}",
-            "}",
+            "E:",
+            "  MAP: {",
+            "    b: []",
+            "    a: {}",
+            "  }",
         )
         actual_descr = tuple(f"{x}".split('\n'))
         self.assertEqual(expected_descr, actual_descr)
+
+    def test_list_containing_obj(self):
+        """Text list containing not a trivial object."""
+        parser = self._make_test_parser()
+
+        x = parser.parse("[a1, <x1>]")
+        self.assertIsInstance(x, TElement)
+
+        #E:
+        #  LIST: [
+        #    a1
+        #    OBJECT:
+        #      <: <
+        #      WORD: x1
+        #      >: >
+        #  ]
+
+        list_elem = x.get_path_elem('LIST')
+
+        self.assertTrue(list_elem.is_leaf())
+        self.assertEqual(list_elem.value[0], 'a1')
+        the_obj = list_elem.value[1]
+        self.assertIsInstance(the_obj, TElement)
+        self.assertEqual(the_obj.signature(), ('OBJECT', '<', 'WORD', '>'))
 
     def test_complex_lists_maps_object(self):
         """Text complex lists/maps object."""
         parser = self._make_test_parser()
 
-        x = parser.parse("""
+        x = parser.parse(
+            """
             [
               a, [], {}, <x1>,
               {
@@ -977,47 +1381,55 @@ class TestMapGrammar(unittest.TestCase):
                 }
               }
             ]
-        """)
+            """,
+        )
         self.assertIsInstance(x, TElement)
-        self.assertEqual(x.name, 'E', x.signature())
 
         # probably less strict test is required here
         expected_descr = (
-            "E: [",
-            "  a",
-            "  []",
-            "  {}",
-            "  OBJECT:",
-            "    <: <",
-            "    WORD: x1",
-            "    >: >",
-            "  {",
-            "    k5: {",
-            "      k12: {",
-            "        k112: v112",
-            "      }",
-            "      k11: []",
-            "    }",
-            "    k4: {}",
-            "    k3: [",
-            "      v31",
-            "      v31",
-            "      v33",
-            "    ]",
-            "    k2: v2",
-            "    k1: OBJECT:",
+            "E:",
+            "  LIST: [",
+            "    a",
+            "    []",
+            "    {}",
+            "    OBJECT:",
             "      <: <",
-            "      MAP: {",
-            "        k12: {}",
-            "        k11: v11",
-            "      }",
+            "      WORD: x1",
             "      >: >",
-            "  }",
-            "]",
+            "    {",
+            "      k5: {",
+            "        k12: {",
+            "          k112: v112",
+            "        }",
+            "        k11: []",
+            "      }",
+            "      k4: {}",
+            "      k3: [",
+            "        v31",
+            "        v31",
+            "        v33",
+            "      ]",
+            "      k2: v2",
+            "      k1: OBJECT:",
+            "        <: <",
+            "        MAP: {",
+            "          k12: {}",
+            "          k11: v11",
+            "        }",
+            "        >: >",
+            "    }",
+            "  ]",
         )
-        actual_descr = set(f"{x}".split('\n'))
-        for line in expected_descr:
-            self.assertIn(line, actual_descr)
+        actual_descr = f"{x}"
+        actual_descr_lines = set(actual_descr.split('\n'))
+        missing_lines = [
+            line for line in expected_descr
+            if line not in actual_descr_lines
+        ]
+        if missing_lines:
+            self.fail(
+                f"line '{missing_lines[0]}' not found in {actual_descr_lines}.\n"
+                f"actual_descr:\n{actual_descr}")
 
     def test_map_in_list(self):
         """Test grammar of map"""
@@ -1030,8 +1442,9 @@ class TestMapGrammar(unittest.TestCase):
                 y: {q: qq, z: {r: rr}}
             }]
             """)
+
         self.assertEqual(x.name, 'E', x.signature())
-        the_map = x.value[0]
+        the_map = x.get_path_val('LIST')[0]
         self.assertIsInstance(the_map, dict)
         self.assertEqual(the_map['a'], 'aa')
 
@@ -1045,7 +1458,7 @@ class TestMapGrammar(unittest.TestCase):
 
         x = parser.parse("[{a: aa,}]")
 
-        the_map = x.value[0]
+        the_map = x.get_path_val('LIST')[0]
         self.assertEqual({'a'}, the_map.keys())
 
         self.assertEqual(the_map['a'], 'aa')

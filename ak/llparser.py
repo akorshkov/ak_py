@@ -41,7 +41,7 @@ class LexicalError(Error):
         line, col = src_pos.coords
         self.text = text
         super().__init__(
-            f"{descr} ({line}, {col}):\n{text}\n" +
+            f"{descr} {src_pos.src_name}({line}, {col}):\n{text}\n" +
             " "*col + "^"*(len(text)-col))
 
 
@@ -286,12 +286,32 @@ class TElementCleanupRules:
 
     def __init__(
             self, *,
-            keep_symbols=None, reducing_symbols=None, lists=None, maps=None
+            keep_symbols=None, lists=None, maps=None,
+            squash_symbols=None, choice_symbols=None,
         ):
         self.keep_symbols = set() if keep_symbols is None else keep_symbols
-        self.reducing_symbols = {} if reducing_symbols is None else reducing_symbols
         self.lists = lists if lists is not None else {}
         self.maps = maps if maps is not None else {}
+
+        self.squash_symbols = set() if squash_symbols is None else squash_symbols
+        self.choice_symbols = set() if choice_symbols is None else choice_symbols
+
+    def gen_detailed_descr(self):
+        yield f"keep_symbols: {self.keep_symbols}"
+        yield f"Lists:"
+        if self.lists:
+            for list_rules in self.lists:
+                yield f"  {list_rules}"
+        else:
+            yield f" --"
+        yield f"Maps:"
+        if self.maps:
+            for map_rules in self.maps:
+                yield f"  {map_rules}"
+        else:
+            yield f" --"
+        yield f"squash symbols: {sorted(self.squash_symbols)}"
+        yield f"choice symbols: {sorted(self.choice_symbols)}"
 
     def verify_integrity(self, terminals, non_terminals):
         """Verify correctness of rules."""
@@ -301,13 +321,20 @@ class TElementCleanupRules:
                 raise GrammarError(
                     f"unknown symbol '{s}' specified in {self.keep_symbols=}")
 
-        for s in self.reducing_symbols.keys():
+        for s in self.squash_symbols:
             if s not in terminals and s not in non_terminals:
                 raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.reducing_symbols=}")
+                    f"unknown symbol '{s}' specified in {self.squash_symbols=}")
 
-        def _verify_is_terminal(symbol, descr="symbol"):
+        for s in self.choice_symbols:
+            if s not in terminals and s not in non_terminals:
+                raise GrammarError(
+                    f"unknown symbol '{s}' specified in {self.choice_symbols=}")
+
+        def _verify_is_terminal(symbol, allow_none=False, descr="symbol"):
             if symbol in terminals:
+                return
+            if symbol is None and allow_none:
                 return
             if symbol in non_terminals:
                 raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
@@ -330,7 +357,7 @@ class TElementCleanupRules:
             open_token, delimiter, tail_symbol, close_token = properties
             _verify_is_non_terminal(list_symbol, "list symbol")
             _verify_is_non_terminal(tail_symbol, "list tail symbol")
-            _verify_is_terminal(delimiter, "list delimiter symbol")
+            _verify_is_terminal(delimiter, True, "list delimiter symbol")
             if open_token is not None:
                 if close_token is None:
                     raise GrammarError(
@@ -390,11 +417,12 @@ class TElement:
         - [misc_value, ] - for nodes, corresponding to list productions
         - {key: TElement} - for maps
     """
-    __slots__ = 'name', 'value', '_is_leaf', 'src_pos'
+    __slots__ = 'name', 'value', '_is_leaf', 'src_pos', '_no_squash'
 
-    def __init__(self, name, value, *, src_pos=None, is_leaf=None):
+    def __init__(self, name, value, *, src_pos=None, is_leaf=None, _no_squash=False):
         self.name = name
         self.value = value
+        self._no_squash = _no_squash
         is_valid_inner_node = (
             isinstance(self.value, list)
             and all(isinstance(x, TElement) for x in self.value)
@@ -580,7 +608,9 @@ class TElement:
 
     def cleanup(
         self, rules=None, *,
-        keep_symbols=None, reducing_symbols=None, lists=None, maps=None,
+        keep_symbols=None, lists=None, maps=None,
+        _for_container=False,
+        _for_choice=False,
     ):
         """Cleanup parsed tree.
 
@@ -591,19 +621,20 @@ class TElement:
         """
         if rules is not None:
             assert keep_symbols is None
-            assert reducing_symbols is None
             assert lists is None
             assert maps is None
         else:
             rules = TElementCleanupRules(
                 keep_symbols=keep_symbols,
-                reducing_symbols=reducing_symbols,
                 lists=lists,
-                maps=maps)
-        self._cleanup(rules)
+                maps=maps,
+            )
+        self._cleanup(rules, _for_container=_for_container, _for_choice=_for_choice)
 
-    def _cleanup(self, rules):
+    def _cleanup(self, rules, _for_container=False, _for_choice=False):
         # do all the work of cleanup method
+
+        self._no_squash = _for_choice
 
         if self.is_leaf():
             return
@@ -619,11 +650,12 @@ class TElement:
         for child_elem in self.value:
             if child_elem is None:
                 continue
-            if not hasattr(child_elem, 'cleanup'):
-                print(f"{self}")
-                print(f"{self._is_leaf=}")
-                print(self.value)
-            child_elem.cleanup(rules)
+            assert hasattr(child_elem, '_cleanup'), (
+                f"{self=} {self._is_leaf=} {self.value=}")
+            child_elem._cleanup(
+                rules,
+                _for_choice = self.name in rules.choice_symbols
+            )
             if child_elem.value is not None or child_elem.name in rules.keep_symbols:
                 values.append(child_elem)
 
@@ -632,16 +664,32 @@ class TElement:
             return
 
         self.value = values
-        reduce_up = rules.reducing_symbols.get(self.name)
-        if reduce_up is not None and self.value is not None:
+
+        if_squash = self.name in rules.squash_symbols
+
+        if if_squash:
             assert isinstance(self.value, list)
-            assert len(self.value) == 1
+            assert len(self.value) == 1, f"{self.name=} {self.value=}"
             child_elem = self.value[0]
-            if reduce_up and child_elem.name not in rules.keep_symbols:
+            assert isinstance(child_elem, TElement)
+
+            keep_parent = _for_choice or self.name in rules.keep_symbols
+            keep_child = child_elem._no_squash or child_elem.name in rules.keep_symbols
+
+            if keep_parent and keep_child:
+                if_squash = False
+                self._no_squash = True
+            else:
+                squash_parent = keep_child or _for_container
+
+        if if_squash:
+            if squash_parent:
+                self._no_squash = child_elem._no_squash
+                self.name = child_elem.name
                 self.value = child_elem.value
                 self._is_leaf = child_elem._is_leaf
-            elif not reduce_up and self.name not in rules.keep_symbols:
-                self.name = child_elem.name
+            else:
+                self._no_squash = keep_parent
                 self.value = child_elem.value
                 self._is_leaf = child_elem._is_leaf
 
@@ -669,7 +717,7 @@ class TElement:
             if list_element.value is not None:
                 # None value here means that this list_element corresponds to
                 # null production - that is there is no list element.
-                list_element.cleanup(rules)
+                list_element._cleanup(rules, _for_container=True)
                 new_values.append(list_element)
             assert self.value[1].name == tail_symbol, (
                 f"expected {tail_symbol}; got:\n{self.value[0]}")
@@ -737,7 +785,7 @@ class TElement:
             list_values = []
 
         if item_elem is not None:
-            item_elem.cleanup(rules)
+            item_elem._cleanup(rules, _for_container=True)
             if item_elem.value is None:
                 list_values.append(None)
             else:
@@ -816,7 +864,7 @@ class TElement:
             else:
                 key = key_elem
             value_element = item_element.value[2]
-            value_element.cleanup(rules)
+            value_element._cleanup(rules, _for_container=True)
             if value_element.is_leaf():
                 the_map[key] = value_element.value
             else:
@@ -871,6 +919,59 @@ class _StackElement:
         self.values = []
         self.cur_token_pos = self.start_token_pos
         self.cur_prod_id += 1
+
+
+class ParserSummary:
+    """Contains information about LLParser.
+
+    It is used for reporting purposes only.
+    Main purpose of this class is to keep information about LLParser
+    even if the LLParser was not created. Some grammar errors may be raised
+    during LLParser consctruction, but to properly report these problems
+    it's good to have all all the processed data structures.
+    """
+
+    def __init__(
+            self, terminals, parse_table,
+            nullables, first_sest, follow_sets,
+            cleanup_rules,
+        ):
+        self.terminals = terminals
+        self.parse_table = parse_table
+        self.nullables = nullables
+        self.first_sest = first_sest
+        self.follow_sets = follow_sets
+        self.cleanup_rules = cleanup_rules
+
+    def gen_detailed_descr(self):
+        """Generate lines of human-readable description of the LLParser."""
+        mk_descr_len = lambda x, size: f"'{x}'" + " "*(max(0, size - len(str(x))))
+
+        yield "= Parser summary ="
+        yield ""
+        yield f"Terminals: {self.terminals}"
+        yield ""
+        yield "Parse Table:"
+        cur_symbol = None
+        for (symbol, token), prods in self.parse_table.items():
+            if symbol != cur_symbol:
+                yield f"    '{symbol}':"
+                cur_symbol = symbol
+            token_descr = mk_descr_len(token, 10)
+            for prod in prods:
+                yield f"        {token_descr}->{prod}"
+        yield ""
+        yield f"Nullables: {self.nullables}"
+        yield ""
+        yield "FirstSets:"
+        for symbol, firsts in sorted(self.first_sest.items()):
+            yield f"    {mk_descr_len(symbol, 10)}: {sorted(firsts)}"
+        yield ""
+        yield "FollowSets:"
+        for symbol, follows in sorted(self.follow_sets.items()):
+            yield f"    {mk_descr_len(symbol, 10)}: {sorted(follows)}"
+        yield "Cleanup Rules:"
+        yield from self.cleanup_rules.gen_detailed_descr()
 
 
 class LLParser:
@@ -935,22 +1036,24 @@ class LLParser:
         self.start_symbol_name = start_symbol_name
         self.productions = self._fix_empty_productions(productions)
         self.terminals = self.tokenizer.get_all_token_names()
-        self.terminals.add(None)
         self.terminals.add(self._END_TOKEN_NAME)
-        nullables = self._get_nullables(self.productions)
 
         self._verify_grammar_structure_part1()
+
+        nullables = self._get_nullables(self.productions)
 
         self.productions[self._INIT_PRODUCTION_NAME] = [
             (self.start_symbol_name, self._END_TOKEN_NAME)
         ]
 
+        squash_symbols, choice_symbols = self._make_squash_data(keep_symbols)
+
         self.cleanup_rules = TElementCleanupRules(
             keep_symbols=keep_symbols,
-            reducing_symbols=dict(
-                self.make_reductable_symbols_map(self.productions)),
+            squash_symbols=squash_symbols, choice_symbols=choice_symbols,
             lists=lists,
-            maps=maps)
+            maps=maps,
+        )
         self.cleanup_rules.verify_integrity(
             self.terminals,
             set(self.productions.keys()))
@@ -961,10 +1064,13 @@ class LLParser:
         )
 
         # used only for printing detailed description of the parser
-        self._summary = (
+        self._summary = ParserSummary(
+            self.terminals,
+            self.parse_table,
             nullables,
             first_sets,
             follow_sets,
+            self.cleanup_rules,
         )
 
         self._verify_grammar_structure_part2(nullables)
@@ -988,9 +1094,12 @@ class LLParser:
                 if debug:
                     self._log_match_result(parse_stack, tokens)
                 new_elem_value = top.values
-                if len(new_elem_value) == 1 and new_elem_value[0].name is None:
-                    # this element corresponds to null production
+
+                if len(new_elem_value) == 0:
+                    # result of the production is empty.
+                    # really not sure if to leave it [] or make it None.
                     new_elem_value = None
+
                 value = TElement(top.symbol, new_elem_value)
                 new_token_pos = top.cur_token_pos
                 parse_stack.pop()
@@ -1017,11 +1126,6 @@ class LLParser:
 
             if cur_symbol in self.terminals:
                 # try to match current token with next symbol
-                if cur_symbol is None:
-                    top.next_matched(
-                        None,
-                        top.cur_token_pos)
-                    continue
                 if next_token.name == cur_symbol:
                     top.next_matched(
                         TElement(
@@ -1080,11 +1184,17 @@ class LLParser:
         no need to repeat the cleanup. Use this method only if parse was called
         with do_cleanup=False.
         """
-        t_element.cleanup(self.cleanup_rules)
+        t_element.cleanup(
+            self.cleanup_rules,
+            _for_choice=True,  # keep root element during cleanup
+        )
 
     def _verify_grammar_structure_part1(self):
         # initial verification of grammar structure
         # to be called before parse_table is prepared
+        #
+        # reports only very obvious problems. Less obvious problems
+        # can be detected and/or properly reported only after parser is prepared
         if self.start_symbol_name not in self.productions:
             raise GrammarError(
                 f"no productions for start symbol '{self.start_symbol_name}'")
@@ -1243,7 +1353,6 @@ class LLParser:
         parse_table = defaultdict(list)
         for non_term, prods in productions.items():
             for prod in prods:
-                assert len(prod) > 0
                 start_symbols = set()
                 for symbol in prod:
                     if symbol is None:
@@ -1334,38 +1443,13 @@ class LLParser:
                 if any(all(s in cur_set for s in prod) for prod in prods):
                     next_set.add(non_term)
             cur_set, next_set = next_set, cur_set
-        cur_set.remove(None)
+        # cur_set.remove(None)
         return cur_set
 
     def print_detailed_descr(self):
         """Print detailed description of the parser."""
-        nullables, first_sest, follow_sets = self._summary
-
-        mk_descr_len = lambda x, size: f"'{x}'" + " "*(max(0, size - len(str(x))))
-
-        print("= Parser summary =")
-        print("")
-        print(f"Terminals: {self.terminals}")
-        print("")
-        print("Parse Table:")
-        cur_symbol = None
-        for (symbol, token), prods in self.parse_table.items():
-            if symbol != cur_symbol:
-                print(f"    '{symbol}':")
-                cur_symbol = symbol
-            token_descr = mk_descr_len(token, 10)
-            for prod in prods:
-                print(f"        {token_descr}->{prod}")
-        print("")
-        print(f"Nullables: {nullables}")
-        print("")
-        print("FirstSets:")
-        for symbol, firsts in sorted(first_sest.items()):
-            print(f"    {mk_descr_len(symbol, 10)}: {sorted(firsts)}")
-        print("")
-        print("FollowSets:")
-        for symbol, follows in sorted(follow_sets.items()):
-            print(f"    {mk_descr_len(symbol, 10)}: {sorted(follows)}")
+        for s in self._summary.gen_detailed_descr():
+            print(s)
 
     @classmethod
     def _calc_first_sets(cls, productions, terminals, nullables):
@@ -1409,39 +1493,32 @@ class LLParser:
                     f"(result should be tuple, not string)")
 
         return {
-            symbol: [(None, ) if prod is None else prod for prod in prods]
+            symbol: [() if prod is None else prod for prod in prods]
             for symbol, prods in prods_map.items()
         }
 
-    @staticmethod
-    def make_reductable_symbols_map(prods_map):
-        """Make map of reducable symbols (for cleanup procedure).
+    def _make_squash_data(self, keep_symbols):
+        # prepare information about potentially squashable symbols
+        # (part of clenup procedure)
 
-        Returns {symbol: if_reduce_up}
+        keep_symbols = set() if keep_symbols is None else keep_symbols
 
-        if_reduce_up = True - means the production for this symbol looks like
-        'A': [('B', )] - that is 'A' is just alternative name of 'B'.
-        Only name 'A' will remain in cleaned up tree.
+        squash_symbols = set()
+        choice_symbols = set()
 
-        if_reduce_up = False - means the production for this symbol looks like
-        'A': [
-          ('B', ),
-          ('C', ),
-          ('D', ),
-        ] - that is 'A' may be either 'B' or 'C' or 'D'.
-        Name 'A' will be cleaned up from the tree.
-        """
-        for symbol, prods_list in prods_map.items():
-            n_one_val_prods = sum(
-                1 if prod is not None and len(prod) == 1 else 0
-                for prod in prods_list)
+        for symbol, prods in self.productions.items():
             n_null_prods = sum(
-                1 if prod is None or len(prod) == 0 else 0
-                for prod in prods_list)
-
-            if n_one_val_prods + n_null_prods < len(prods_list):
-                # there are more complex prods, no reduction is possible
+                1 if len(prod) == 0 else 0
+                for prod in prods)
+            n_oneval_prods = sum(
+                1 if len(prod) == 1 else 0
+                for prod in prods)
+            if n_null_prods + n_oneval_prods < len(prods):
+                # there are more complex prods, no squash is possible
                 continue
 
-            if_up = n_one_val_prods == 1
-            yield symbol, if_up
+            squash_symbols.add(symbol)
+            if n_oneval_prods > 1:
+                choice_symbols.add(symbol)
+
+        return squash_symbols, choice_symbols
