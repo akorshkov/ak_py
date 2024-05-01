@@ -417,12 +417,11 @@ class TElement:
         - [misc_value, ] - for nodes, corresponding to list productions
         - {key: TElement} - for maps
     """
-    __slots__ = 'name', 'value', '_is_leaf', 'src_pos', '_no_squash'
+    __slots__ = 'name', 'value', '_is_leaf', 'src_pos'
 
-    def __init__(self, name, value, *, src_pos=None, is_leaf=None, _no_squash=False):
+    def __init__(self, name, value, *, src_pos=None, is_leaf=None):
         self.name = name
         self.value = value
-        self._no_squash = _no_squash
         is_valid_inner_node = (
             isinstance(self.value, list)
             and all(isinstance(x, TElement) for x in self.value)
@@ -631,37 +630,42 @@ class TElement:
             )
         self._cleanup(rules, _for_container=_for_container, _for_choice=_for_choice)
 
-    def _cleanup(self, rules, _for_container=False, _for_choice=False):
+    def _cleanup(self, rules, _for_container=False, _for_choice=False) -> bool:
         # do all the work of cleanup method
+        #
+        # returns 'elem_no_squash' - bool, which tells parent TElement if
+        # this element can be squashed
 
-        self._no_squash = _for_choice
+        elem_no_squash = _for_choice
 
         if self.is_leaf():
-            return
+            return elem_no_squash
 
         if self.name in rules.lists:
             self.reduce_list(rules, rules.lists[self.name])
-            return
+            return elem_no_squash
         elif self.name in rules.maps:
             self.reduce_map(rules, rules.maps[self.name])
-            return
+            return elem_no_squash
 
         values = []
+        values_no_squash = []
         for child_elem in self.value:
             if child_elem is None:
                 continue
             assert hasattr(child_elem, '_cleanup'), (
                 f"{self=} {self._is_leaf=} {self.value=}")
-            child_elem._cleanup(
+            child_no_squash = child_elem._cleanup(
                 rules,
                 _for_choice = self.name in rules.choice_symbols
             )
             if child_elem.value is not None or child_elem.name in rules.keep_symbols:
                 values.append(child_elem)
+                values_no_squash.append(child_no_squash)
 
         if not values:
             self.value = None
-            return
+            return elem_no_squash
 
         self.value = values
 
@@ -670,28 +674,32 @@ class TElement:
         if if_squash:
             assert isinstance(self.value, list)
             assert len(self.value) == 1, f"{self.name=} {self.value=}"
+            assert len(self.value) == len(values_no_squash)
             child_elem = self.value[0]
+            child_no_squash = values_no_squash[0]
             assert isinstance(child_elem, TElement)
 
             keep_parent = _for_choice or self.name in rules.keep_symbols
-            keep_child = child_elem._no_squash or child_elem.name in rules.keep_symbols
+            keep_child = child_no_squash or child_elem.name in rules.keep_symbols
 
             if keep_parent and keep_child:
                 if_squash = False
-                self._no_squash = True
+                elem_no_squash = True
             else:
                 squash_parent = keep_child or _for_container
 
         if if_squash:
             if squash_parent:
-                self._no_squash = child_elem._no_squash
+                elem_no_squash = child_no_squash
                 self.name = child_elem.name
                 self.value = child_elem.value
                 self._is_leaf = child_elem._is_leaf
             else:
-                self._no_squash = keep_parent
+                elem_no_squash = keep_parent
                 self.value = child_elem.value
                 self._is_leaf = child_elem._is_leaf
+
+        return elem_no_squash
 
     def reduce_list(self, rules, list_properties):
         """Transform self.value subtree into a [TElement, ] of list values."""
