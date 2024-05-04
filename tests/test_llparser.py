@@ -1577,3 +1577,134 @@ class TestMathParserWithNullProductions(unittest.TestCase):
         # x.printme()
         self.assertEqual("E", x.name)
         self.assertEqual("b", x.get_path_val("EE.E.T.F.WORD"))
+
+
+class TestAmbiguousGrammar(unittest.TestCase):
+    """Test grammars, which are not ll1.
+
+    Some may be factored to ll1, others - not.
+    """
+
+    def test_nonll1_grammar_01(self):
+        """Grammar is not ll1, but still should work."""
+
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            """,
+            keywords = {
+                ('WORD', 'val_k'): 'val_k',
+                ('WORD', 'val_l'): 'val_l',
+                ('WORD', 'val_m'): 'val_m',
+                ('WORD', 'val_n'): 'val_n',
+                ('WORD', 'val_p'): 'val_p',
+            },
+            productions={
+                'E': [
+                    ('A', ),
+                ],
+                'A': [
+                    ('val_k', 'val_m'),
+                    ('val_k', 'val_n'),
+                ],
+            },
+        )
+
+        # It's not possible to guess which production will be used for
+        # symbol 'A' and next token 'val_k'.
+        # At the time this test is created grammar factorization is not implememted,
+        # but still parsing process should be able to recover from error and parse
+        # both variants
+
+        x = parser.parse("val_k val_m", do_cleanup=False)
+        self.assertEqual(x.get_path_val("A.val_m"), "val_m")
+        self.assertIsNone(x.get_path_val("A.val_n"))
+
+        x = parser.parse("val_k val_n", do_cleanup=False)
+        self.assertIsNone(x.get_path_val("A.val_m"))
+        self.assertEqual(x.get_path_val("A.val_n"), "val_n")
+
+    def test_nonll1_grammar_02(self):
+        """Grammar is not ll1, but still should work."""
+        # test is quite similar to test_nonll1_grammar_01, but grammar is
+        # a little bit more complex
+
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            """,
+            keywords = {
+                ('WORD', 'val_k'): 'val_k',
+                ('WORD', 'val_l'): 'val_l',
+                ('WORD', 'val_m'): 'val_m',
+                ('WORD', 'val_n'): 'val_n',
+                ('WORD', 'val_p'): 'val_p',
+            },
+            productions={
+                'E': [
+                    ('A', ),
+                ],
+                'A': [
+                    ('K', 'M'),
+                    ('K', 'N'),
+                ],
+                'K': [
+                    ('val_k', ),
+                ],
+                'M': [
+                    ('val_m', ),
+                ],
+                'N': [
+                    ('val_n', ),
+                ],
+            },
+        )
+
+        x = parser.parse("val_k val_m", do_cleanup=False)
+        self.assertEqual(x.get_path_val("A.M.val_m"), "val_m")
+        self.assertIsNone(x.get_path_val("A.N.val_n"))
+
+        x = parser.parse("val_k val_n", do_cleanup=False)
+        self.assertIsNone(x.get_path_val("A.M.val_m"))
+        self.assertEqual(x.get_path_val("A.N.val_n"), "val_n")
+
+    @unittest.skip("productions factorization not implemented")
+    def test_nonll1_grammar_03(self):
+        """Grammar is not ll1. More complicated case."""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            """,
+            keywords = {
+                ('WORD', 'val_k'): 'val_k',
+                ('WORD', 'val_l'): 'val_l',
+                ('WORD', 'val_m'): 'val_m',
+                ('WORD', 'val_n'): 'val_n',
+                ('WORD', 'val_p'): 'val_p',
+            },
+            productions={
+                'E': [
+                    ('A', ),
+                ],
+                'A': [
+                    ('B', 'val_p'),
+                ],
+                'B': [
+                    ('val_k', 'val_l'),             # production P1
+                    ('val_k', 'val_l', 'val_m'),    # production P2
+                ],
+            },
+        )
+
+        # the following text can be parsed if production P2 is used.
+        # but during parse process production P1 is tried first and matches.
+        #
+        # Problem can be fixed by placing P2 before P1.
+        #
+        # Parsing should not fail after automatic grammar factorization is
+        # implemented.
+
+        parser.parse("val_k val_l val_m val_p", do_cleanup=False)

@@ -69,7 +69,7 @@ class GrammarIsRecursive(GrammarError):
         symbol, prod, prod_symbol_id = cycle_element
         return f"'{symbol}' -> [" + ", ".join(
             f"<'{s}'>" if i == prod_symbol_id else f"'{s}'"
-            for i, s in enumerate(prod)) + "]"
+            for i, s in enumerate(prod.production)) + "]"
 
 
 class ParsingError(Error):
@@ -881,34 +881,47 @@ class TElement:
         return the_map
 
 
+class ProdRule:
+    """Info about prroduction rule 'A' -> ('B', 'C', 'D').
+
+    Name 'production' is used for the result symbols, ('B', 'C', 'D') in this case.
+    """
+    __slots__ = 'symbol', 'production', 'sort_n'
+
+    def __init__(self, symbol, production, sort_n):
+        self.symbol = symbol
+        self.production = production
+        self.sort_n = sort_n
+
+
 class _StackElement:
     # represents current position of parsing
     #
     # means: we try to match symbol starting from a token at given position
     # we have already matched first several symbols of current production
     # corresponding match results are stored in values
-    def __init__(self, symbol, token_pos, prods):
+    def __init__(self, symbol, token_pos, prod_rs):
         self.symbol = symbol
         self.start_token_pos = token_pos
         self.cur_token_pos = token_pos
-        self.prods = prods
+        self.prod_rs = prod_rs  # [ProdRule, ]
         self.cur_prod_id = 0
         self.values = []
 
     def clone(self):
         """clone self"""
-        clone = _StackElement(self.symbol, self.start_token_pos, self.prods)
+        clone = _StackElement(self.symbol, self.start_token_pos, self.prod_rs)
         clone.cur_token_pos = self.cur_token_pos
         clone.cur_prod_id = self.cur_prod_id
         clone.values = self.values[:]
         return clone
 
-    def get_cur_prod(self):
-        return self.prods[self.cur_prod_id]
+    def get_cur_prod(self) -> ProdRule:
+        return self.prod_rs[self.cur_prod_id]
 
     def get_cur_symbol(self):
         """Gen next unmatched symbol in current production."""
-        return self.prods[self.cur_prod_id][len(self.values)]
+        return self.prod_rs[self.cur_prod_id].production[len(self.values)]
 
     def next_matched(self, value, new_token_pos):
         """Register found matching value for current symbol in current production."""
@@ -961,12 +974,12 @@ class ParserSummary:
         yield ""
         yield "Parse Table:"
         cur_symbol = None
-        for (symbol, token), prods in self.parse_table.items():
+        for (symbol, token), prod_rs in self.parse_table.items():
             if symbol != cur_symbol:
                 yield f"    '{symbol}':"
                 cur_symbol = symbol
             token_descr = mk_descr_len(token, 10)
-            for prod in prods:
+            for prod in prod_rs:
                 yield f"        {token_descr}->{prod}"
         yield ""
         yield f"Nullables: {self.nullables}"
@@ -1042,16 +1055,20 @@ class LLParser:
             synonyms=synonyms, keywords=keywords, space_tokens=space_tokens)
 
         self.start_symbol_name = start_symbol_name
-        self.productions = self._fix_empty_productions(productions)
+        self.prod_rules = self._create_productions(productions)
         self.terminals = self.tokenizer.get_all_token_names()
         self.terminals.add(self._END_TOKEN_NAME)
 
         self._verify_grammar_structure_part1()
 
-        nullables = self._get_nullables(self.productions)
+        nullables = self._get_nullables(self.prod_rules)
 
-        self.productions[self._INIT_PRODUCTION_NAME] = [
-            (self.start_symbol_name, self._END_TOKEN_NAME)
+        self.prod_rules[self._INIT_PRODUCTION_NAME] = [
+            ProdRule(
+                self._INIT_PRODUCTION_NAME,
+                (self.start_symbol_name, self._END_TOKEN_NAME, ),
+                -1,
+            )
         ]
 
         squash_symbols, choice_symbols = self._make_squash_data(keep_symbols)
@@ -1064,10 +1081,10 @@ class LLParser:
         )
         self.cleanup_rules.verify_integrity(
             self.terminals,
-            set(self.productions.keys()))
+            set(self.prod_rules.keys()))
 
         self.parse_table, first_sets, follow_sets = self._make_llone_table(
-            self.productions, self.terminals, nullables,
+            self.prod_rules, self.terminals, nullables,
             self.start_symbol_name,
         )
 
@@ -1089,7 +1106,7 @@ class LLParser:
 
         parse_stack = [_StackElement(
             self._INIT_PRODUCTION_NAME, 0,
-            self.productions[self._INIT_PRODUCTION_NAME])]
+            self.prod_rules[self._INIT_PRODUCTION_NAME])]
         longest_stack = []
         if debug:
             self._log_cur_prod(parse_stack, tokens)
@@ -1097,7 +1114,7 @@ class LLParser:
         while True:
             top = parse_stack[-1]
             cur_prod = top.get_cur_prod()
-            if len(top.values) == len(cur_prod):
+            if len(top.values) == len(cur_prod.production):
                 # production matched
                 if debug:
                     self._log_match_result(parse_stack, tokens)
@@ -1167,7 +1184,7 @@ class LLParser:
             rollback_point = len(parse_stack) - 1
             while rollback_point >= 0:
                 elem = parse_stack[rollback_point]
-                if elem.cur_prod_id < len(elem.prods) - 1:
+                if elem.cur_prod_id < len(elem.prod_rs) - 1:
                     # yes, we can try next production on this stack element
                     break
                 rollback_point -= 1
@@ -1182,7 +1199,7 @@ class LLParser:
             # which reached fartherst when trying to parse the text
             top = longest_stack[-1] if longest_stack else parse_stack[-1]
             next_tokens = tokens[top.start_token_pos:top.start_token_pos+5]
-            attempted_prods = top.prods
+            attempted_prods = top.prod_rs
             raise ParsingError(top.symbol, next_tokens, attempted_prods)
 
     def cleanup(self, t_element) -> None:
@@ -1203,31 +1220,31 @@ class LLParser:
         #
         # reports only very obvious problems. Less obvious problems
         # can be detected and/or properly reported only after parser is prepared
-        if self.start_symbol_name not in self.productions:
+        if self.start_symbol_name not in self.prod_rules:
             raise GrammarError(
                 f"no productions for start symbol '{self.start_symbol_name}'")
 
-        if self._END_TOKEN_NAME in self.productions:
+        if self._END_TOKEN_NAME in self.prod_rules:
             raise GrammarError(
                 f"production specified for end symbol '{self._END_TOKEN_NAME}'")
 
-        if self._INIT_PRODUCTION_NAME in self.productions:
+        if self._INIT_PRODUCTION_NAME in self.prod_rules:
             raise GrammarError(
                 f"production specified explicitely for "
                 f"special symbol '{self._INIT_PRODUCTION_NAME}'")
 
-        non_terminals = set(self.productions.keys())
+        non_terminals = set(self.prod_rules.keys())
         bad_tokens = non_terminals.intersection(self.terminals)
 
         if bad_tokens:
             raise GrammarError(
-                f"Production(s) specified for terminal symbols {bad_tokens}")
+                f"ProdRule(s) specified for terminal symbols {bad_tokens}")
 
         all_prod_symbols = {
             s
-            for prods in self.productions.values()
-            for prod in prods
-            for s in prod}
+            for prod_rules in self.prod_rules.values()
+            for rule in prod_rules
+            for s in rule.production}
         unknown_symbols = all_prod_symbols.difference(
             self.terminals | non_terminals)
 
@@ -1254,12 +1271,12 @@ class LLParser:
         # we end up trying to exand same symbol but have not consumed
         # any tokens
         processed_symbols = set(self.terminals)
-        for symbol, prods in sorted(self.productions.items()):
+        for symbol, prod_rules in sorted(self.prod_rules.items()):
             # depth-first-search of the same symbol
             if symbol in processed_symbols:
                 continue
-            # (symbol, prods, cur_prod_id, cur_symbol_id)
-            stack = [[symbol, prods, 0, 0], ]
+            # (symbol, prod_rules, cur_prod_id, cur_symbol_id)
+            stack = [[symbol, prod_rules, 0, 0], ]
             def _next_prod(_stack):
                 _stack[-1][2] += 1
                 _stack[-1][3] = 0
@@ -1269,31 +1286,31 @@ class LLParser:
 
             while stack:
                 top = stack[-1]
-                prod_symbol, prods, cur_prod_id, cur_symbol_id = top
-                if cur_prod_id >= len(prods):
+                prod_symbol, prod_rules, cur_prod_id, cur_symbol_id = top
+                if cur_prod_id >= len(prod_rules):
                     stack.pop()
                     processed_symbols.add(prod_symbol)
                     if stack:
                         top = stack[-1]
                         cur_prod = top[1][top[2]]
-                        cur_prod_symbol = cur_prod[top[3]]
+                        cur_prod_symbol = cur_prod.production[top[3]]
                         if cur_prod_symbol in nullables:
                             _next_symbol(stack)
                         else:
                             _next_prod(stack)
                     continue
-                cur_prod = prods[cur_prod_id]
-                if cur_symbol_id >= len(cur_prod):
+                cur_prod = prod_rules[cur_prod_id]
+                if cur_symbol_id >= len(cur_prod.production):
                     _next_prod(stack)
                     continue
-                cur_symbol = cur_prod[cur_symbol_id]
+                cur_symbol = cur_prod.production[cur_symbol_id]
                 # check if this symbol is already present on stack
                 for i, (stack_symbol, _, _, _) in enumerate(stack):
                     if stack_symbol == cur_symbol:
                         # found cycle
                         cycle_data = [
-                            (s, prods[prod_id], symbol_id)
-                            for s, prods, prod_id, symbol_id in stack[i:]  # stack[i:]
+                            (s, prod_rules[prod_id], symbol_id)
+                            for s, prod_rules, prod_id, symbol_id in stack[i:]
                         ]
                         raise GrammarIsRecursive(cycle_data, nullables)
 
@@ -1302,7 +1319,7 @@ class LLParser:
                     continue
                 # cur_symbol is non-terminal. May need to go deeper
                 if cur_symbol_id > 0:
-                    prev_symbol = cur_prod[cur_symbol_id-1]
+                    prev_symbol = cur_prod.production[cur_symbol_id-1]
                     prev_symbol_is_nullable = prev_symbol in nullables
                 else:
                     prev_symbol_is_nullable = True
@@ -1313,7 +1330,7 @@ class LLParser:
                     continue
 
                 # do need to go deeper
-                stack.append([cur_symbol, self.productions[cur_symbol], 0, 0])
+                stack.append([cur_symbol, self.prod_rules[cur_symbol], 0, 0])
 
     def _log_cur_prod(self, parse_stack, tokens):
         # log current production
@@ -1326,18 +1343,18 @@ class LLParser:
                 tokens[top.start_token_pos])
         self._log_debug(
             prefix + "- (%s/%s) %s",
-            top.cur_prod_id+1, len(top.prods), top.get_cur_prod())
+            top.cur_prod_id+1, len(top.prod_rs), top.get_cur_prod())
 
     def _log_match_result(self, parse_stack, tokens):
         # log result of the match
         prefix = "  "*(len(parse_stack) - 1)
         top = parse_stack[-1]
         cur_prod = top.get_cur_prod()
-        is_success = len(top.values) == len(cur_prod)
+        is_success = len(top.values) == len(cur_prod.production)
         if is_success:
             self._log_debug(prefix + "'%s' matched", top.symbol)
         else:
-            failed_symbol = cur_prod[len(top.values)]
+            failed_symbol = cur_prod.production[len(top.values)]
             failed_token = tokens[top.cur_token_pos]
             self._log_debug(
                 prefix + "'%s' desn't match. Prod symbol '%s' doesn't match '%s'",
@@ -1348,23 +1365,23 @@ class LLParser:
         logger.error(*args, **kwargs)
 
     @classmethod
-    def _make_llone_table(cls, productions, terminals, nullables, start_symbol_name):
+    def _make_llone_table(cls, prod_rules, terminals, nullables, start_symbol_name):
         """Make Parsing Table.
 
         Returns possible productions for non-terminal-symbol and next token:
             {(non_term_symbol, next_token): [production, ]}
         """
-        first_sets = cls._calc_first_sets(productions, terminals, nullables)
+        first_sets = cls._calc_first_sets(prod_rules, terminals, nullables)
         follow_sets = cls._calc_follow_sets(
-            productions, terminals, nullables, first_sets, start_symbol_name)
+            prod_rules, terminals, nullables, first_sets, start_symbol_name)
 
         parse_table = defaultdict(list)
-        for non_term, prods in productions.items():
-            for prod in prods:
+        for non_term, prod_rs in prod_rules.items():
+            for prod_rule in prod_rs:
                 start_symbols = set()
-                for symbol in prod:
+                for symbol in prod_rule.production:
                     if symbol is None:
-                        assert len(prod) == 1
+                        assert len(prod_rule.production) == 1
                         continue
                     if symbol in terminals:
                         start_symbols.add(symbol)
@@ -1374,42 +1391,45 @@ class LLParser:
                     if symbol not in nullables:
                         break
                 else:
-                    # all the symbols in prod are nullable
+                    # all the symbols in production are nullable
                     assert non_term in nullables
                     start_symbols |= follow_sets[non_term]
 
                 for first_symbol in start_symbols:
-                    parse_table[(non_term, first_symbol)].append(prod)
+                    parse_table[(non_term, first_symbol)].append(prod_rule)
+
+        for prod_rs in parse_table.values():
+            prod_rs.sort(key=lambda r: r.sort_n)
 
         return parse_table, first_sets, follow_sets
 
     @classmethod
     def _calc_follow_sets(
-        cls, productions, terminals, nullables, first_sets, start_symbol_name,
+        cls, prod_rules, terminals, nullables, first_sets, start_symbol_name,
     ):
         """Calculate 'follow-sets'
 
         {'NON_TERM': set(t| S ->* b NON_TERM t XXX)}
         """
-        assert start_symbol_name in productions, (
+        assert start_symbol_name in prod_rules, (
             f"invalid grammar: there are no productions for "
             f"start symbol '{start_symbol_name}'")
 
-        follow_sets = {non_term: set() for non_term in productions.keys()}
+        follow_sets = {non_term: set() for non_term in prod_rules.keys()}
         follow_sets[start_symbol_name].add(cls._END_TOKEN_NAME)
 
         # follows dependencies rules: follow set for a symbol must include
         # follow sets of all the dependent symbols
-        follows_deps = {non_term: set() for non_term in productions.keys()}
+        follows_deps = {non_term: set() for non_term in prod_rules.keys()}
 
         # 1. calculate 'immediate follows' - cases when non-terminal symbol
         # is followed by terminal or non-terminal in some production
-        for non_term, prods in sorted(productions.items()):
-            for prod in prods:
-                for i, cur_symbol in enumerate(prod):
+        for non_term, prod_rs in sorted(prod_rules.items()):
+            for prod_r in prod_rs:
+                for i, cur_symbol in enumerate(prod_r.production):
                     if cur_symbol in terminals:
                         continue
-                    for next_symbol in prod[i+1:]:
+                    for next_symbol in prod_r.production[i+1:]:
                         if next_symbol in terminals:
                             follow_sets[cur_symbol].add(next_symbol)
                         else:
@@ -1439,19 +1459,22 @@ class LLParser:
         return follow_sets
 
     @staticmethod
-    def _get_nullables(productions):
+    def _get_nullables(prod_rules):
         # get set of all nullable symbols
-        cur_set = set([None, ])
+        cur_set = set([None, ])  # temporary, None will not be in final result
         next_set = set()
         while len(cur_set) != len(next_set):
             next_set.update(cur_set)
-            for non_term, prods in productions.items():
+            for non_term, prod_rs in prod_rules.items():
                 if non_term in next_set:
                     continue
-                if any(all(s in cur_set for s in prod) for prod in prods):
+                if any(
+                    all(s in cur_set for s in prod_r.production)
+                    for prod_r in prod_rs
+                ):
                     next_set.add(non_term)
             cur_set, next_set = next_set, cur_set
-        # cur_set.remove(None)
+        cur_set.remove(None)
         return cur_set
 
     def print_detailed_descr(self):
@@ -1460,22 +1483,20 @@ class LLParser:
             print(s)
 
     @classmethod
-    def _calc_first_sets(cls, productions, terminals, nullables):
+    def _calc_first_sets(cls, prod_rules, terminals, nullables):
         # for each symbol get list of tokens it's production can start from
         #
         # {NON_TERM: {t| NON_TERM ->* tXXX}}
-        non_terms = set(productions.keys())
+        non_terms = set(prod_rules.keys())
 
         fsets = {t: set() for t in non_terms}
 
         while True:
             fsets_updated = False
             for non_term, cur_fset in fsets.items():
-                for prod in productions[non_term]:
-                    for symbol in prod:
+                for prod_r in prod_rules[non_term]:
+                    for symbol in prod_r.production:
                         if symbol in terminals:
-                            if symbol is None:
-                                continue
                             if symbol not in cur_fset:
                                 cur_fset.add(symbol)
                                 fsets_updated = True
@@ -1492,8 +1513,16 @@ class LLParser:
         return fsets
 
     @staticmethod
-    def _fix_empty_productions(prods_map):
-        """Replace production 'None' with (None, )"""
+    def _create_productions(prods_map):
+        # constructor helper.
+        # create ProdRule objects from productions data specified in constructor
+
+        cur_sort_n = -1
+        def _get_next_sort_n():
+            nonlocal cur_sort_n
+            cur_sort_n += 1
+            return cur_sort_n
+
         for symbol, prods in prods_map.items():
             for prod in prods:
                 assert not isinstance(prod, str), (
@@ -1501,7 +1530,10 @@ class LLParser:
                     f"(result should be tuple, not string)")
 
         return {
-            symbol: [() if prod is None else prod for prod in prods]
+            symbol: [
+                ProdRule(symbol, (() if prod is None else prod), _get_next_sort_n())
+                for prod in prods
+            ]
             for symbol, prods in prods_map.items()
         }
 
@@ -1514,15 +1546,15 @@ class LLParser:
         squash_symbols = set()
         choice_symbols = set()
 
-        for symbol, prods in self.productions.items():
+        for symbol, prod_rules in self.prod_rules.items():
             n_null_prods = sum(
-                1 if len(prod) == 0 else 0
-                for prod in prods)
+                1 if len(r.production) == 0 else 0
+                for r in prod_rules)
             n_oneval_prods = sum(
-                1 if len(prod) == 1 else 0
-                for prod in prods)
-            if n_null_prods + n_oneval_prods < len(prods):
-                # there are more complex prods, no squash is possible
+                1 if len(r.production) == 1 else 0
+                for r in prod_rules)
+            if n_null_prods + n_oneval_prods < len(prod_rules):
+                # there are more complex productions, no squash is possible
                 continue
 
             squash_symbols.add(symbol)
