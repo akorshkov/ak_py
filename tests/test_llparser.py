@@ -47,7 +47,7 @@ class TestParserTokenizer(unittest.TestCase):
             |(?P<BR_OPEN>\()
             |(?P<BR_CLOSE>\))
             """,
-            keywords = {
+            keywords={
                 ('WORD', 'class'): 'CLASS',
                 ('WORD', 'import'): 'IMPORT',
             },
@@ -220,7 +220,6 @@ class TestSquashing(unittest.TestCase):
                 ],
                 'LIST_TAIL': [
                     ('WORD', 'LIST_TAIL'),
-                    ('WORD', ),
                     None,
                 ],
                 # non-trivial production
@@ -1491,6 +1490,58 @@ class TestMapGrammar(unittest.TestCase):
         self.assertNotEqual(orig_x_descr, cleanuped)
 
 
+class TestSequenceProductions(unittest.TestCase):
+    """'ProdSequence' is a pseudo-production which matches sequence of elements."""
+
+    def test_sequence_production(self):
+        """Test sequence pseudo-production."""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<SEMI_COLON>;)
+            """,
+            synonyms={
+                'SEMI_COLON': ';',
+            },
+            keywords={
+                ('WORD', 'val_k'): 'val_k',
+                ('WORD', 'val_l'): 'val_l',
+                ('WORD', 'val_m'): 'val_m',
+                ('WORD', 'val_n'): 'val_n',
+                ('WORD', 'val_p'): 'val_p',
+            },
+            productions={
+                'E': [
+                    ('STATEMENT', ),
+                ],
+                'STATEMENT': [
+                    ('SEQUENCE', ';'),
+                ],
+                'SEQUENCE': LLParser.ProdSequence(
+                    ('val_k', ),
+                    ('L', ),
+                ),
+                'L': [
+                    ('val_l', ),
+                ],
+            },
+        )
+
+        x = parser.parse("val_k val_l val_l val_l val_l;")
+
+        seq_elem = x.get_path_elem('SEQUENCE')
+        self.assertTrue(seq_elem.is_leaf())
+
+        seq = seq_elem.value
+        self.assertIsInstance(seq, list, f"{seq=}")
+        self.assertEqual(len(seq), 5, f"{seq=}")
+
+        seq_elems_names = [x.name for x in seq]
+
+        self.assertEqual(seq_elems_names, ['val_k', 'L', 'L', 'L', 'L'], f"{seq=}")
+
+
 class TestBadGrammar(unittest.TestCase):
     """Test misc problems with grammar."""
 
@@ -1593,7 +1644,7 @@ class TestAmbiguousGrammar(unittest.TestCase):
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             """,
-            keywords = {
+            keywords={
                 ('WORD', 'val_k'): 'val_k',
                 ('WORD', 'val_l'): 'val_l',
                 ('WORD', 'val_m'): 'val_m',
@@ -1635,7 +1686,7 @@ class TestAmbiguousGrammar(unittest.TestCase):
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             """,
-            keywords = {
+            keywords={
                 ('WORD', 'val_k'): 'val_k',
                 ('WORD', 'val_l'): 'val_l',
                 ('WORD', 'val_m'): 'val_m',
@@ -1678,7 +1729,7 @@ class TestAmbiguousGrammar(unittest.TestCase):
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             """,
-            keywords = {
+            keywords={
                 ('WORD', 'val_k'): 'val_k',
                 ('WORD', 'val_l'): 'val_l',
                 ('WORD', 'val_m'): 'val_m',

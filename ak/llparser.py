@@ -894,6 +894,20 @@ class ProdRule:
         self.sort_n = sort_n
 
 
+class ProdSequence:
+    """Production which matches a sequence of elements.
+
+    Can be considered as a short syntax for declaring of productions which
+    implement parsing a list of elements. Several auxiliary symbols and
+    productions will be created to implement parsing of sequences, but all
+    these auxiliary symbols are stripped out from the final result. This happens
+    unconditionally (unlike similar processing of actual list productions, which
+    happens during optional cleanup procedure).
+    """
+    def __init__(self, *productions):
+        self.productions = list(productions)
+
+
 class _StackElement:
     # represents current position of parsing
     #
@@ -907,6 +921,7 @@ class _StackElement:
         self.prod_rs = prod_rs  # [ProdRule, ]
         self.cur_prod_id = 0
         self.values = []
+        self.log_offset = 0
 
     def clone(self):
         """clone self"""
@@ -980,7 +995,7 @@ class ParserSummary:
                 cur_symbol = symbol
             token_descr = mk_descr_len(token, 10)
             for prod in prod_rs:
-                yield f"        {token_descr}->{prod}"
+                yield f"        {token_descr}->{prod.production}"
         yield ""
         yield f"Nullables: {self.nullables}"
         yield ""
@@ -1000,6 +1015,8 @@ class LLParser:
 
     _END_TOKEN_NAME = '$END$'
     _INIT_PRODUCTION_NAME = '$START$'
+
+    ProdSequence = ProdSequence
 
     def __init__(
             self,
@@ -1054,9 +1071,10 @@ class LLParser:
             comments=comments,
             synonyms=synonyms, keywords=keywords, space_tokens=space_tokens)
 
-        self.start_symbol_name = start_symbol_name
-        self.prod_rules = self._create_productions(productions)
         self.terminals = self.tokenizer.get_all_token_names()
+
+        self.start_symbol_name = start_symbol_name
+        self.prod_rules, self._seq_symbols = self._create_productions(productions)
         self.terminals.add(self._END_TOKEN_NAME)
 
         self._verify_grammar_structure_part1()
@@ -1104,9 +1122,22 @@ class LLParser:
         """Parse the text."""
         tokens = list(self.tokenizer.tokenize(text, src_name))
 
-        parse_stack = [_StackElement(
+        parse_stack = []  # [_StackElement, ]
+        def _put_on_stack(stack_elem):
+            parse_stack.append(stack_elem)
+            if len(parse_stack) > 1:
+                prev_top = parse_stack[-2]
+                stack_elem.log_offset = prev_top.log_offset
+                if (stack_elem.symbol != prev_top.symbol
+                    or stack_elem.symbol not in self._seq_symbols
+                ):
+                    stack_elem.log_offset += 1
+
+        # init parse stack
+        _put_on_stack(_StackElement(
             self._INIT_PRODUCTION_NAME, 0,
-            self.prod_rules[self._INIT_PRODUCTION_NAME])]
+            self.prod_rules[self._INIT_PRODUCTION_NAME]))
+
         longest_stack = []
         if debug:
             self._log_cur_prod(parse_stack, tokens)
@@ -1125,15 +1156,19 @@ class LLParser:
                     # really not sure if to leave it [] or make it None.
                     new_elem_value = None
 
-                value = TElement(top.symbol, new_elem_value)
+                t_elem = TElement(top.symbol, new_elem_value)
                 new_token_pos = top.cur_token_pos
                 parse_stack.pop()
+
+                if t_elem.name in self._seq_symbols:
+                    self._process_seq_telement(t_elem)
+
                 if not parse_stack:
                     # success!
-                    # value now is the TElement corresponding to technical
+                    # t_elem now is the TElement corresponding to technical
                     # initial production '$START$' -> ('E', '$END$').
-                    assert len(value.value) == 2
-                    root = value.value[0]
+                    assert len(t_elem.value) == 2
+                    root = t_elem.value[0]
                     if debug:
                         print("RAW RESULT:")
                         root.printme()
@@ -1144,7 +1179,7 @@ class LLParser:
                             root.printme()
                     return root
                 top = parse_stack[-1]
-                top.next_matched(value, new_token_pos)
+                top.next_matched(t_elem, new_token_pos)
                 continue
             next_token = tokens[top.cur_token_pos]
             cur_symbol = top.get_cur_symbol()
@@ -1164,8 +1199,7 @@ class LLParser:
                 # can match this symbol:
                 prods = self.parse_table.get((cur_symbol, next_token.name))
                 if prods is not None:
-                    parse_stack.append(
-                        _StackElement(cur_symbol, top.cur_token_pos, prods))
+                    _put_on_stack(_StackElement(cur_symbol, top.cur_token_pos, prods))
                     if debug:
                         self._log_cur_prod(parse_stack, tokens)
                     continue
@@ -1335,7 +1369,8 @@ class LLParser:
     def _log_cur_prod(self, parse_stack, tokens):
         # log current production
         top = parse_stack[-1]
-        prefix = "  "*(len(parse_stack) - 1)
+        #prefix = "  "*(len(parse_stack) - 1)
+        prefix = "  "*top.log_offset
         if top.cur_prod_id == 0:
             self._log_debug(
                 prefix + "try match '%s': (next token #%s) %s)",
@@ -1347,8 +1382,9 @@ class LLParser:
 
     def _log_match_result(self, parse_stack, tokens):
         # log result of the match
-        prefix = "  "*(len(parse_stack) - 1)
         top = parse_stack[-1]
+        #prefix = "  "*(len(parse_stack) - 1)
+        prefix = "  "*top.log_offset
         cur_prod = top.get_cur_prod()
         is_success = len(top.values) == len(cur_prod.production)
         if is_success:
@@ -1363,6 +1399,35 @@ class LLParser:
 
     def _log_debug(self, *args, **kwargs):
         logger.error(*args, **kwargs)
+
+    def _process_seq_telement(self, t_elem):
+        # helper of 'parse' method.
+        # immediately process (cleanup) TElement which corresponds
+        # to 'ProdSequence' production.
+        assert t_elem.name in self._seq_symbols
+
+        if t_elem.value is None:
+            # end of the sequence
+            seq = []
+        else:
+            # t_elem corresponds to a production which looks like
+            # ('SEQUENCE_ITEM', 'SEQUENCE_TAIL')
+            #
+            # The 'SEQUENCE_TAIL' child element is already processed and
+            # contains the list of elements of the tail of sequence
+            assert len(t_elem.value) == 2
+
+            assert t_elem.value[1].name == t_elem.name
+            seq = t_elem.value[1].value
+
+            next_item = t_elem.value[0]
+            assert isinstance(next_item, TElement)
+            assert len(next_item.value) == 1
+            next_val = next_item.value[0]
+            seq.insert(0, next_val)
+
+        t_elem.value = seq
+        t_elem._is_leaf = True
 
     @classmethod
     def _make_llone_table(cls, prod_rules, terminals, nullables, start_symbol_name):
@@ -1523,19 +1588,47 @@ class LLParser:
             cur_sort_n += 1
             return cur_sort_n
 
-        for symbol, prods in prods_map.items():
-            for prod in prods:
+        prod_rules = {}
+        seq_symbols = set()
+
+        for symbol, productions in prods_map.items():
+            assert '__' not in symbol, (
+                f"Invalid production symbol '{symbol}'. Symbol names containing "
+                f"'__' are reserved")
+
+            is_seq_symbol = isinstance(productions, ProdSequence)
+
+            # validate list of symbols specified in production
+            prods_list = productions.productions if is_seq_symbol else productions
+            for prod in prods_list:
                 assert not isinstance(prod, str), (
                     f"invalid production {symbol} -> '{prod}'. "
                     f"(result should be tuple, not string)")
 
-        return {
-            symbol: [
-                ProdRule(symbol, (() if prod is None else prod), _get_next_sort_n())
-                for prod in prods
-            ]
-            for symbol, prods in prods_map.items()
-        }
+            if is_seq_symbol:
+                seq_item_name = f"{symbol}__ITEM"
+                prod_rules[symbol] = [
+                    ProdRule(symbol, (seq_item_name, symbol), _get_next_sort_n()),
+                    ProdRule(symbol, (), _get_next_sort_n()),
+                ]
+                prod_rules[seq_item_name] = [
+                    ProdRule(
+                        seq_item_name,
+                        (() if prod is None else prod),
+                        _get_next_sort_n())
+                    for prod in prods_list
+                ]
+                seq_symbols.add(symbol)
+            else:
+                prod_rules[symbol] = [
+                    ProdRule(
+                        symbol,
+                        (() if prod is None else prod),
+                        _get_next_sort_n())
+                    for prod in prods_list
+                ]
+
+        return prod_rules, seq_symbols
 
     def _make_squash_data(self, keep_symbols):
         # prepare information about potentially squashable symbols
