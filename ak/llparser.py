@@ -74,11 +74,12 @@ class GrammarIsRecursive(GrammarError):
 
 class ParsingError(Error):
     """Unexpected token kind of errors."""
-    def __init__(self, symbol, next_tokens, attempted_prods):
+    def __init__(self, symbol, next_tokens, attempted_prod_rules):
         self.src_pos = next_tokens[0].src_pos
+        attempted_productions = [pr.production for pr in attempted_prod_rules]
         msg = (
             f"fail at {next_tokens}.\n"
-            f"tried productions '{symbol}' -> {attempted_prods}")
+            f"tried productions '{symbol}' -> {attempted_productions}")
         super().__init__(msg)
 
 
@@ -908,6 +909,16 @@ class ProdSequence:
         self.productions = list(productions)
 
 
+class AnyTokenExcept:
+    """Argument of LLParser constructor.
+
+    Indicates that a number of one-token Production Rules should be created:
+    "(token, )" for each token except of specified ones.
+    """
+    def __init__(self, *tokens):
+        self.tokens = tokens
+
+
 class _StackElement:
     # represents current position of parsing
     #
@@ -1017,6 +1028,7 @@ class LLParser:
     _INIT_PRODUCTION_NAME = '$START$'
 
     ProdSequence = ProdSequence
+    AnyTokenExcept = AnyTokenExcept
 
     def __init__(
             self,
@@ -1074,7 +1086,8 @@ class LLParser:
         self.terminals = self.tokenizer.get_all_token_names()
 
         self.start_symbol_name = start_symbol_name
-        self.prod_rules, self._seq_symbols = self._create_productions(productions)
+        self.prod_rules, self._seq_symbols = self._create_productions(
+            productions, self.terminals)
         self.terminals.add(self._END_TOKEN_NAME)
 
         self._verify_grammar_structure_part1()
@@ -1577,8 +1590,8 @@ class LLParser:
 
         return fsets
 
-    @staticmethod
-    def _create_productions(prods_map):
+    @classmethod
+    def _create_productions(cls, prods_map, terminals):
         # constructor helper.
         # create ProdRule objects from productions data specified in constructor
 
@@ -1611,24 +1624,66 @@ class LLParser:
                     ProdRule(symbol, (seq_item_name, symbol), _get_next_sort_n()),
                     ProdRule(symbol, (), _get_next_sort_n()),
                 ]
-                prod_rules[seq_item_name] = [
-                    ProdRule(
-                        seq_item_name,
-                        (() if prod is None else prod),
-                        _get_next_sort_n())
-                    for prod in prods_list
-                ]
+                prod_rules[seq_item_name] = cls._make_prod_rules_list(
+                    seq_item_name, prods_list, terminals, _get_next_sort_n)
+                #[
+                #    ProdRule(
+                #        seq_item_name,
+                #        (() if prod is None else prod),
+                #        _get_next_sort_n())
+                #    for prod in prods_list
+                #]
                 seq_symbols.add(symbol)
             else:
-                prod_rules[symbol] = [
-                    ProdRule(
-                        symbol,
-                        (() if prod is None else prod),
-                        _get_next_sort_n())
-                    for prod in prods_list
-                ]
+                prod_rules[symbol] = cls._make_prod_rules_list(
+                    symbol, prods_list, terminals, _get_next_sort_n)
+                #[
+                #    ProdRule(
+                #        symbol,
+                #        (() if prod is None else prod),
+                #        _get_next_sort_n())
+                #    for prod in prods_list
+                #]
 
         return prod_rules, seq_symbols
+
+    @staticmethod
+    def _make_prod_rules_list(symbol, productions, terminals, count_generator):
+        # Constructor helper. Creates list of ProdRule objects from the
+        # productions data specified as consctructor argument.
+        #
+        # Provided productions data is almost ready, non-trivial processing
+        # is required for 'AnyTokenExcept' pseudo-production only
+        result = []
+        special_token_encountered = False
+        for production in productions:
+            if production is None:
+                result.append(ProdRule(symbol, (), count_generator()))
+            elif isinstance(production, tuple):
+                result.append(ProdRule(symbol, production, count_generator()))
+            elif isinstance(production, list):
+                raise GrammarError(
+                    f"invalid production: {production}. "
+                    f"It must be a tuple, not a list")
+            elif isinstance(production, AnyTokenExcept):
+                if special_token_encountered:
+                    raise GrammarError(
+                        f"productions for symbol '{symbol}' contain several "
+                        f"elemens of type 'AnyTokenExcept'. Only one such "
+                        f"element is allowed")
+                special_token_encountered = True
+                tokens_to_exclude = set(production.tokens)
+                unexpected_tokens = tokens_to_exclude - terminals
+                if unexpected_tokens:
+                    raise GrammarError(
+                        f"unknown terminal(s) specified in 'AnyTokenExcept' item "
+                        f"of productions of symbol '{symbol}': {unexpected_tokens}")
+                for t in terminals - tokens_to_exclude:
+                    result.append(
+                        ProdRule(symbol, (t, ), count_generator())
+                    )
+
+        return result
 
     def _make_squash_data(self, keep_symbols):
         # prepare information about potentially squashable symbols

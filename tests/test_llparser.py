@@ -1505,11 +1505,11 @@ class TestSequenceProductions(unittest.TestCase):
                 'SEMI_COLON': ';',
             },
             keywords={
-                ('WORD', 'val_k'): 'val_k',
-                ('WORD', 'val_l'): 'val_l',
-                ('WORD', 'val_m'): 'val_m',
-                ('WORD', 'val_n'): 'val_n',
-                ('WORD', 'val_p'): 'val_p',
+                ('WORD', 'val_k'): 'Val_k',
+                ('WORD', 'val_l'): 'Val_l',
+                ('WORD', 'val_m'): 'Val_m',
+                ('WORD', 'val_n'): 'Val_n',
+                ('WORD', 'val_p'): 'Val_p',
             },
             productions={
                 'E': [
@@ -1519,11 +1519,11 @@ class TestSequenceProductions(unittest.TestCase):
                     ('SEQUENCE', ';'),
                 ],
                 'SEQUENCE': LLParser.ProdSequence(
-                    ('val_k', ),
+                    ('Val_k', ),
                     ('L', ),
                 ),
                 'L': [
-                    ('val_l', ),
+                    ('Val_l', ),
                 ],
             },
         )
@@ -1539,7 +1539,126 @@ class TestSequenceProductions(unittest.TestCase):
 
         seq_elems_names = [x.name for x in seq]
 
-        self.assertEqual(seq_elems_names, ['val_k', 'L', 'L', 'L', 'L'], f"{seq=}")
+        self.assertEqual(seq_elems_names, ['Val_k', 'L', 'L', 'L', 'L'], f"{seq=}")
+
+
+class TestBulkProductions(unittest.TestCase):
+    """Test 'AnyTokenExcept' pseudo-production."""
+
+    def test_anyexcept_production_in_list(self):
+        """Test useing 'AnyTokenExcept' in list."""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            |(?P<SIGN_LESS><)
+            |(?P<SIGN_MORE>>)
+            |(?P<SEMI_COLON>;)
+            """,
+            synonyms={
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+                'SIGN_LESS': '<',
+                'SIGN_MORE': '>',
+                'SEMI_COLON': ';',
+            },
+            keywords={
+                ('WORD', 'k'): 'Val_k',
+                ('WORD', 'l'): 'Val_l',
+                ('WORD', 'm'): 'Val_m',
+                ('WORD', 'n'): 'Val_n',
+                ('WORD', 'p'): 'Val_p',
+            },
+            productions={
+                'E': [
+                    ('LIST', ),
+                ],
+                'LIST': [
+                    ('[', 'LIST_TAIL', ']'),
+                ],
+                'LIST_TAIL': [
+                    ('LIST_ITEM', 'LIST_TAIL'),
+                    None,
+                ],
+                'LIST_ITEM': [
+                    LLParser.AnyTokenExcept('Val_k', '<'),
+                    ('K', ),
+                ],
+                'K': [
+                    ('<', 'Val_k', '>'),
+                ],
+            },
+            lists = {'LIST': ('[', None, 'LIST_TAIL', ']')},
+        )
+
+        # 01 parse list of tokens
+        x = parser.parse("[ l l m n]")
+
+        self.assertTrue(x.is_leaf(), f"{x}")
+        self.assertEqual(x.value, ['l', 'l', 'm', 'n'], f"{x}")
+
+        # 02 parse list of tokens and complex symbols
+        x = parser.parse("[ l <k >]")
+        self.assertEqual(x.value[0], 'l', f"{x}")
+        self.assertIsInstance(x.value[1], TElement, f"{x}")
+
+        # 03 parse list which contains prohibited token
+        with self.assertRaises(llparser.ParsingError):
+            # 'Val_k' is explicitely excluded from set of applicable tokens
+            parser.parse("[ k ]")
+
+    def test_anyexcept_production_is_sequence(self):
+        """Test useing 'AnyTokenExcept' in sequence."""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<BR_OPEN>\[)
+            |(?P<BR_CLOSE>\])
+            |(?P<SIGN_LESS><)
+            |(?P<SIGN_MORE>>)
+            |(?P<SEMI_COLON>;)
+            """,
+            synonyms={
+                'BR_OPEN': '[',
+                'BR_CLOSE': ']',
+                'SIGN_LESS': '<',
+                'SIGN_MORE': '>',
+                'SEMI_COLON': ';',
+            },
+            keywords={
+                ('WORD', 'k'): 'Val_k',
+                ('WORD', 'l'): 'Val_l',
+                ('WORD', 'm'): 'Val_m',
+                ('WORD', 'n'): 'Val_n',
+                ('WORD', 'p'): 'Val_p',
+            },
+            productions={
+                'E': [
+                    ('SEQUENCE', ';'),
+                ],
+                'SEQUENCE': LLParser.ProdSequence(
+                    ('Val_k', ),
+                    LLParser.AnyTokenExcept('Val_k', 'Val_l'),
+                ),
+            },
+        )
+
+        # 01. successull parse
+        # 'k' may be present in sequence because even though it's prohibited in
+        # AnyTokenExcept, there is an explicit production: ('Val_k', )
+        x = parser.parse("m n k;")
+
+        seq = x.get_path_val('SEQUENCE')
+        self.assertIsInstance(seq, list)
+        self.assertEqual(len(seq), 3, f"{x}")
+
+        # 02. fail scenario
+        # should fail because 'l' is not allowed in sequence
+        with self.assertRaises(llparser.ParsingError):
+            parser.parse("m n l;")
 
 
 class TestBadGrammar(unittest.TestCase):
