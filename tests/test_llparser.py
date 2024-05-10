@@ -1840,7 +1840,6 @@ class TestAmbiguousGrammar(unittest.TestCase):
         self.assertIsNone(x.get_path_val("A.M.val_m"))
         self.assertEqual(x.get_path_val("A.N.val_n"), "val_n")
 
-    @unittest.skip("productions factorization not implemented")
     def test_nonll1_grammar_03(self):
         """Grammar is not ll1. More complicated case."""
         parser = LLParser(
@@ -1849,18 +1848,18 @@ class TestAmbiguousGrammar(unittest.TestCase):
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             """,
             keywords={
-                ('WORD', 'val_k'): 'val_k',
-                ('WORD', 'val_l'): 'val_l',
-                ('WORD', 'val_m'): 'val_m',
-                ('WORD', 'val_n'): 'val_n',
-                ('WORD', 'val_p'): 'val_p',
+                ('WORD', 'k'): 'val_k',
+                ('WORD', 'l'): 'val_l',
+                ('WORD', 'm'): 'val_m',
+                ('WORD', 'n'): 'val_n',
+                ('WORD', 'FIN'): 'FIN',
             },
             productions={
                 'E': [
                     ('A', ),
                 ],
                 'A': [
-                    ('B', 'val_p'),
+                    ('B', 'FIN'),
                 ],
                 'B': [
                     ('val_k', 'val_l'),             # production P1
@@ -1877,4 +1876,58 @@ class TestAmbiguousGrammar(unittest.TestCase):
         # Parsing should not fail after automatic grammar factorization is
         # implemented.
 
-        parser.parse("val_k val_l val_m val_p", do_cleanup=False)
+        self.assertTrue(not parser.is_ambiguous())
+
+        x = parser.parse("k l m FIN", do_cleanup=False)
+        words = [t_elem.value for t_elem in x.get_path_val('A.B')]
+        self.assertEqual(words, ['k', 'l', 'm'])
+
+    def test_nonll1_grammar_04(self):
+        """Grammar is not ll1. More complicated case."""
+        parser = LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            """,
+            keywords={
+                ('WORD', 'k'): 'val_k',
+                ('WORD', 'l'): 'val_l',
+                ('WORD', 'm'): 'val_m',
+                ('WORD', 'n'): 'val_n',
+                ('WORD', 'FIN'): 'FIN',
+            },
+            productions={
+                'E': [
+                    ('A', ),
+                ],
+                'A': [
+                    ('B', 'FIN'),
+                ],
+                'B': [
+                    ('val_k', 'val_l', 'val_m'),
+                    ('val_k', 'val_l'),
+                    ('val_k', 'val_n'),
+                    ('val_m', 'val_k', 'val_l'),
+                    ('val_m', 'val_k', 'val_m'),
+                ],
+            },
+        )
+
+        words = lambda root_t_elem: [
+            t_elem.value for t_elem in root_t_elem.get_path_val('B')]
+
+        self.assertTrue(not parser.is_ambiguous())
+        x = parser.parse("k l FIN")
+        self.assertEqual(words(x), ['k', 'l'])
+
+        x = parser.parse("k n FIN")
+        self.assertEqual(words(x), ['k', 'n'])
+
+        x = parser.parse("k l m FIN")
+        self.assertEqual(words(x), ['k', 'l', 'm'])
+
+        x = parser.parse("m k l FIN")
+        self.assertEqual(words(x), ['m', 'k', 'l'])
+
+        x = parser.parse("m k m FIN")
+        self.assertEqual(words(x), ['m', 'k', 'm'])

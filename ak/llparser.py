@@ -1,8 +1,67 @@
-"""LL1 parser"""
+r"""LL1 parser with some ambiguities handling.
+
+1. Main difference from LL1 parser is that it allowes ambiguities.
+Parsing table may contain several matching productions for a pair:
+(SYMBOL, next_token) -> (A, B, C)
+                        (X, Y, Z)
+If matching process fails for the first production, parsing process will
+roll back and next production will be attempted. First successfully
+matched production will be used.
+
+So, it is possible to use following productions for symbol 'A':
+A: [
+    (X, Y, Z),
+    (X, Y),
+]
+
+2. Second difference is that if for some symbol there are several consequtive
+productions with same prefix, grammar will be automatically transformed:
+A: [                  =>  A: [                  A__S00: [
+    (X, Y, A, B),     =>      (X, Y, A__S00),       (A, B),
+    (X, Y, C, D),     =>  ]                         (C, D),
+]                                               ]
+This transformation may remove ambiguities.
+
+Example of usage:
+
+parser = LLParser(
+    r'''
+    (?P<SPACE>\s+)
+    |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+    |(?P<NUMBER>[0-9]+)
+    |(?P<BR_OPEN>\[)
+    |(?P<BR_CLOSE>\])
+    ''',
+    synonyms={
+        'BR_OPEN': '[',
+        'BR_CLOSE': ']',
+    },
+    productions={
+        'E': [
+            ('LIST_WORDS', 'NUMBER'),
+        ],
+        'LIST_WORDS': [
+            ('[', 'LIST_WORDS_TAIL', ']'),
+            None,
+        ],
+        'LIST_WORDS_TAIL': [
+            ('WORD', 'LIST_WORDS_TAIL'),
+            None,
+        ],
+    },
+    lists={
+        'LIST_WORDS': ('[', None, 'LIST_WORDS_TAIL', ']'),
+    }
+)
+
+x = parser.parse("[a b c] 10")  # TElement
+print(str(x))
+"""
 
 import re
 from collections import defaultdict
 import collections.abc
+import itertools
 import logging
 
 
@@ -887,12 +946,16 @@ class ProdRule:
 
     Name 'production' is used for the result symbols, ('B', 'C', 'D') in this case.
     """
-    __slots__ = 'symbol', 'production', 'sort_n'
+    __slots__ = 'symbol', 'production', 'sort_n', '_is_factorization_suffix'
 
     def __init__(self, symbol, production, sort_n):
         self.symbol = symbol
         self.production = production
         self.sort_n = sort_n
+        self._is_factorization_suffix = False
+
+    def __str__(self):
+        return f"'{self.symbol}' -> {self.production}"
 
 
 class ProdSequence:
@@ -1086,15 +1149,15 @@ class LLParser:
         self.terminals = self.tokenizer.get_all_token_names()
 
         self.start_symbol_name = start_symbol_name
-        self.prod_rules, self._seq_symbols = self._create_productions(
+        self.prods_map, self._seq_symbols = self._create_productions(
             productions, self.terminals)
         self.terminals.add(self._END_TOKEN_NAME)
 
         self._verify_grammar_structure_part1()
 
-        nullables = self._get_nullables(self.prod_rules)
+        nullables = self._get_nullables(self.prods_map)
 
-        self.prod_rules[self._INIT_PRODUCTION_NAME] = [
+        self.prods_map[self._INIT_PRODUCTION_NAME] = [
             ProdRule(
                 self._INIT_PRODUCTION_NAME,
                 (self.start_symbol_name, self._END_TOKEN_NAME, ),
@@ -1112,10 +1175,10 @@ class LLParser:
         )
         self.cleanup_rules.verify_integrity(
             self.terminals,
-            set(self.prod_rules.keys()))
+            set(self.prods_map.keys()))
 
         self.parse_table, first_sets, follow_sets = self._make_llone_table(
-            self.prod_rules, self.terminals, nullables,
+            self.prods_map, self.terminals, nullables,
             self.start_symbol_name,
         )
 
@@ -1149,7 +1212,7 @@ class LLParser:
         # init parse stack
         _put_on_stack(_StackElement(
             self._INIT_PRODUCTION_NAME, 0,
-            self.prod_rules[self._INIT_PRODUCTION_NAME]))
+            self.prods_map[self._INIT_PRODUCTION_NAME]))
 
         longest_stack = []
         if debug:
@@ -1170,6 +1233,14 @@ class LLParser:
                     new_elem_value = None
 
                 t_elem = TElement(top.symbol, new_elem_value)
+                if cur_prod._is_factorization_suffix:
+                    # this production corresponds to a factorized group
+                    # X -> (..common prefix.., X_Sxx)
+                    # It's time to merge suffix contents into self
+                    suffix_elem = t_elem.value.pop()
+                    if suffix_elem.value is not None:
+                        t_elem.value.extend(suffix_elem.value)
+
                 new_token_pos = top.cur_token_pos
                 parse_stack.pop()
 
@@ -1261,26 +1332,32 @@ class LLParser:
             _for_choice=True,  # keep root element during cleanup
         )
 
+    def is_ambiguous(self) -> bool:
+        """Checks if grammar is LL1.
+        That is there is no more than one production for (symbol, next_token) pair.
+        """
+        return any(len(prods) != 1 for prods in self.parse_table.values())
+
     def _verify_grammar_structure_part1(self):
         # initial verification of grammar structure
         # to be called before parse_table is prepared
         #
         # reports only very obvious problems. Less obvious problems
         # can be detected and/or properly reported only after parser is prepared
-        if self.start_symbol_name not in self.prod_rules:
+        if self.start_symbol_name not in self.prods_map:
             raise GrammarError(
                 f"no productions for start symbol '{self.start_symbol_name}'")
 
-        if self._END_TOKEN_NAME in self.prod_rules:
+        if self._END_TOKEN_NAME in self.prods_map:
             raise GrammarError(
                 f"production specified for end symbol '{self._END_TOKEN_NAME}'")
 
-        if self._INIT_PRODUCTION_NAME in self.prod_rules:
+        if self._INIT_PRODUCTION_NAME in self.prods_map:
             raise GrammarError(
                 f"production specified explicitely for "
                 f"special symbol '{self._INIT_PRODUCTION_NAME}'")
 
-        non_terminals = set(self.prod_rules.keys())
+        non_terminals = set(self.prods_map.keys())
         bad_tokens = non_terminals.intersection(self.terminals)
 
         if bad_tokens:
@@ -1289,7 +1366,7 @@ class LLParser:
 
         all_prod_symbols = {
             s
-            for prod_rules in self.prod_rules.values()
+            for prod_rules in self.prods_map.values()
             for rule in prod_rules
             for s in rule.production}
         unknown_symbols = all_prod_symbols.difference(
@@ -1318,7 +1395,7 @@ class LLParser:
         # we end up trying to exand same symbol but have not consumed
         # any tokens
         processed_symbols = set(self.terminals)
-        for symbol, prod_rules in sorted(self.prod_rules.items()):
+        for symbol, prod_rules in sorted(self.prods_map.items()):
             # depth-first-search of the same symbol
             if symbol in processed_symbols:
                 continue
@@ -1377,7 +1454,7 @@ class LLParser:
                     continue
 
                 # do need to go deeper
-                stack.append([cur_symbol, self.prod_rules[cur_symbol], 0, 0])
+                stack.append([cur_symbol, self.prods_map[cur_symbol], 0, 0])
 
     def _log_cur_prod(self, parse_stack, tokens):
         # log current production
@@ -1443,18 +1520,18 @@ class LLParser:
         t_elem._is_leaf = True
 
     @classmethod
-    def _make_llone_table(cls, prod_rules, terminals, nullables, start_symbol_name):
+    def _make_llone_table(cls, prods_map, terminals, nullables, start_symbol_name):
         """Make Parsing Table.
 
         Returns possible productions for non-terminal-symbol and next token:
             {(non_term_symbol, next_token): [production, ]}
         """
-        first_sets = cls._calc_first_sets(prod_rules, terminals, nullables)
+        first_sets = cls._calc_first_sets(prods_map, terminals, nullables)
         follow_sets = cls._calc_follow_sets(
-            prod_rules, terminals, nullables, first_sets, start_symbol_name)
+            prods_map, terminals, nullables, first_sets, start_symbol_name)
 
         parse_table = defaultdict(list)
-        for non_term, prod_rs in prod_rules.items():
+        for non_term, prod_rs in prods_map.items():
             for prod_rule in prod_rs:
                 start_symbols = set()
                 for symbol in prod_rule.production:
@@ -1483,26 +1560,26 @@ class LLParser:
 
     @classmethod
     def _calc_follow_sets(
-        cls, prod_rules, terminals, nullables, first_sets, start_symbol_name,
+        cls, prods_map, terminals, nullables, first_sets, start_symbol_name,
     ):
         """Calculate 'follow-sets'
 
         {'NON_TERM': set(t| S ->* b NON_TERM t XXX)}
         """
-        assert start_symbol_name in prod_rules, (
+        assert start_symbol_name in prods_map, (
             f"invalid grammar: there are no productions for "
             f"start symbol '{start_symbol_name}'")
 
-        follow_sets = {non_term: set() for non_term in prod_rules.keys()}
+        follow_sets = {non_term: set() for non_term in prods_map.keys()}
         follow_sets[start_symbol_name].add(cls._END_TOKEN_NAME)
 
         # follows dependencies rules: follow set for a symbol must include
         # follow sets of all the dependent symbols
-        follows_deps = {non_term: set() for non_term in prod_rules.keys()}
+        follows_deps = {non_term: set() for non_term in prods_map.keys()}
 
         # 1. calculate 'immediate follows' - cases when non-terminal symbol
         # is followed by terminal or non-terminal in some production
-        for non_term, prod_rs in sorted(prod_rules.items()):
+        for non_term, prod_rs in sorted(prods_map.items()):
             for prod_r in prod_rs:
                 for i, cur_symbol in enumerate(prod_r.production):
                     if cur_symbol in terminals:
@@ -1537,13 +1614,13 @@ class LLParser:
         return follow_sets
 
     @staticmethod
-    def _get_nullables(prod_rules):
+    def _get_nullables(prods_map):
         # get set of all nullable symbols
         cur_set = set([None, ])  # temporary, None will not be in final result
         next_set = set()
         while len(cur_set) != len(next_set):
             next_set.update(cur_set)
-            for non_term, prod_rs in prod_rules.items():
+            for non_term, prod_rs in prods_map.items():
                 if non_term in next_set:
                     continue
                 if any(
@@ -1561,18 +1638,18 @@ class LLParser:
             print(s)
 
     @classmethod
-    def _calc_first_sets(cls, prod_rules, terminals, nullables):
+    def _calc_first_sets(cls, prods_map, terminals, nullables):
         # for each symbol get list of tokens it's production can start from
         #
         # {NON_TERM: {t| NON_TERM ->* tXXX}}
-        non_terms = set(prod_rules.keys())
+        non_terms = set(prods_map.keys())
 
         fsets = {t: set() for t in non_terms}
 
         while True:
             fsets_updated = False
             for non_term, cur_fset in fsets.items():
-                for prod_r in prod_rules[non_term]:
+                for prod_r in prods_map[non_term]:
                     for symbol in prod_r.production:
                         if symbol in terminals:
                             if symbol not in cur_fset:
@@ -1591,20 +1668,16 @@ class LLParser:
         return fsets
 
     @classmethod
-    def _create_productions(cls, prods_map, terminals):
+    def _create_productions(cls, prods_init_data, terminals, do_factorization=True):
         # constructor helper.
         # create ProdRule objects from productions data specified in constructor
 
-        cur_sort_n = -1
-        def _get_next_sort_n():
-            nonlocal cur_sort_n
-            cur_sort_n += 1
-            return cur_sort_n
+        _sort_n_gen = itertools.count()
 
-        prod_rules = {}
+        prods_map = {}  # {symbol: [ProdRule, ]}
         seq_symbols = set()
 
-        for symbol, productions in prods_map.items():
+        for symbol, productions in prods_init_data.items():
             assert '__' not in symbol, (
                 f"Invalid production symbol '{symbol}'. Symbol names containing "
                 f"'__' are reserved")
@@ -1620,35 +1693,128 @@ class LLParser:
 
             if is_seq_symbol:
                 seq_item_name = f"{symbol}__ITEM"
-                prod_rules[symbol] = [
-                    ProdRule(symbol, (seq_item_name, symbol), _get_next_sort_n()),
-                    ProdRule(symbol, (), _get_next_sort_n()),
+                prods_map[symbol] = [
+                    ProdRule(symbol, (seq_item_name, symbol), next(_sort_n_gen)),
+                    ProdRule(symbol, (), next(_sort_n_gen)),
                 ]
-                prod_rules[seq_item_name] = cls._make_prod_rules_list(
-                    seq_item_name, prods_list, terminals, _get_next_sort_n)
-                #[
-                #    ProdRule(
-                #        seq_item_name,
-                #        (() if prod is None else prod),
-                #        _get_next_sort_n())
-                #    for prod in prods_list
-                #]
+                prods_map[seq_item_name] = cls._make_prod_rules_list(
+                    seq_item_name, prods_list, terminals, _sort_n_gen)
                 seq_symbols.add(symbol)
             else:
-                prod_rules[symbol] = cls._make_prod_rules_list(
-                    symbol, prods_list, terminals, _get_next_sort_n)
-                #[
-                #    ProdRule(
-                #        symbol,
-                #        (() if prod is None else prod),
-                #        _get_next_sort_n())
-                #    for prod in prods_list
-                #]
+                prods_map[symbol] = cls._make_prod_rules_list(
+                    symbol, prods_list, terminals, _sort_n_gen)
 
-        return prod_rules, seq_symbols
+        if do_factorization:
+            prods_map = cls._factorize_productions(prods_map)
+
+        return prods_map, seq_symbols
+
+    @classmethod
+    def _factorize_productions(cls, prods_map):
+        result_rules = {}
+
+        for symbol, prod_rules in prods_map.items():
+            for s, rr in cls._factorize_prods_list(symbol, prod_rules):
+                assert s not in result_rules
+                result_rules[s] = rr
+
+        return result_rules
+
+    @classmethod
+    def _factorize_prods_list(cls, symbol, prod_rules):
+        # factorize (combine productions with common prefix) all the productions
+        # of a given symbol
+        #
+        # yield (symbol, [ProdRule, ]) for original symbol and all 'auxiliary'
+        # symbols created during factorization process
+
+        result_rules_list = []  # [ProdRule, ]
+
+        _grp_id_gen = itertools.count()
+
+        for chunk in cls._split_prods_rules(prod_rules):
+            # chunk is a list of ProdRule with common prefix
+            if len(chunk) == 1:
+                result_rules_list.append(chunk[0])
+            else:
+                assert len(chunk) > 0
+                group_production, extra_prods = cls._factorize_common_prefix_prods(
+                    symbol, next(_grp_id_gen), chunk)
+                for s, rr in extra_prods.items():
+                    yield s, rr
+                result_rules_list.append(group_production)
+
+        yield symbol, result_rules_list
+
+    @classmethod
+    def _split_prods_rules(cls, prod_rules):
+        # helper method used during factorization process
+        #
+        # split list of ProdRule into chunks with same starting symbol
+        cur_start_symbol = None
+        cur_chunk = []
+        for r in prod_rules:
+            start_symbol = r.production[0] if r.production else None
+            if start_symbol != cur_start_symbol:
+                if cur_chunk:
+                    yield cur_chunk
+                    cur_chunk = []
+                    cur_start_symbol = None
+
+            cur_chunk.append(r)
+            cur_start_symbol = start_symbol
+
+        if cur_chunk:
+            yield cur_chunk
+
+    @classmethod
+    def _factorize_common_prefix_prods(cls, symbol, group_id, prods_chunk):
+        # H -> (A, B, C, D)    => H -> (A, B, H__S0x) ;  H__S0x -> (C, D)
+        #   -> (A, B, X, Y)                                     -> (X, Y)
+        #   -> (A, B, Z)                                        -> (Z, )
+
+        assert len(prods_chunk) > 1
+
+        # get common prefix
+        max_len = min(len(r.production) for r in prods_chunk)
+        common_prefix = list(prods_chunk[0].production[:max_len])
+        for prod_rule in prods_chunk[1:]:
+            for i, (s1, s2) in enumerate(zip(common_prefix, prod_rule.production)):
+                if s1 != s2:
+                    common_prefix = common_prefix[:i]
+                    break
+        assert len(common_prefix) > 0, (
+            "empty common prefix:\n" + "\n".join(str(r) for r in prods_chunk))
+
+        grp_symbol_suffix = f"{symbol}__S{group_id:02}"
+
+        # make single production for 'symbol': H -> (A, B, H__S0x)
+        # common_prefix + grp_symbol_suffix
+        group_prod_rule = ProdRule(
+            symbol,
+            tuple(list(common_prefix) + [grp_symbol_suffix]),
+            prods_chunk[0].sort_n)
+        group_prod_rule._is_factorization_suffix = True
+
+        # make productions for the suffix
+        suff_prods_counter = itertools.count()
+        suffix_prod_rules = [
+            ProdRule(
+                grp_symbol_suffix,
+                tuple(orig_prod_rule.production[len(common_prefix):]),
+                next(suff_prods_counter),
+            )
+            for orig_prod_rule in prods_chunk
+        ]
+
+        aux_symbols_prod_rules = dict(  # {symbol: [ProdRule, ]}
+            cls._factorize_prods_list(grp_symbol_suffix, suffix_prod_rules)
+        )
+
+        return group_prod_rule, aux_symbols_prod_rules
 
     @staticmethod
-    def _make_prod_rules_list(symbol, productions, terminals, count_generator):
+    def _make_prod_rules_list(symbol, productions, terminals, sort_n_gen):
         # Constructor helper. Creates list of ProdRule objects from the
         # productions data specified as consctructor argument.
         #
@@ -1658,9 +1824,9 @@ class LLParser:
         special_token_encountered = False
         for production in productions:
             if production is None:
-                result.append(ProdRule(symbol, (), count_generator()))
+                result.append(ProdRule(symbol, (), next(sort_n_gen)))
             elif isinstance(production, tuple):
-                result.append(ProdRule(symbol, production, count_generator()))
+                result.append(ProdRule(symbol, production, next(sort_n_gen)))
             elif isinstance(production, list):
                 raise GrammarError(
                     f"invalid production: {production}. "
@@ -1680,7 +1846,7 @@ class LLParser:
                         f"of productions of symbol '{symbol}': {unexpected_tokens}")
                 for t in terminals - tokens_to_exclude:
                     result.append(
-                        ProdRule(symbol, (t, ), count_generator())
+                        ProdRule(symbol, (t, ), next(sort_n_gen))
                     )
 
         return result
@@ -1694,7 +1860,7 @@ class LLParser:
         squash_symbols = set()
         choice_symbols = set()
 
-        for symbol, prod_rules in self.prod_rules.items():
+        for symbol, prod_rules in self.prods_map.items():
             n_null_prods = sum(
                 1 if len(r.production) == 0 else 0
                 for r in prod_rules)
