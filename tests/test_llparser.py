@@ -37,6 +37,8 @@ class TestParserTokenizer(unittest.TestCase):
         return _Tokenizer(
             r"""
             (?P<SPACE>\s+)
+            |(?P<COMMENT_EOL>//.*)
+            |(?P<COMMENT_ML>/\*)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             |"(?P<DQ_STRING>[^"]*)"
             |'(?P<SQ_STRING>[^']*)'
@@ -60,11 +62,12 @@ class TestParserTokenizer(unittest.TestCase):
                 'BR_CLOSE': ')',
                 'DQ_STRING': 'STRING',
                 'SQ_STRING': 'STRING',
+                'COMMENT_EOL': 'COMMENT',
+                'COMMENT_ML': 'COMMENT',
             },
-            comments = [
-                '//',
-                ('/*', '*/'),
-            ],
+            span_matchers={
+                'COMMENT_ML': r"(?P<END_COMMENT>(\*[^/]|[^*])*)\*/",
+            },
         )
 
     def test_tokenizer(self):
@@ -72,14 +75,16 @@ class TestParserTokenizer(unittest.TestCase):
 
         tokenizer = self._make_tokenizer()
 
-        tokens = list(tokenizer.tokenize(
+        tokens = [
+            t for t in tokenizer.tokenize(
             """
             aaa "bb" '+' - xx* '+ -' / () x86  \n \t     c
 
             c class // a + b
             """,
             src_name="test string")
-        )
+            if t.name not in {'SPACE', 'COMMENT'}
+        ]
         self.assertEqual(15, len(tokens), str(tokens))
 
         tokens_names = [t.name for t in tokens]
@@ -125,7 +130,10 @@ class TestParserTokenizer(unittest.TestCase):
             src_name="test string")
         )
 
-        tokens_values = [t.value for t in tokens]
+        tokens_values = [
+            t.value for t in tokens
+            if t.name not in {'SPACE', 'COMMENT'}
+        ]
         self.assertEqual(
             ["str0", "str1", "str2", "str3", "str4", None],
             tokens_values)
@@ -702,7 +710,7 @@ class TestArithmeticsParser(unittest.TestCase):
                 'BR_CLOSE': ')',
             },
             keywords=None,
-            space_tokens={'SPACE'},
+            skip_tokens={'SPACE'},
             start_symbol_name='E',
             productions={
                 'E': [
@@ -931,6 +939,8 @@ class TestCommentsStripper(unittest.TestCase):
         return LLParser(
             r"""
             (?P<SPACE>\s+)
+            |(?P<COMMENT_EOL>//.*)
+            |(?P<COMMENT_ML>/\*)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
             |(?P<COMMA>,)
             |(?P<BR_OPEN>\[)
@@ -940,11 +950,12 @@ class TestCommentsStripper(unittest.TestCase):
                 'COMMA': ',',
                 'BR_OPEN': '[',
                 'BR_CLOSE': ']',
+                'COMMENT_EOL': 'COMMENT',
+                'COMMENT_ML': 'COMMENT',
             },
-            comments=[
-                "//",
-                ('/*', '*/'),
-            ],
+            span_matchers={
+                'COMMENT_ML': r"(?P<END_COMMENT>(\*[^/]|[^*])*)\*/",
+            },
             productions={
                 'E': [
                     ('LIST',),
@@ -973,6 +984,10 @@ class TestCommentsStripper(unittest.TestCase):
 
         x = parser.parse("[a, b, /* c, d, */ e]")
         self.assertEqual(x.value, ['a', 'b', 'e'])
+
+        # test empty comment
+        x = parser.parse("[a, b,/**/c, d, e]")
+        self.assertEqual(x.value, ['a', 'b', 'c', 'd', 'e'])
 
     def test_single_oneline_comment(self):
         """Text has single comment"""
@@ -1027,7 +1042,7 @@ f /* g, h
             )
 
         err_msg = str(exc.exception)
-        self.assertIn("comment is never closed", err_msg)
+        self.assertIn("span is never closed", err_msg)
         self.assertIn("(2, 19)", err_msg)
 
 
@@ -1719,7 +1734,7 @@ class TestMathParserWithNullProductions(unittest.TestCase):
                 'BR_CLOSE': ')',
             },
             keywords=None,
-            space_tokens={'SPACE'},
+            skip_tokens={'SPACE'},
             start_symbol_name='E',
             productions={
                 'E': [

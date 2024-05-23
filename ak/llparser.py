@@ -178,9 +178,9 @@ class _Tokenizer:
             self,
             tokenizer_str,
             *,
-            comments=None,
+            span_matchers=None,
             synonyms=None, keywords=None,
-            space_tokens=None, end_token_name="$END$",
+            end_token_name="$END$",
         ):
         """_Tokenizer constructor.
 
@@ -190,28 +190,10 @@ class _Tokenizer:
         - Check LLParser class for description of other arguments.
         """
         self.matcher = re.compile(tokenizer_str, re.VERBOSE)
+        self.span_matchers = self._prepare_span_matchers(span_matchers, self.matcher)
         self.synonyms = synonyms or {}
         self.keywords = keywords or {}
-        self.space_tokens = space_tokens or {'SPACE', 'COMMENT'}
         self.end_token_name = end_token_name
-
-        assert comments is None or isinstance(comments, (list, tuple)), (
-            f"'comments' must be list or tuple of comments descriptions, "
-            f"got: {comments}")
-        comments = comments if comments is not None else []
-        self.eol_comments = set()
-        self.ml_comments = {}  # {start_comment_text: end_comment_text}
-        for comment_data in comments:
-            if isinstance(comment_data, str):
-                # this is 'to-end-of-line' comment
-                self.eol_comments.add(comment_data)
-            elif isinstance(comment_data, (list, tuple)):
-                assert len(comment_data) == 2, (
-                    f"expected (start_comment_text, end_comment_text), "
-                    f"got {comment_data}")
-                self.ml_comments[comment_data[0]] = comment_data[1]
-            else:
-                assert False, f"invalid 'comments' item: {comment_data}"
 
     def get_all_token_names(self):
         """Get names of all tokens this tokenizer knows about."""
@@ -233,7 +215,6 @@ class _Tokenizer:
         then remaining text is split into tokens.
         Comments and 'space' tokens are not yielded.
         """
-
         if isinstance(text, str):
             enumereted_lines = enumerate(
                 (t.rstrip() for t in text.split('\n')),
@@ -244,95 +225,93 @@ class _Tokenizer:
             assert False, (
                 f"unexpected type of the object to parse: {str(type(text))}")
 
-        chunks = self._strip_comments(enumereted_lines, src_name)
+        cur_span_symbol = None
+        cur_span_start_text = None
+        cur_span_start_pos = None
+        cur_span_lines = None
+        span_body_matcher = None
 
-        for chunk in chunks:
+        for line_id, text_line in enumereted_lines:
             col = 0
-            while col < len(chunk.text):
-                match = self.matcher.match(chunk.text, col)
-                if match is None:
-                    raise LexicalError(
-                        SrcPos(src_name, chunk.line_id, col),
-                        chunk.text)
-                token_name = match.lastgroup
-                value = match.group(token_name)
-                token_name = self.synonyms.get(token_name, token_name)
-                keyword_token = self.keywords.get((token_name, value))
-                if keyword_token is not None:
-                    # this token is not a word, but keyword
-                    token_name = keyword_token
-                if token_name not in self.space_tokens:
-                    yield _Token(
-                        token_name,
-                        SrcPos(src_name, chunk.line_id, chunk.start_pos + col + 1),
-                        value)
-                col = match.end()
+            while col < len(text_line):
+                if cur_span_symbol is not None:
+                    # we are inside 'span' token (for example inside
+                    # multi-line comment)
+                    match = span_body_matcher.match(text_line, col)
+                    if match is None:
+                        # end of the span is not found on this line of text
+                        cur_span_lines.append(text_line[col:])
+                        col = len(text_line)
+                    else:
+                        # end of span found!
+                        last_line = match.group(match.lastgroup)
+                        cur_span_lines.append(last_line)
+                        value = "\n".join(cur_span_lines)
+                        token_name = self.synonyms.get(
+                            cur_span_symbol, cur_span_symbol)
+                        yield _Token(
+                            token_name,
+                            SrcPos(src_name, line_id, col + 1),
+                            value)
+                        cur_span_symbol = None
+                        cur_span_start_text = None
+                        cur_span_start_pos = None
+                        cur_span_lines = None
+                        span_body_matcher = None
+                        col = match.end()
+                else:
+                    # we are not inside 'span', so usual token is expected
+                    match = self.matcher.match(text_line, col)
+                    if match is None:
+                        raise LexicalError(SrcPos(src_name, line_id, col), text_line)
+                    token_name = match.lastgroup
+                    value = match.group(token_name)
+
+                    span_body_matcher = self.span_matchers.get(token_name)
+                    if span_body_matcher is not None:
+                        # we found start of the 'span' token. Something
+                        # like opening of a comment '/*'.
+                        cur_span_symbol = token_name
+                        cur_span_start_text = text_line
+                        cur_span_start_pos = (line_id, col)
+                        cur_span_lines = []
+                    else:
+                        token_name = self.synonyms.get(token_name, token_name)
+                        keyword_token = self.keywords.get((token_name, value))
+                        if keyword_token is not None:
+                            # this token is not a word, but keyword
+                            token_name = keyword_token
+                        yield _Token(
+                            token_name,
+                            SrcPos(src_name, line_id, col + 1),
+                            value)
+                    col = match.end()
+
+        if cur_span_symbol is not None:
+            raise LexicalError(
+                SrcPos(src_name, cur_span_start_pos[0], cur_span_start_pos[1]),
+                cur_span_start_text,
+                "span is never closed")
+
         yield _Token(
             self.end_token_name, None, None)
 
-    def _strip_comments(self, enumereted_lines, src_name):
-        # remove comments from source text, yield _Tokenizer._Chunk
-
-        cur_ml_comment_end = None
-        cur_ml_comment_start_pos = None
-        cur_ml_start_line_text = None
-        for line_id, text in enumereted_lines:
-            cur_pos = 0
-            while cur_pos < len(text):
-                if cur_ml_comment_end is not None:
-                    end_pos = text.find(cur_ml_comment_end, cur_pos)
-                    if end_pos == -1:
-                        # the comment continues till end of line
-                        cur_pos = len(text)
-                        continue
-                    cur_pos = end_pos + len(cur_ml_comment_end)
-                    cur_ml_comment_end = None
-                    cur_ml_comment_start_pos = None
-                    cur_ml_start_line_text = None
-                    continue
-                # we are not inside a comment. Find comment start
-                comments_pos = {}
-                for start_comment_text, end_comment_text in self.ml_comments.items():
-                    start = text.find(start_comment_text, cur_pos)
-                    if start != -1:
-                        comments_pos[start] = (start_comment_text, end_comment_text)
-                for start_comment_text in self.eol_comments:
-                    start = text.find(start_comment_text, cur_pos)
-                    if start != -1:
-                        comments_pos[start] = (start_comment_text, None)
-                if comments_pos:
-                    comment_start = min(comments_pos.keys())
-                    start_comment_text, end_comment_text = comments_pos[comment_start]
-                    if comment_start > cur_pos:
-                        # report chunk of uncommented text
-                        yield _Tokenizer._Chunk(
-                            line_id, cur_pos, text[cur_pos:comment_start], text)
-                    if end_comment_text is None:
-                        # comment continues till end of line
-                        cur_pos = len(text)
-                        break
-                    # comment continues till end_comment_text
-                    cur_pos = comment_start + len(start_comment_text)
-                    cur_ml_comment_end = end_comment_text
-                    cur_ml_comment_start_pos = (line_id, comment_start)
-                    cur_ml_start_line_text = text
-                else:
-                    # comments were not detected
-                    if cur_pos == 0:
-                        yield _Tokenizer._Chunk(line_id, 0, text, text)
-                    else:
-                        yield _Tokenizer._Chunk(
-                            line_id, cur_pos, text[cur_pos:], text)
-                    cur_pos = len(text)
-        if cur_ml_comment_end is not None:
-            raise LexicalError(
-                SrcPos(
-                    src_name,
-                    cur_ml_comment_start_pos[0],
-                    cur_ml_comment_start_pos[1],
-                ),
-                cur_ml_start_line_text,
-                "comment is never closed")
+    @classmethod
+    def _prepare_span_matchers(cls, span_matchers, matcher):
+        # process 'span_matchers' argument of constructor: prepare
+        # regex expressions for multiline tokens.
+        result = {}
+        if span_matchers is None:
+            return result
+        norm_re_group_names = set(matcher.groupindex.keys())
+        for open_token_name, re_str in span_matchers.items():
+            if open_token_name not in norm_re_group_names:
+                raise GrammarError(
+                    f"unknows opening symbol '{open_token_name}' specified "
+                    f"in 'span_matchers'. Each key of this dict must be a "
+                    f"name of the re group specified in tokenizer scrting")
+            result[open_token_name] = re.compile(re_str, re.VERBOSE)
+        return result
 
 
 class TElementCleanupRules:
@@ -1098,16 +1077,16 @@ class LLParser:
             tokenizer_str,
             *,
             productions,
-            comments=None,
+            span_matchers=None,
             synonyms=None,
             keywords=None,
-            space_tokens=None,
+            skip_tokens=None,
             start_symbol_name='E',
             keep_symbols=None,
             lists=None,
             maps=None,
         ):
-        """Constructor of LLParser.
+        r"""Constructor of LLParser.
 
         Arguments:
         - tokenizer_str: re pattern for tokenizer. Example:
@@ -1125,13 +1104,17 @@ class LLParser:
             combinations indicate are reported as token of other type. For
             example:
             {('WORD', 'class'): 'CLASS'}
-        - space_tokens: set of names of tokens which should be skipped - usually
-            tokens corresponding to empty spaces.
+        - skip_tokens: set of names of tokens which should be skipped - usually
+            tokens corresponding to empty spaces and comments. By default
+            'SPACE' and 'COMMENT' tokens are skipped.
         - start_symbol_name: name of the symbol
-        - comments: optional list of comments indicators. Each item of the list
-            can be either str or (str, str). Examples:
-            - '//'  - indicates comment to end of line
-            - ('/*', '*/')  - specifies start and end of comment section
+        - span_matchers: disctionary of regexps for processing 'span' tokens - tokens
+            whose values may span between several lines. For example, to match
+            c-style comments (/* ....... */) the tokenizer_str should contain
+            group for 'opening' symbols ("|(?P<COMMENT_ML>/\*)") and the
+            span_matchers dictionary should contain corresponding mask for "anything
+            till '*/' symbols combination":
+            {'COMMENT_ML': r"(?P<END_COMMENT>(\*[^/]|[^*])*)\*/"}
         - keep_symbols: names of symbols which should not be cleaned-up during
             optional cleanup procedure. Check doc of 'cleanup' method.
         - lists: rules for cleanup. The cleanup procedure replaces subtree
@@ -1143,10 +1126,22 @@ class LLParser:
         """
         self.tokenizer = _Tokenizer(
             tokenizer_str,
-            comments=comments,
-            synonyms=synonyms, keywords=keywords, space_tokens=space_tokens)
+            span_matchers=span_matchers,
+            synonyms=synonyms, keywords=keywords)
 
         self.terminals = self.tokenizer.get_all_token_names()
+
+        if skip_tokens is None:
+            # by default we skip 'SPACE' and 'COMMENT' tokens
+            self.skip_tokens = {
+                t for t in ['SPACE', 'COMMENT'] if t in self.terminals}
+        else:
+            self.skip_tokens = set(skip_tokens)
+            unexpected = self.skip_tokens - self.terminals
+            if unexpected:
+                raise GrammarError(
+                    f"uknown token names specified in 'skip_tokens' "
+                    f"arg: {unexpected}")
 
         self.start_symbol_name = start_symbol_name
         self.prods_map, self._seq_symbols = self._create_productions(
@@ -1196,7 +1191,10 @@ class LLParser:
 
     def parse(self, text, *, src_name="input text", debug=False, do_cleanup=True):
         """Parse the text."""
-        tokens = list(self.tokenizer.tokenize(text, src_name))
+        tokens = [
+            t for t in self.tokenizer.tokenize(text, src_name)
+            if t.name not in self.skip_tokens
+        ]
 
         parse_stack = []  # [_StackElement, ]
         def _put_on_stack(stack_elem):
