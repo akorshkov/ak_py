@@ -677,14 +677,14 @@ class TElement:
 
         elem_no_squash = _for_choice
 
-        if self.is_leaf():
-            return elem_no_squash
-
         if self.name in rules.lists:
             self.reduce_list(rules, rules.lists[self.name])
             return elem_no_squash
         elif self.name in rules.maps:
             self.reduce_map(rules, rules.maps[self.name])
+            return elem_no_squash
+
+        if self.is_leaf():
             return elem_no_squash
 
         values = []
@@ -743,12 +743,17 @@ class TElement:
     def reduce_list(self, rules, list_properties):
         """Transform self.value subtree into a [TElement, ] of list values."""
         open_token, delimiter, tail_symbol, close_token = list_properties
-        assert isinstance(self.value, (list, tuple))
 
         self._is_leaf = True
 
         if self.value is None:
+            if open_token is None:
+                # looks like in most cases if the list has no explicit open/close
+                # brackets then "no values" is an empty list, not None.
+                self.value = []
             return
+
+        assert isinstance(self.value, (list, tuple))
 
         if open_token is not None:
             assert self.value[0].name == open_token, f"{self=}, {open_token=}"

@@ -1162,12 +1162,9 @@ class TestOptionalLists(unittest.TestCase):
 
         x = self._make_test_parser().parse("10")
         list_tree_elem = x.get_path_elem('LIST_WORDS')
-        # cleanup operation removes LIST_WORDS element because it's value is None
-        self.assertIsNone(
-            list_tree_elem,
-            f"parsed tree:\n{x}\ntree element corresponding to list:"
-            f"\n{list_tree_elem}"
-        )
+        # LIST_WORDS has no explicit open/close tokens. In this case it is more
+        # convenient to have it's value not None, but []
+        self.assertEqual(list_tree_elem.value, [])
 
 
 class TestOptionalListsWithBracers(unittest.TestCase):
