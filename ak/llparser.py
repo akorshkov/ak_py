@@ -108,7 +108,11 @@ class LexicalError(Error):
 
 class GrammarError(Error):
     """Incorrect grammar structure."""
-    pass
+    def __init__(self, parser_summary, msg):
+        self.parser_summary = parser_summary
+        if self.parser_summary is not None:
+            msg = "\n".join(self.parser_summary.gen_detailed_descr()) + f"\n{msg}"
+        super().__init__(msg)
 
 
 class GrammarIsRecursive(GrammarError):
@@ -117,12 +121,12 @@ class GrammarIsRecursive(GrammarError):
     Means that when we expand some symbol X we can come to situation when no
     tokens consumed, but the next symbol to expand is the same symbol X.
     """
-    def __init__(self, cycle_data, nullables):
+    def __init__(self, parser_summary, cycle_data, nullables):
         msg = f"grammar is recursive:\n{nullables=}\n" + "\n".join(
             self._mk_prod_descr(cycle_element)
             for cycle_element in cycle_data
         )
-        super().__init__(msg)
+        super().__init__(parser_summary, msg)
 
     @classmethod
     def _mk_prod_descr(cls, cycle_element):
@@ -309,142 +313,145 @@ class _Tokenizer:
         for open_token_name, re_str in span_matchers.items():
             if open_token_name not in norm_re_group_names:
                 raise GrammarError(
+                    None,
                     f"unknows opening symbol '{open_token_name}' specified "
                     f"in 'span_matchers'. Each key of this dict must be a "
-                    f"name of the re group specified in tokenizer scrting")
+                    f"name of the re group specified in tokenizer string"
+                )
             result[open_token_name] = re.compile(re_str, re.VERBOSE)
         return result
 
 
-class TElementCleanupRules_Old:
-    """Rules for transforming TElement tree.
+#class TElementCleanupRules_Old:
+#    """Rules for transforming TElement tree.
+#
+#    Results of the parsing are presented in a form of a tree of TElement.
+#    The tree can be simplified (for example, subtree corresponding to a list
+#    can be substituted with actual list). This object contains rules of
+#    such transformations.
+#    """
+#
+#    def __init__(
+#            self, *,
+#            keep_symbols=None, lists=None, maps=None,
+#            squash_symbols=None, choice_symbols=None,
+#        ):
+#        self.keep_symbols = set() if keep_symbols is None else keep_symbols
+#        self.lists = lists if lists is not None else {}
+#        self.maps = maps if maps is not None else {}
+#
+#        self.squash_symbols = set() if squash_symbols is None else squash_symbols
+#        self.choice_symbols = set() if choice_symbols is None else choice_symbols
+#
+#    def gen_detailed_descr(self):
+#        yield f"keep_symbols: {self.keep_symbols}"
+#        yield f"Lists:"
+#        if self.lists:
+#            for list_rules in self.lists:
+#                yield f"  {list_rules}"
+#        else:
+#            yield f" --"
+#        yield f"Maps:"
+#        if self.maps:
+#            for map_rules in self.maps:
+#                yield f"  {map_rules}"
+#        else:
+#            yield f" --"
+#        yield f"squash symbols: {sorted(self.squash_symbols)}"
+#        yield f"choice symbols: {sorted(self.choice_symbols)}"
+#
+#    def verify_integrity(self, terminals, non_terminals):
+#        """Verify correctness of rules."""
+#
+#        for s in self.keep_symbols:
+#            if s not in terminals and s not in non_terminals:
+#                raise GrammarError(
+#                    f"unknown symbol '{s}' specified in {self.keep_symbols=}")
+#
+#        for s in self.squash_symbols:
+#            if s not in terminals and s not in non_terminals:
+#                raise GrammarError(
+#                    f"unknown symbol '{s}' specified in {self.squash_symbols=}")
+#
+#        for s in self.choice_symbols:
+#            if s not in terminals and s not in non_terminals:
+#                raise GrammarError(
+#                    f"unknown symbol '{s}' specified in {self.choice_symbols=}")
+#
+#        def _verify_is_terminal(symbol, allow_none=False, descr="symbol"):
+#            if symbol in terminals:
+#                return
+#            if symbol is None and allow_none:
+#                return
+#            if symbol in non_terminals:
+#                raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
+#            raise GrammarError(f"{descr} '{symbol}' is unknown")
+#
+#        def _verify_is_non_terminal(symbol, descr="symbol"):
+#            if symbol in non_terminals:
+#                return
+#            if symbol in terminals:
+#                raise GrammarError(f"{descr} '{symbol}' is terminal")
+#            raise GrammarError(f"{descr} '{symbol}' is unknown")
+#
+#        for list_symbol, properties in self.lists.items():
+#            if len(properties) != 4:
+#                raise GrammarError(
+#                    f"invalid cleanup rules for list symbol "
+#                    f"'{list_symbol}': {properties}. \n"
+#                    f"Expected tuple: "
+#                    f"(open_br, delimiter, tail_symbol, close_br)")
+#            open_br, delimiter, tail_symbol, close_br = properties
+#            _verify_is_non_terminal(list_symbol, "list symbol")
+#            _verify_is_non_terminal(tail_symbol, "list tail symbol")
+#            _verify_is_terminal(delimiter, True, "list delimiter symbol")
+#            if open_br is not None:
+#                if close_br is None:
+#                    raise GrammarError(
+#                        f"list open symbol '{open_br}' is not None, "
+#                        f"but close symbol is None")
+#            else:
+#                if close_br is not None:
+#                    raise GrammarError(
+#                        f"list open symbol is None, "
+#                        f"but close symbol '{close_br}' is not None")
+#            _verify_is_terminal(open_br, "list open symbol")
+#            _verify_is_terminal(close_br, "list close symbol")
+#
+#        for map_symbol, properties in self.maps.items():
+#            if len(properties) != 6:
+#                raise GrammarError(
+#                    f"invalid cleanup rules for map symbol "
+#                    f"'{map_symbol}': {properties}. \n"
+#                    f"Expected tuple: "
+#                    f"(open_br, map_elements_name, items_delimiter, "
+#                    f"map_element_name, delimiter, close_br)"
+#                )
+#            (
+#                open_br,
+#                map_elements_name,
+#                items_delimiter,
+#                map_element_name,
+#                delimiter,
+#                close_br
+#            ) = properties
+#            _verify_is_non_terminal(map_elements_name, "map symbol")
+#            _verify_is_non_terminal(map_element_name, "map element symbol")
+#            _verify_is_terminal(open_br, "map open symbol")
+#            _verify_is_terminal(close_br, "map close symbol")
+#            _verify_is_terminal(items_delimiter, "map items_delimiter symbol")
+#            _verify_is_terminal(delimiter, "map delimiter symbol")
+#            if open_br is not None:
+#                if close_br is None:
+#                    raise GrammarError(
+#                        f"map open symbol '{open_br}' is not None, "
+#                        f"but close symbol is None")
+#            else:
+#                if close_br is not None:
+#                    raise GrammarError(
+#                        f"map open symbol is None, "
+#                        f"but close symbol '{close_br}' is not None")
 
-    Results of the parsing are presented in a form of a tree of TElement.
-    The tree can be simplified (for example, subtree corresponding to a list
-    can be substituted with actual list). This object contains rules of
-    such transformations.
-    """
-
-    def __init__(
-            self, *,
-            keep_symbols=None, lists=None, maps=None,
-            squash_symbols=None, choice_symbols=None,
-        ):
-        self.keep_symbols = set() if keep_symbols is None else keep_symbols
-        self.lists = lists if lists is not None else {}
-        self.maps = maps if maps is not None else {}
-
-        self.squash_symbols = set() if squash_symbols is None else squash_symbols
-        self.choice_symbols = set() if choice_symbols is None else choice_symbols
-
-    def gen_detailed_descr(self):
-        yield f"keep_symbols: {self.keep_symbols}"
-        yield f"Lists:"
-        if self.lists:
-            for list_rules in self.lists:
-                yield f"  {list_rules}"
-        else:
-            yield f" --"
-        yield f"Maps:"
-        if self.maps:
-            for map_rules in self.maps:
-                yield f"  {map_rules}"
-        else:
-            yield f" --"
-        yield f"squash symbols: {sorted(self.squash_symbols)}"
-        yield f"choice symbols: {sorted(self.choice_symbols)}"
-
-    def verify_integrity(self, terminals, non_terminals):
-        """Verify correctness of rules."""
-
-        for s in self.keep_symbols:
-            if s not in terminals and s not in non_terminals:
-                raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.keep_symbols=}")
-
-        for s in self.squash_symbols:
-            if s not in terminals and s not in non_terminals:
-                raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.squash_symbols=}")
-
-        for s in self.choice_symbols:
-            if s not in terminals and s not in non_terminals:
-                raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.choice_symbols=}")
-
-        def _verify_is_terminal(symbol, allow_none=False, descr="symbol"):
-            if symbol in terminals:
-                return
-            if symbol is None and allow_none:
-                return
-            if symbol in non_terminals:
-                raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
-            raise GrammarError(f"{descr} '{symbol}' is unknown")
-
-        def _verify_is_non_terminal(symbol, descr="symbol"):
-            if symbol in non_terminals:
-                return
-            if symbol in terminals:
-                raise GrammarError(f"{descr} '{symbol}' is terminal")
-            raise GrammarError(f"{descr} '{symbol}' is unknown")
-
-        for list_symbol, properties in self.lists.items():
-            if len(properties) != 4:
-                raise GrammarError(
-                    f"invalid cleanup rules for list symbol "
-                    f"'{list_symbol}': {properties}. \n"
-                    f"Expected tuple: "
-                    f"(open_br, delimiter, tail_symbol, close_br)")
-            open_br, delimiter, tail_symbol, close_br = properties
-            _verify_is_non_terminal(list_symbol, "list symbol")
-            _verify_is_non_terminal(tail_symbol, "list tail symbol")
-            _verify_is_terminal(delimiter, True, "list delimiter symbol")
-            if open_br is not None:
-                if close_br is None:
-                    raise GrammarError(
-                        f"list open symbol '{open_br}' is not None, "
-                        f"but close symbol is None")
-            else:
-                if close_br is not None:
-                    raise GrammarError(
-                        f"list open symbol is None, "
-                        f"but close symbol '{close_br}' is not None")
-            _verify_is_terminal(open_br, "list open symbol")
-            _verify_is_terminal(close_br, "list close symbol")
-
-        for map_symbol, properties in self.maps.items():
-            if len(properties) != 6:
-                raise GrammarError(
-                    f"invalid cleanup rules for map symbol "
-                    f"'{map_symbol}': {properties}. \n"
-                    f"Expected tuple: "
-                    f"(open_br, map_elements_name, items_delimiter, "
-                    f"map_element_name, delimiter, close_br)"
-                )
-            (
-                open_br,
-                map_elements_name,
-                items_delimiter,
-                map_element_name,
-                delimiter,
-                close_br
-            ) = properties
-            _verify_is_non_terminal(map_elements_name, "map symbol")
-            _verify_is_non_terminal(map_element_name, "map element symbol")
-            _verify_is_terminal(open_br, "map open symbol")
-            _verify_is_terminal(close_br, "map close symbol")
-            _verify_is_terminal(items_delimiter, "map items_delimiter symbol")
-            _verify_is_terminal(delimiter, "map delimiter symbol")
-            if open_br is not None:
-                if close_br is None:
-                    raise GrammarError(
-                        f"map open symbol '{open_br}' is not None, "
-                        f"but close symbol is None")
-            else:
-                if close_br is not None:
-                    raise GrammarError(
-                        f"map open symbol is None, "
-                        f"but close symbol '{close_br}' is not None")
 
 @dataclass(frozen=True)
 class TElemSignature:
@@ -784,22 +791,14 @@ class ProdsTemplate:
             f"{self} is not initialized. Call 'complete_init' "
             f"method to complete initialzation")
 
-    def complete_init(self, result_symbol: str) -> None:
+    def complete_init(self, result_symbol: str, terminals) -> None:
         """!!!"""
         assert self.result_symbol is None, (
             f"{self} is already initialized (with result symbol "
             f"'{self.result_symbol}')")
         self.result_symbol = result_symbol
 
-#    def get_used_tokens(self):
-#        """!!!"""
-#        assert False, f"not implemented in {str(type(self))}"
-#
-#    def get_used_symbols(self):
-#        """!!!"""
-#        assert False, f"not implemented in {str(type(self))}"
-
-    def verify_grammar(self, llparser, nullables):
+    def verify_grammar(self, llparser, nullables, parser_summary):
         pass
 
     def gen_productions(self):
@@ -824,15 +823,35 @@ class ProdSequence(ProdsTemplate):
     CAN_POST_PROCESS_TELEM = False
 
     def __init__(self, *symbols):
+        super().__init__()
         self.symbols = list(symbols)
         self.element_symbol_name = None
 
-    def complete_init(self, result_symbol) -> None:
+    def complete_init(self, result_symbol, terminals) -> None:
         assert result_symbol is not None
-        super().complete_init(result_symbol)
+        super().complete_init(result_symbol, terminals)
         assert self.result_symbol is not None
 
         self.element_symbol_name = f"{self.result_symbol}__ELEMENT"
+
+        # as of now self.symbols may contain special 'AnyTokenExcept' item.
+        # It's time to replace it with actual tokens
+        num_special_items = sum(
+            1 if isinstance(s, AnyTokenExcept) else 0
+            for s in self.symbols)
+        if num_special_items > 1:
+            raise GrammarError(
+                f"production for symbol '{self.result_symbol}' contains "
+                f"{num_special_items} 'AnyTokenExcept' elements. "
+                f"Max allowed number is 1.")
+        elif num_special_items == 1:
+            new_ss = []
+            for s in self.symbols:
+                if isinstance(s, AnyTokenExcept):
+                    new_ss.extend(s.get_tokens(terminals, self.result_symbol))
+                else:
+                    new_ss.append(s)
+            self.symbols = new_ss
 
     def gen_productions(self):
         """!!!!"""
@@ -898,9 +917,9 @@ class ListProds(ProdsTemplate):
         self.list_prods_signatures = None
         self.tail_prods_signatures = None
 
-    def complete_init(self, result_symbol) -> None:
+    def complete_init(self, result_symbol, terminals) -> None:
         assert result_symbol is not None
-        super().complete_init(result_symbol)
+        super().complete_init(result_symbol, terminals)
         assert self.result_symbol is not None
 
         has_brackets = self.open_br is not None
@@ -966,9 +985,10 @@ class ListProds(ProdsTemplate):
             for prod in list_tail_prods
         )
 
-    def verify_grammar(self, llparser, nullables):
+    def verify_grammar(self, llparser, nullables, parser_summary):
         if self.sep_token is None and self.item_symbol in nullables:
             raise GrammarError(
+                parser_summary,
                 f"List item symbol '{self.item_symbol}' is nullable. "
                 f"It is prohibited for lists without separator symbol.")
 
@@ -993,8 +1013,6 @@ class ListProds(ProdsTemplate):
     def gen_productions(self):
         """!!!!"""
         self._ensure_initialized()
-        has_brackets = self.open_br is not None
-        has_separator = self.sep_token is not None
 
         yield self.result_symbol, [
             signature.child_names
@@ -1090,6 +1108,7 @@ class MapProds(ProdsTemplate):
         key_symbol: str, assign_symbol: str, val_symbol: str,
         sep_token: str, close_br: str, *,
         optional=None,
+        allow_final_delimiter=True,
     ):
         assert (open_br is None) == (close_br is None), (
             f"'open_br' and 'close_br' can be None only simultaneously: "
@@ -1113,6 +1132,7 @@ class MapProds(ProdsTemplate):
         self.sep_token = sep_token
         self.close_br = close_br
         self.optional = optional
+        self.allow_final_delimiter = allow_final_delimiter
 
         self.kv_pair_symbol = None
         self.kv_tail_symbol = None
@@ -1121,9 +1141,9 @@ class MapProds(ProdsTemplate):
         self.kv_tail_prods_signatures = None
         self.kv_prod_signature = None
 
-    def complete_init(self, result_symbol) -> None:
+    def complete_init(self, result_symbol, terminals) -> None:
         assert result_symbol is not None
-        super().complete_init(result_symbol)
+        super().complete_init(result_symbol, terminals)
         assert self.result_symbol is not None
 
         has_brackets = self.open_br is not None
@@ -1185,6 +1205,24 @@ class MapProds(ProdsTemplate):
         )
         return signature, positions
 
+    def gen_productions(self):
+        """!!!"""
+        self._ensure_initialized()
+
+        yield self.result_symbol, [
+            signature.child_names
+            for signature in self.map_prods_signatures.keys()
+        ]
+
+        yield self.kv_tail_symbol, [
+            signature.child_names
+            for signature in self.kv_tail_prods_signatures.keys()
+        ]
+
+        yield self.kv_pair_symbol, [
+            tuple(self.kv_prod_signature.child_names)
+        ]
+
     def transform_t_elem(self, t_elem: TElement, cleanuper) -> None:
         """!!!"""
         signature = t_elem.signature()
@@ -1228,10 +1266,12 @@ class MapProds(ProdsTemplate):
     def _parse_kv_pair(self, t_elem: TElement, cleanuper):
         # !!!!!!!
         signature = t_elem.signature()
-        assert signature == self.kv_prod_signature, (
-            f"Unexpected TElement {t_elem} with signature {signature} encountered "
-            f"while processing map's key-value pair. Expected TElement with "
-            f"signature: {self.kv_prod_signature}")
+
+        # !!!!!!!!!!!!!!!!!!!!!!
+        #assert signature == self.kv_prod_signature, (
+        #    f"Unexpected TElement {t_elem} with signature {signature} encountered "
+        #    f"while processing map's key-value pair. Expected TElement with "
+        #    f"signature: {self.kv_prod_signature}")
 
         key_elem = t_elem.value[0]
         val_elem = t_elem.value[2]
@@ -1253,6 +1293,16 @@ class AnyTokenExcept:
     """
     def __init__(self, *tokens):
         self.tokens = tokens
+
+    def get_tokens(self, terminals, for_symbol):
+        """!!! for_symbol """
+        tokens_to_exclude = set(self.tokens)
+        unexpected_tokens = tokens_to_exclude - terminals
+        if unexpected_tokens:
+            raise GrammarError(
+                f"unknown terminal(s) specified in 'AnyTokenExcept' item: "
+                f"of productions of symbol '{for_symbol}': {unexpected_tokens}")
+        return [t for t in terminals if t not in tokens_to_exclude]
 
 
 class _StackElement:
@@ -1314,19 +1364,15 @@ class ParserSummary:
     it's good to have all all the processed data structures.
     """
 
-    def __init__(
-            self, terminals, orig_prods_map, prods_map, parse_table,
-            nullables, first_sest, follow_sets,
-            cleanuper,
-        ):
-        self.terminals = terminals
-        self.orig_prods_map = orig_prods_map
-        self.prods_map = prods_map
-        self.parse_table = parse_table
-        self.nullables = nullables
-        self.first_sest = first_sest
-        self.follow_sets = follow_sets
-        self.cleanuper = cleanuper
+    def __init__(self):
+        self.terminals = None
+        self.orig_prods_map = None
+        self.prods_map = None
+        self.parse_table = None
+        self.nullables = None
+        self.first_sest = None
+        self.follow_sets = None
+        self.cleanuper = None
 
     def gen_detailed_descr(self):
         """Generate lines of human-readable description of the LLParser."""
@@ -1334,42 +1380,68 @@ class ParserSummary:
 
         yield "= Parser summary ="
         yield ""
+        if self.terminals is None:
+            yield "-- no parser data ready yet --"
+            return
         yield f"Terminals: {self.terminals}"
         yield ""
         yield from self._descr_prods_map("Original Productions", self.orig_prods_map)
         yield ""
         yield from self._descr_prods_map("Factorized Productions", self.prods_map)
         yield ""
-        yield "Parse Table:"
-        cur_symbol = None
-        for (symbol, token), prod_rs in self.parse_table.items():
-            if symbol != cur_symbol:
-                yield f"    '{symbol}':"
-                cur_symbol = symbol
-            token_descr = mk_descr_len(token, 10)
-            for prod in prod_rs:
-                yield f"        {token_descr}->{prod.production}"
+
+        if self.parse_table is None:
+            yield "Parse Table: <n/a>"
+        else:
+            yield "Parse Table:"
+            cur_symbol = None
+            for (symbol, token), prod_rs in self.parse_table.items():
+                if symbol != cur_symbol:
+                    yield f"    '{symbol}':"
+                    cur_symbol = symbol
+                token_descr = mk_descr_len(token, 10)
+                for prod in prod_rs:
+                    yield f"        {token_descr}->{prod.production}"
         yield ""
-        yield f"Nullables: {self.nullables}"
-        not_nullables = self.prods_map.keys() - self.nullables
-        yield f"Not Nullables: {not_nullables}"
+
+        if self.nullables is None:
+            yield "Nullables: <n/a>"
+            yield "Not Nullables: <n/a>"
+        else:
+            yield f"Nullables: {self.nullables}"
+            not_nullables = self.prods_map.keys() - self.nullables
+            yield f"Not Nullables: {not_nullables}"
         yield ""
-        yield "FirstSets:"
-        for symbol, firsts in sorted(self.first_sest.items()):
-            yield f"    {mk_descr_len(symbol, 10)}: {sorted(firsts)}"
+
+        if self.first_sest is None:
+            yield "FirstSets: <n/a>"
+        else:
+            yield "FirstSets:"
+            for symbol, firsts in sorted(self.first_sest.items()):
+                yield f"    {mk_descr_len(symbol, 10)}: {sorted(firsts)}"
         yield ""
-        yield "FollowSets:"
-        for symbol, follows in sorted(self.follow_sets.items()):
-            yield f"    {mk_descr_len(symbol, 10)}: {sorted(follows)}"
+
+        if self.follow_sets is None:
+            yield "FollowSets: <n/a>"
+        else:
+            yield "FollowSets:"
+            for symbol, follows in sorted(self.follow_sets.items()):
+                yield f"    {mk_descr_len(symbol, 10)}: {sorted(follows)}"
         yield ""
-        yield "Cleanup Rules:"
-        yield from self.cleanuper.gen_detailed_descr()
+
+        if self.cleanuper is None:
+            yield "Cleanup Rules: <n/a>"
+        else:
+            yield "Cleanup Rules:"
+            yield from self.cleanuper.gen_detailed_descr()
 
     def _descr_prods_map(self, map_name, prods_map):
+        if prods_map is None:
+            yield f"{map_name}: <n/a>"
+            return
         yield f"{map_name}:"
         for symbol, prod_rs in prods_map.items():
             yield ""
-            # yield f"    '{symbol}':"
             for rule in prod_rs:
                 yield f"    {rule}"
 
@@ -1397,8 +1469,7 @@ class LLParser:
             skip_tokens=None,
             start_symbol_name='E',
             keep_symbols=None,
-            lists=None,
-            maps=None,
+            smart_factorization=True,
         ):
         r"""Constructor of LLParser.
 
@@ -1432,12 +1503,6 @@ class LLParser:
 
         - keep_symbols: names of symbols which should not be cleaned-up during
             optional cleanup procedure. Check doc of 'cleanup' method.
-        - lists: rules for cleanup. The cleanup procedure replaces subtree
-            corresponding to list with actual list of values. This argument contains
-            names of tokens wich correspond to list and list elements:
-                {'LIST': ('[', ',', 'OPT_LIST', ']')}
-        - maps: similar to 'lists', but describes maps. Example:
-                {'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),}
         """
         self.tokenizer = _Tokenizer(
             tokenizer_str,
@@ -1445,6 +1510,11 @@ class LLParser:
             synonyms=synonyms, keywords=keywords)
 
         self.terminals = self.tokenizer.get_all_token_names()
+
+        # used only for printing detailed description of the parser
+        self._summary = ParserSummary()
+        self._summary.terminals = self.terminals
+
         bad_terminals = [t for t in self.terminals if '__' in t]
         assert not bad_terminals, (
             f"Invalid terminals names detected: {bad_terminals}. "
@@ -1459,21 +1529,23 @@ class LLParser:
             unexpected = self.skip_tokens - self.terminals
             if unexpected:
                 raise GrammarError(
+                    self._summary,
                     f"uknown token names specified in 'skip_tokens' "
                     f"arg: {unexpected}")
 
         self.start_symbol_name = start_symbol_name
         orig_prods_map, self._seq_symbols, self.prod_templates = (
-            self._create_productions(productions, self.terminals))
+            self._create_productions(productions, self.terminals, self._summary))
+        self._summary.orig_prods_map = orig_prods_map
 
         self.prods_map, self._suffix_symbols = self._factorize_productions(
-            orig_prods_map, self.terminals)
+            orig_prods_map, self.terminals, smart_factorization)
 
-        self.terminals.add(self._END_TOKEN_NAME)
+        self.terminals.add(self._END_TOKEN_NAME)  # !!!!!! move it up!!!!
 
-        self._verify_grammar_structure_part1()
+        self._summary.prods_map = self.prods_map  # !!!!!! move it !!!!
 
-        nullables = self._get_nullables(self.prods_map)
+        self._verify_grammar_structure_part1(self._summary)  # !!!!!! move it !!!!
 
         self.prods_map[self._INIT_PRODUCTION_NAME] = [
             ProdRule(
@@ -1483,41 +1555,24 @@ class LLParser:
             )
         ]
 
-#        squash_symbols, choice_symbols = self._make_squash_data(keep_symbols)
-#
-#        self.cleanup_rules = TElementCleanupRules_Old(
-#            keep_symbols=keep_symbols,
-#            squash_symbols=squash_symbols, choice_symbols=choice_symbols,
-#            lists=lists,
-#            maps=maps,
-#        )
-#        self.cleanup_rules.verify_integrity(
-#            self.terminals,
-#            set(self.prods_map.keys()))
+        nullables = self._get_nullables(self.prods_map)
+        self._summary.nullables = nullables
 
         for prod_template in self.prod_templates.values():
-            prod_template.verify_grammar(self, nullables)
+            prod_template.verify_grammar(self, nullables, self._summary)
 
         self.cleanuper = StdCleanuper.make(self, keep_symbols)
+        self._summary.cleanuper = self.cleanuper
 
         self.parse_table, first_sets, follow_sets = self._make_llone_table(
             self.prods_map, self.terminals, nullables,
             self.start_symbol_name,
         )
+        self._summary.parse_table = self.parse_table
+        self._summary.first_sest = first_sets
+        self._summary.follow_sets = follow_sets
 
-        # used only for printing detailed description of the parser
-        self._summary = ParserSummary(
-            self.terminals,
-            orig_prods_map,
-            self.prods_map,
-            self.parse_table,
-            nullables,
-            first_sets,
-            follow_sets,
-            self.cleanuper,
-        )
-
-        self._verify_grammar_structure_part2(nullables)
+        self._verify_grammar_structure_part2(nullables, self._summary)
 
     def parse(self, text, *, src_name="input text", debug=False, do_cleanup=True):
         """Parse the text."""
@@ -1587,7 +1642,6 @@ class LLParser:
                         print("RAW RESULT:")
                         root.printme()
                     if do_cleanup:
-                        #self.cleanup(root)
                         self.cleanuper.cleanup(root)
                         if debug:
                             print("FINAL RESULT:")
@@ -1669,7 +1723,7 @@ class LLParser:
         """
         return any(len(prods) != 1 for prods in self.parse_table.values())
 
-    def _verify_grammar_structure_part1(self):
+    def _verify_grammar_structure_part1(self, parser_summary):
         # initial verification of grammar structure
         # to be called before parse_table is prepared
         #
@@ -1677,14 +1731,17 @@ class LLParser:
         # can be detected and/or properly reported only after parser is prepared
         if self.start_symbol_name not in self.prods_map:
             raise GrammarError(
+                parser_summary,
                 f"no productions for start symbol '{self.start_symbol_name}'")
 
         if self._END_TOKEN_NAME in self.prods_map:
             raise GrammarError(
+                parser_summary,
                 f"production specified for end symbol '{self._END_TOKEN_NAME}'")
 
         if self._INIT_PRODUCTION_NAME in self.prods_map:
             raise GrammarError(
+                parser_summary,
                 f"production specified explicitely for "
                 f"special symbol '{self._INIT_PRODUCTION_NAME}'")
 
@@ -1693,6 +1750,7 @@ class LLParser:
 
         if bad_tokens:
             raise GrammarError(
+                parser_summary,
                 f"ProdRule(s) specified for terminal symbols {bad_tokens}")
 
         all_prod_symbols = {
@@ -1705,19 +1763,22 @@ class LLParser:
 
         if unknown_symbols:
             raise GrammarError(
+                parser_summary,
                 f"unexpected symbols {unknown_symbols} used in productions")
 
         if self._END_TOKEN_NAME in all_prod_symbols:
             raise GrammarError(
+                parser_summary,
                 f"special end token '{self._END_TOKEN_NAME}' is explicitely "
                 f"used in productions")
 
         if self._INIT_PRODUCTION_NAME in all_prod_symbols:
             raise GrammarError(
+                parser_summary,
                 f"special start symbol '{self._INIT_PRODUCTION_NAME}' is explicitely "
                 f"used in productions")
 
-    def _verify_grammar_structure_part2(self, nullables):
+    def _verify_grammar_structure_part2(self, nullables, parser_summary):
         # verification of grammar structure
         # to be called after parse_table is prepared
 
@@ -1767,7 +1828,8 @@ class LLParser:
                             (s, prod_rules[prod_id], symbol_id)
                             for s, prod_rules, prod_id, symbol_id in stack[i:]
                         ]
-                        raise GrammarIsRecursive(cycle_data, nullables)
+                        raise GrammarIsRecursive(
+                            parser_summary, cycle_data, nullables)
 
                 if cur_symbol in processed_symbols:
                     _next_prod(stack)
@@ -1999,7 +2061,7 @@ class LLParser:
         return fsets
 
     @classmethod
-    def _create_productions(cls, prods_init_data, terminals):
+    def _create_productions(cls, prods_init_data, terminals, parser_summary):
         # constructor helper.
         # create ProdRule objects from productions data specified in constructor
 
@@ -2018,7 +2080,7 @@ class LLParser:
 
                 if isinstance(productions, ProdsTemplate):
                     prods_template = productions
-                    prods_template.complete_init(symbol)
+                    prods_template.complete_init(symbol, terminals)
 
                     yield from prods_template.gen_productions()
 
@@ -2045,12 +2107,12 @@ class LLParser:
                 f"{symbol} already in {prods_map}")
 
             prods_map[symbol] = cls._make_prod_rules_list(
-                symbol, productions, terminals, _sort_n_gen)
+                symbol, productions, terminals, _sort_n_gen, parser_summary)
 
         return prods_map, seq_symbols, prod_templates
 
     @classmethod
-    def _factorize_productions(cls, prods_map, terminals):
+    def _factorize_productions(cls, prods_map, terminals, smart_factorization):
         result_rules = {}
         suffix_symbols = set()
 
@@ -2062,44 +2124,49 @@ class LLParser:
                 result_rules[s] = rr
 
         # !!!!!!! comment
-        suffixes_to_remove = set()
-        for symbol, rr in result_rules.items():
-            new_rules = []
-            for prod_rule in rr:
-                if len(prod_rule.production) != 2:
-                    new_rules.append(prod_rule)
-                    continue
-                first_symbol = prod_rule.production[0] 
-                if first_symbol not in terminals:
-                    new_rules.append(prod_rule)
-                    continue
-                last_symbol = prod_rule.production[1]
-                if last_symbol not in suffix_symbols:
-                    new_rules.append(prod_rule)
-                    continue
-                suffix_productions = result_rules[last_symbol]
-                if len(suffix_productions) > 5:
-                    new_rules.append(prod_rule)
-                    continue
+        if smart_factorization:
+            suffixes_to_remove = set()
+            #for symbol, rr in result_rules.items():
+            for symbol, rr in sorted(
+                result_rules.items(), key=lambda kv: -len(kv[0])
+            ):
+                # !!!! sort by length to process suffixes first
+                new_rules = []
+                for prod_rule in rr:
+                    if len(prod_rule.production) != 2:
+                        new_rules.append(prod_rule)
+                        continue
+                    first_symbol = prod_rule.production[0] 
+                    if first_symbol not in terminals:
+                        new_rules.append(prod_rule)
+                        continue
+                    last_symbol = prod_rule.production[1]
+                    if last_symbol not in suffix_symbols:
+                        new_rules.append(prod_rule)
+                        continue
+                    suffix_productions = result_rules[last_symbol]
+                    if len(suffix_productions) > 5:
+                        new_rules.append(prod_rule)
+                        continue
 
-                for suffix_rule in suffix_productions:
-                    new_rules.append(
-                        tuple([first_symbol] + list(suffix_rule.production))
-                    )
-                suffixes_to_remove.add(last_symbol)
+                    for suffix_rule in suffix_productions:
+                        new_rules.append(
+                            tuple([first_symbol] + list(suffix_rule.production))
+                        )
+                    suffixes_to_remove.add(last_symbol)
 
-            if len(rr) != len(new_rules):
-                final_new_rules = []
-                for i, r in enumerate(new_rules):
-                    if isinstance(r, ProdRule):
-                        final_new_rules.append(ProdRule(symbol, r.production, i))
-                    else:
-                        final_new_rules.append(ProdRule(symbol, r, i))
-                rr[:] = final_new_rules
+                if len(rr) != len(new_rules):
+                    final_new_rules = []
+                    for i, r in enumerate(new_rules):
+                        if isinstance(r, ProdRule):
+                            final_new_rules.append(ProdRule(symbol, r.production, i))
+                        else:
+                            final_new_rules.append(ProdRule(symbol, r, i))
+                    rr[:] = final_new_rules
 
-        for s in suffixes_to_remove:
-            del result_rules[s]
-            suffix_symbols.remove(s)
+            for s in suffixes_to_remove:
+                del result_rules[s]
+                suffix_symbols.remove(s)
 
         return result_rules, suffix_symbols
 
@@ -2205,7 +2272,9 @@ class LLParser:
         return group_prod_rule, aux_symbols_prod_rules
 
     @staticmethod
-    def _make_prod_rules_list(symbol, productions, terminals, sort_n_gen):
+    def _make_prod_rules_list(
+        symbol, productions, terminals, sort_n_gen, parser_summary,
+    ):
         # Constructor helper. Creates list of ProdRule objects from the
         # productions data specified as consctructor argument.
         #
@@ -2220,22 +2289,18 @@ class LLParser:
                 result.append(ProdRule(symbol, production, next(sort_n_gen)))
             elif isinstance(production, list):
                 raise GrammarError(
+                    parser_summary,
                     f"invalid production: {production}. "
                     f"It must be a tuple, not a list")
             elif isinstance(production, AnyTokenExcept):
                 if special_token_encountered:
                     raise GrammarError(
+                        parser_summary,
                         f"productions for symbol '{symbol}' contain several "
                         f"elemens of type 'AnyTokenExcept'. Only one such "
                         f"element is allowed")
                 special_token_encountered = True
-                tokens_to_exclude = set(production.tokens)
-                unexpected_tokens = tokens_to_exclude - terminals
-                if unexpected_tokens:
-                    raise GrammarError(
-                        f"unknown terminal(s) specified in 'AnyTokenExcept' item "
-                        f"of productions of symbol '{symbol}': {unexpected_tokens}")
-                for t in terminals - tokens_to_exclude:
+                for t in production.get_tokens(terminals, symbol):
                     result.append(
                         ProdRule(symbol, (t, ), next(sort_n_gen))
                     )
@@ -2416,9 +2481,12 @@ class StdCleanuper:
                 for_choice = t_elem.name in self.choice_symbols,
             )
 
-            if child_elem.value is not None or child_elem.name in self.keep_symbols:
-                values.append(child_elem)
-                values_no_squash.append(child_no_squash)
+            #if child_elem.value is not None or child_elem.name in self.keep_symbols:
+            #    values.append(child_elem)
+            #    values_no_squash.append(child_no_squash)
+
+            values.append(child_elem)
+            values_no_squash.append(child_no_squash)
 
         if not values:
             t_elem.value = None

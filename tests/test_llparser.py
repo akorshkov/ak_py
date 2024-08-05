@@ -223,19 +223,20 @@ class TestSquashing(unittest.TestCase):
                 # this production will be different in different tests
                 'C': c_productions,
                 # list-releated productions
-                'LIST': [
-                    ('[', 'LIST_TAIL', ']'),
-                ],
-                'LIST_TAIL': [
-                    ('WORD', 'LIST_TAIL'),
-                    None,
-                ],
+                'LIST': LLParser.ListProds('[', 'WORD', None, ']'),
+                #'LIST': [
+                #    ('[', 'LIST_TAIL', ']'),
+                #],
+                #'LIST_TAIL': [
+                #    ('WORD', 'LIST_TAIL'),
+                #    None,
+                #],
                 # non-trivial production
                 'OBJECT': [
                     ('<', 'WORD', '>'),
                 ],
             },
-            lists = {'LIST': ('[', None, 'LIST_TAIL', ']')},
+            #lists = {'LIST': ('[', None, 'LIST_TAIL', ']')},
             keep_symbols=keep_symbols,
         )
 
@@ -479,14 +480,15 @@ class TestSquashingInList(unittest.TestCase):
                 'E': [
                     ('LIST',),
                 ],
-                'LIST': [
-                    ('[', 'LIST_TAIL', ']'),
-                ],
-                'LIST_TAIL': [
-                    ('LIST_ITEM', ',', 'LIST_TAIL'),
-                    ('LIST_ITEM', ),
-                    None,
-                ],
+                'LIST': LLParser.ListProds('[', 'LIST_ITEM', ',', ']'),
+                #'LIST': [
+                #    ('[', 'LIST_TAIL', ']'),
+                #],
+                #'LIST_TAIL': [
+                #    ('LIST_ITEM', ',', 'LIST_TAIL'),
+                #    ('LIST_ITEM', ),
+                #    None,
+                #],
                 'LIST_ITEM': [
                     ('WORD', ),
                     ('LIST', ),
@@ -502,9 +504,9 @@ class TestSquashingInList(unittest.TestCase):
                 ],
             },
             keep_symbols=keep_symbols,
-            lists={
-                'LIST': ('[', ',', 'LIST_TAIL', ']'),
-            },
+            #lists={
+            #    'LIST': ('[', ',', 'LIST_TAIL', ']'),
+            #},
         )
         return parser
 
@@ -569,10 +571,11 @@ class TestParsingClasslookingObj(unittest.TestCase):
                 'E': [
                     ('CLASSES_LIST', ),
                 ],
-                'CLASSES_LIST': [
-                    ('CLASS', 'CLASSES_LIST'),
-                    None,
-                ],
+                'CLASSES_LIST': LLParser.ListProds(None, 'CLASS', None, None),
+                #'CLASSES_LIST': [
+                #    ('CLASS', 'CLASSES_LIST'),
+                #    None,
+                #],
                 'CLASS': [
                     ('$CLASS', 'OBJ_NAME', 'OPT_PARENT', '{', 'CONTENTS', '}', ';'),
                 ],
@@ -587,9 +590,9 @@ class TestParsingClasslookingObj(unittest.TestCase):
                     ('WORD', ),
                 ],
             },
-            lists={
-                'CLASSES_LIST': (None, ';', 'CLASSES_LIST', None),
-            },
+            #lists={
+            #    'CLASSES_LIST': (None, ';', 'CLASSES_LIST', None),
+            #},
             keep_symbols=keep_symbols,
         )
 
@@ -740,7 +743,7 @@ class TestArithmeticsParser(unittest.TestCase):
         self.assertEqual(('SLAG', 'WORD'), x.value[0].signature())
         self.assertEqual("aa", x.value[0].value[0].value)
 
-        parser.cleanup(x)
+        parser.cleanuper.cleanup(x)
         self.assertTrue(isinstance(x, TElement), f"{type(x)}")
         self.assertEqual(('E', 'SLAG', ), x.signature())
         self.assertEqual('aa', x.get_path_val('SLAG.WORD'))
@@ -1073,23 +1076,14 @@ class TestOptionalListParsers(unittest.TestCase):
         self.assertEqual(3, len(the_list), f"parsed tree:\n{x}")
 
     def test_missing_list(self):
-        """The list is not present => element removed from result tree."""
+        """The list is not present => element has None value."""
 
-        x = self._make_test_parser().parse("10", do_cleanup=False)
+        x = self._make_test_parser().parse("10")
         list_tree_elem = x.get_path_elem('LIST_WORDS')
         self.assertIsInstance(list_tree_elem, TElement, f"parsed tree:\n{x}")
         # LIST_WORDS is nullable, it is exapnded to None, so, the list is not
         # present in source, so, the value is None
         self.assertIsNone(list_tree_elem.value, f"parsed tree:\n{x}")
-
-        x = self._make_test_parser().parse("10")
-        list_tree_elem = x.get_path_elem('LIST_WORDS')
-        # cleanup operation removes LIST_WORDS element because it's value is None
-        self.assertIsNone(
-            list_tree_elem,
-            f"parsed tree:\n{x}\ntree element corresponding to list:"
-            f"\n{list_tree_elem}"
-        )
 
     def test_empty_list(self):
         """The list is empty => element is still present in result."""
@@ -1238,14 +1232,15 @@ class TestMapGrammar(unittest.TestCase):
                 'E': [
                     ('VALUE', ),
                 ],
-                'LIST': [
-                    ('[', 'LIST_ITEMS_TAIL', ']'),
-                ],
-                'LIST_ITEMS_TAIL': [
-                    ('LIST_ITEM', ',', 'LIST_ITEMS_TAIL'),
-                    ('LIST_ITEM', ),
-                    None,
-                ],
+                'LIST': LLParser.ListProds('[', 'LIST_ITEM', ',', ']'),
+                #'LIST': [
+                #    ('[', 'LIST_ITEMS_TAIL', ']'),
+                #],
+                #'LIST_ITEMS_TAIL': [
+                #    ('LIST_ITEM', ',', 'LIST_ITEMS_TAIL'),
+                #    ('LIST_ITEM', ),
+                #    None,
+                #],
                 'LIST_ITEM': [
                     ('VALUE', ),
                     None,
@@ -1259,24 +1254,25 @@ class TestMapGrammar(unittest.TestCase):
                 'OBJECT': [
                     ('<', 'VALUE', '>'),
                 ],
-                'MAP': [
-                    ('{', 'MAP_ELEMENTS', '}'),
-                ],
-                'MAP_ELEMENTS': [
-                    ('MAP_ELEMENT', ',', 'MAP_ELEMENTS'),
-                    ('MAP_ELEMENT', ),
-                    None,
-                ],
-                'MAP_ELEMENT': [
-                    ('WORD', ':', 'VALUE'),
-                ],
+                'MAP': LLParser.MapProds('{', 'WORD', ':', 'VALUE', ',', '}'),
+                #'MAP': [
+                #    ('{', 'MAP_ELEMENTS', '}'),
+                #],
+                #'MAP_ELEMENTS': [
+                #    ('MAP_ELEMENT', ',', 'MAP_ELEMENTS'),
+                #    ('MAP_ELEMENT', ),
+                #    None,
+                #],
+                #'MAP_ELEMENT': [
+                #    ('WORD', ':', 'VALUE'),
+                #],
             },
-            lists={
-                'LIST': ('[', ',', 'LIST_ITEMS_TAIL', ']'),
-            },
-            maps={
-                'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),
-            },
+            #lists={
+            #    'LIST': ('[', ',', 'LIST_ITEMS_TAIL', ']'),
+            #},
+            #maps={
+            #    'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),
+            #},
             keep_symbols=keep_symbols,
         )
 
@@ -1302,14 +1298,14 @@ class TestMapGrammar(unittest.TestCase):
         self.assertIsInstance(x, TElement)
         self.assertEqual(x.name, 'E', x.signature())
 
-        expected_descr = (
+        expected_descr = set([
             "E:",
             "  MAP: {",
-            "    b: []",
             "    a: {}",
+            "    b: []",
             "  }",
-        )
-        actual_descr = tuple(f"{x}".split('\n'))
+        ])
+        actual_descr = set(f"{x}".split('\n'))
         self.assertEqual(expected_descr, actual_descr)
 
     def test_list_containing_obj(self):
@@ -1456,7 +1452,7 @@ class TestMapGrammar(unittest.TestCase):
         clone_x_descr = str(cloned_x)
         self.assertEqual(orig_x_descr, clone_x_descr)
 
-        parser.cleanup(x)
+        parser.cleanuper.cleanup(x)
         # make sure cleanup of the tree does not affect the clone
         new_clone_descr = str(cloned_x)
         self.assertEqual(clone_x_descr, new_clone_descr)
@@ -1494,8 +1490,7 @@ class TestSequenceProductions(unittest.TestCase):
                     ('SEQUENCE', ';'),
                 ],
                 'SEQUENCE': LLParser.ProdSequence(
-                    ('Val_k', ),
-                    ('L', ),
+                    'Val_k', 'L',
                 ),
                 'L': [
                     ('Val_l', ),
@@ -1550,13 +1545,14 @@ class TestBulkProductions(unittest.TestCase):
                 'E': [
                     ('LIST', ),
                 ],
-                'LIST': [
-                    ('[', 'LIST_TAIL', ']'),
-                ],
-                'LIST_TAIL': [
-                    ('LIST_ITEM', 'LIST_TAIL'),
-                    None,
-                ],
+                'LIST': LLParser.ListProds('[', 'LIST_ITEM', None, ']'),
+                #'LIST': [
+                #    ('[', 'LIST_TAIL', ']'),
+                #],
+                #'LIST_TAIL': [
+                #    ('LIST_ITEM', 'LIST_TAIL'),
+                #    None,
+                #],
                 'LIST_ITEM': [
                     LLParser.AnyTokenExcept('Val_k', '<'),
                     ('K', ),
@@ -1565,7 +1561,7 @@ class TestBulkProductions(unittest.TestCase):
                     ('<', 'Val_k', '>'),
                 ],
             },
-            lists = {'LIST': ('[', None, 'LIST_TAIL', ']')},
+            #lists = {'LIST': ('[', None, 'LIST_TAIL', ']')},
         )
 
         # 01 parse list of tokens
@@ -1615,7 +1611,7 @@ class TestBulkProductions(unittest.TestCase):
                     ('SEQUENCE', ';'),
                 ],
                 'SEQUENCE': LLParser.ProdSequence(
-                    ('Val_k', ),
+                    'Val_k',
                     LLParser.AnyTokenExcept('Val_k', 'Val_l'),
                 ),
             },
@@ -1859,7 +1855,7 @@ class TestAmbiguousGrammar(unittest.TestCase):
 
     def test_nonll1_grammar_04(self):
         """Grammar is not ll1. More complicated case."""
-        parser = LLParser(
+        mk_parser = lambda smart_factorization: LLParser(
             r"""
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
@@ -1886,23 +1882,30 @@ class TestAmbiguousGrammar(unittest.TestCase):
                     ('val_m', 'val_k', 'val_m'),
                 ],
             },
+            smart_factorization=smart_factorization,
         )
+
+        parser_unambig = mk_parser(False)
+        self.assertTrue(not parser_unambig.is_ambiguous())
+
+        parser_ambig = mk_parser(True)
+        self.assertTrue(parser_ambig.is_ambiguous())
 
         words = lambda root_t_elem: [
             t_elem.value for t_elem in root_t_elem.get_path_val('B')]
 
-        self.assertTrue(not parser.is_ambiguous())
-        x = parser.parse("k l FIN")
-        self.assertEqual(words(x), ['k', 'l'])
+        for parser in (parser_ambig, parser_unambig):
+            x = parser.parse("k l FIN")
+            self.assertEqual(words(x), ['k', 'l'])
 
-        x = parser.parse("k n FIN")
-        self.assertEqual(words(x), ['k', 'n'])
+            x = parser.parse("k n FIN")
+            self.assertEqual(words(x), ['k', 'n'])
 
-        x = parser.parse("k l m FIN")
-        self.assertEqual(words(x), ['k', 'l', 'm'])
+            x = parser.parse("k l m FIN")
+            self.assertEqual(words(x), ['k', 'l', 'm'])
 
-        x = parser.parse("m k l FIN")
-        self.assertEqual(words(x), ['m', 'k', 'l'])
+            x = parser.parse("m k l FIN")
+            self.assertEqual(words(x), ['m', 'k', 'l'])
 
-        x = parser.parse("m k m FIN")
-        self.assertEqual(words(x), ['m', 'k', 'm'])
+            x = parser.parse("m k m FIN")
+            self.assertEqual(words(x), ['m', 'k', 'm'])
