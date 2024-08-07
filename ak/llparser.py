@@ -1,67 +1,85 @@
-r"""LL1 parser with some ambiguities handling.
+"""LL parser with some ambiguities handling.
 
-1. Main difference from LL1 parser is that it allowes ambiguities.
-Parsing table may contain several matching productions for a pair:
-(SYMBOL, next_token) -> (A, B, C)
-                        (X, Y, Z)
-If matching process fails for the first production, parsing process will
-roll back and next production will be attempted. First successfully
-matched production will be used.
+Main difference from LL1 parser is that it allowes ambiguities.
 
-So, it is possible to use following productions for symbol 'A':
-A: [
-    (X, Y, Z),
-    (X, Y),
-]
-
-2. Second difference is that if for some symbol there are several consequtive
-productions with same prefix, grammar will be automatically transformed:
-A: [                  =>  A: [                  A__S00: [
-    (X, Y, A, B),     =>      (X, Y, A__S00),       (A, B),
-    (X, Y, C, D),     =>  ]                         (C, D),
-]                                               ]
-This transformation may remove ambiguities.
-
-Example of usage:
-
-parser = LLParser(
-    r'''
-    (?P<SPACE>\s+)
-    |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
-    |(?P<NUMBER>[0-9]+)
-    |(?P<BR_OPEN>\[)
-    |(?P<BR_CLOSE>\])
-    ''',
-    synonyms={
-        'BR_OPEN': '[',
-        'BR_CLOSE': ']',
-    },
-    productions={
-        'E': [
-            ('LIST_WORDS', 'NUMBER'),
-        ],
-        'LIST_WORDS': [
-            ('[', 'LIST_WORDS_TAIL', ']'),
-            None,
-        ],
-        'LIST_WORDS_TAIL': [
-            ('WORD', 'LIST_WORDS_TAIL'),
-            None,
-        ],
-    },
-    lists={
-        'LIST_WORDS': ('[', None, 'LIST_WORDS_TAIL', ']'),
-    }
-)
-
-x = parser.parse("[a b c] 10")  # TElement
-print(str(x))
+- LLParser: the parser. Transforms text into tree of TElement objects.
+- TElement: element of the tree created as a result of parsing
+- ListProds: template of production rules, which can be used to parse lists
+- MapProds: template of production rules, which can be used to parse maps
+- ProdSequence: template of productin rules for "sequence of given symbols"
+- AnyTokenExcept: helper used to create production rules for "any teminal
+    symbols, except specified ones"
+- StdCleanuper: used by LLParser by default for post-processing parsed TElement tree.
 """
+
+# More detailed description and example:
+#
+# 1. LLParser allowes ambiguities. That means that
+# parsing table may contain several matching productions for a pair:
+# (SYMBOL, next_token) -> (A, B, C)
+#                         (X, Y, Z)
+# If matching process fails for the first production, parsing process will
+# roll back and next production will be attempted. First successfully
+# matched production will be used.
+#
+# So, it is possible to use following productions for symbol 'A':
+# A: [
+#     (X, Y, Z),
+#     (X, Y),
+# ]
+#
+# 2. LLParser automatically uses factorization to transform given grammar into
+# equivalent, but more efficient one. If there are several
+# productions with same prefix, grammar will be automatically transformed:
+# A: [                  =>  A: [                  A__S00: [
+#     (X, Y, A, B),     =>      (X, Y, A__S00),       (A, B),
+#     (X, Y, C, D),     =>  ]                         (C, D),
+# ]                                               ]
+# In some cases this transformation may remove ambiguities.
+#
+#
+# Example of usage:
+#
+# parser = LLParser(
+#     r'''
+#     (?P<SPACE>\s+)
+#     |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+#     |(?P<NUMBER>[0-9]+)
+#     |(?P<BR_OPEN>\[)
+#     |(?P<BR_CLOSE>\])
+#     ''',
+#     synonyms={
+#         'BR_OPEN': '[',
+#         'BR_CLOSE': ']',
+#     },
+#     productions={
+#         'E': [
+#             ('LIST_WORDS', 'NUMBER'),
+#         ],
+#         'LIST_WORDS': ListProds('[', 'WORD', None, ']', optional=True),
+#     },
+# )
+#
+# x = parser.parse("[a b c] 10")  # TElement
+# print(str(x))
+#  > E:
+#  >   LIST_WORDS: [
+#  >     a
+#  >     b
+#  >     c
+#  >   ]
+#  >   NUMBER: 10
+#
+# assert x.value[0].name == 'LIST_WORDS'
+# assert x.value[0].value == ['a', 'b', 'c']
+
 
 import re
 from collections import defaultdict
 import collections.abc
+from dataclasses import dataclass
 import itertools
+from typing import Tuple, Self
 import logging
 
 
@@ -106,7 +124,11 @@ class LexicalError(Error):
 
 class GrammarError(Error):
     """Incorrect grammar structure."""
-    pass
+    def __init__(self, parser_summary, msg):
+        self.parser_summary = parser_summary
+        if self.parser_summary is not None:
+            msg = "\n".join(self.parser_summary.gen_detailed_descr()) + f"\n{msg}"
+        super().__init__(msg)
 
 
 class GrammarIsRecursive(GrammarError):
@@ -115,12 +137,12 @@ class GrammarIsRecursive(GrammarError):
     Means that when we expand some symbol X we can come to situation when no
     tokens consumed, but the next symbol to expand is the same symbol X.
     """
-    def __init__(self, cycle_data, nullables):
+    def __init__(self, parser_summary, cycle_data, nullables):
         msg = f"grammar is recursive:\n{nullables=}\n" + "\n".join(
             self._mk_prod_descr(cycle_element)
             for cycle_element in cycle_data
         )
-        super().__init__(msg)
+        super().__init__(parser_summary, msg)
 
     @classmethod
     def _mk_prod_descr(cls, cycle_element):
@@ -307,142 +329,38 @@ class _Tokenizer:
         for open_token_name, re_str in span_matchers.items():
             if open_token_name not in norm_re_group_names:
                 raise GrammarError(
+                    None,
                     f"unknows opening symbol '{open_token_name}' specified "
                     f"in 'span_matchers'. Each key of this dict must be a "
-                    f"name of the re group specified in tokenizer scrting")
+                    f"name of the re group specified in tokenizer string"
+                )
             result[open_token_name] = re.compile(re_str, re.VERBOSE)
         return result
 
 
-class TElementCleanupRules:
-    """Rules for transforming TElement tree.
+@dataclass(frozen=True)
+class TElemSignature:
+    """Info about TElement name and names of it's children."""
+    name: str
+    child_names: Tuple[str, ...]
 
-    Results of the parsing are presented in a form of a tree of TElement.
-    The tree can be simplified (for example, subtree corresponding to a list
-    can be substituted with actual list). This object contains rules of
-    such transformations.
-    """
+    def __str__(self):
+        prod = ", ".join(f"'{s}'" for s in self.child_names)
+        return f"'{self.name}'[{prod}]"
 
-    def __init__(
-            self, *,
-            keep_symbols=None, lists=None, maps=None,
-            squash_symbols=None, choice_symbols=None,
-        ):
-        self.keep_symbols = set() if keep_symbols is None else keep_symbols
-        self.lists = lists if lists is not None else {}
-        self.maps = maps if maps is not None else {}
+    def __repr__(self):
+        return str(self)
 
-        self.squash_symbols = set() if squash_symbols is None else squash_symbols
-        self.choice_symbols = set() if choice_symbols is None else choice_symbols
-
-    def gen_detailed_descr(self):
-        yield f"keep_symbols: {self.keep_symbols}"
-        yield f"Lists:"
-        if self.lists:
-            for list_rules in self.lists:
-                yield f"  {list_rules}"
-        else:
-            yield f" --"
-        yield f"Maps:"
-        if self.maps:
-            for map_rules in self.maps:
-                yield f"  {map_rules}"
-        else:
-            yield f" --"
-        yield f"squash symbols: {sorted(self.squash_symbols)}"
-        yield f"choice symbols: {sorted(self.choice_symbols)}"
-
-    def verify_integrity(self, terminals, non_terminals):
-        """Verify correctness of rules."""
-
-        for s in self.keep_symbols:
-            if s not in terminals and s not in non_terminals:
-                raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.keep_symbols=}")
-
-        for s in self.squash_symbols:
-            if s not in terminals and s not in non_terminals:
-                raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.squash_symbols=}")
-
-        for s in self.choice_symbols:
-            if s not in terminals and s not in non_terminals:
-                raise GrammarError(
-                    f"unknown symbol '{s}' specified in {self.choice_symbols=}")
-
-        def _verify_is_terminal(symbol, allow_none=False, descr="symbol"):
-            if symbol in terminals:
-                return
-            if symbol is None and allow_none:
-                return
-            if symbol in non_terminals:
-                raise GrammarError(f"{descr} '{symbol}' is non-terminal symbol")
-            raise GrammarError(f"{descr} '{symbol}' is unknown")
-
-        def _verify_is_non_terminal(symbol, descr="symbol"):
-            if symbol in non_terminals:
-                return
-            if symbol in terminals:
-                raise GrammarError(f"{descr} '{symbol}' is terminal")
-            raise GrammarError(f"{descr} '{symbol}' is unknown")
-
-        for list_symbol, properties in self.lists.items():
-            if len(properties) != 4:
-                raise GrammarError(
-                    f"invalid cleanup rules for list symbol "
-                    f"'{list_symbol}': {properties}. \n"
-                    f"Expected tuple: "
-                    f"(open_token, delimiter, tail_symbol, close_token)")
-            open_token, delimiter, tail_symbol, close_token = properties
-            _verify_is_non_terminal(list_symbol, "list symbol")
-            _verify_is_non_terminal(tail_symbol, "list tail symbol")
-            _verify_is_terminal(delimiter, True, "list delimiter symbol")
-            if open_token is not None:
-                if close_token is None:
-                    raise GrammarError(
-                        f"list open symbol '{open_token}' is not None, "
-                        f"but close symbol is None")
-            else:
-                if close_token is not None:
-                    raise GrammarError(
-                        f"list open symbol is None, "
-                        f"but close symbol '{close_token}' is not None")
-            _verify_is_terminal(open_token, "list open symbol")
-            _verify_is_terminal(close_token, "list close symbol")
-
-        for map_symbol, properties in self.maps.items():
-            if len(properties) != 6:
-                raise GrammarError(
-                    f"invalid cleanup rules for map symbol "
-                    f"'{map_symbol}': {properties}. \n"
-                    f"Expected tuple: "
-                    f"(open_token, map_elements_name, items_delimiter, "
-                    f"map_element_name, delimiter, close_token)"
-                )
-            (
-                open_token,
-                map_elements_name,
-                items_delimiter,
-                map_element_name,
-                delimiter,
-                close_token
-            ) = properties
-            _verify_is_non_terminal(map_elements_name, "map symbol")
-            _verify_is_non_terminal(map_element_name, "map element symbol")
-            _verify_is_terminal(open_token, "map open symbol")
-            _verify_is_terminal(close_token, "map close symbol")
-            _verify_is_terminal(items_delimiter, "map items_delimiter symbol")
-            _verify_is_terminal(delimiter, "map delimiter symbol")
-            if open_token is not None:
-                if close_token is None:
-                    raise GrammarError(
-                        f"map open symbol '{open_token}' is not None, "
-                        f"but close symbol is None")
-            else:
-                if close_token is not None:
-                    raise GrammarError(
-                        f"map open symbol is None, "
-                        f"but close symbol '{close_token}' is not None")
+    def __eq__(self, other) -> bool:
+        if isinstance(other, TElemSignature):
+            return self.name == other.name and self.child_names == other.child_names
+        if isinstance(other, (tuple, list)):
+            if len(other) != len(self.child_names) + 1:
+                return False
+            if self.name != other[0]:
+                return False
+            return all(a == b for a, b in zip(self.child_names, other[1:]))
+        return False
 
 
 class TElement:
@@ -509,18 +427,13 @@ class TElement:
         """Check if self is a tree leaf."""
         return self._is_leaf
 
-    def signature(self):
+    def signature(self) -> TElemSignature:
         """Return tuple of symbols names.
 
         First element is self.name, names of child elements follow.
         """
-        signature = [self.name]
-        if not self.is_leaf():
-            signature.extend(
-                x.name if x is not None else None
-                for x in self.value
-            )
-        return tuple(signature)
+        prod_tuple = () if self.is_leaf() else tuple(x.name for x in self.value)
+        return TElemSignature(self.name, prod_tuple)
 
     def clone(self):
         """Create a copy of self."""
@@ -644,316 +557,600 @@ class TElement:
             return default
         return t_elem.value
 
-    def cleanup(
-        self, rules=None, *,
-        keep_symbols=None, lists=None, maps=None,
-        _for_container=False,
-        _for_choice=False,
-    ):
-        """Cleanup parsed tree.
-
-        Syntax tree prepared by parser usually contains lots of nodes
-        which keep little useful information (such as empty productions).
-        This method cleans up the tree. It may be more convenient to get
-        usefull info from it after cleanup.
-        """
-        if rules is not None:
-            assert keep_symbols is None
-            assert lists is None
-            assert maps is None
-        else:
-            rules = TElementCleanupRules(
-                keep_symbols=keep_symbols,
-                lists=lists,
-                maps=maps,
-            )
-        self._cleanup(rules, _for_container=_for_container, _for_choice=_for_choice)
-
-    def _cleanup(self, rules, _for_container=False, _for_choice=False) -> bool:
-        # do all the work of cleanup method
-        #
-        # returns 'elem_no_squash' - bool, which tells parent TElement if
-        # this element can be squashed
-
-        elem_no_squash = _for_choice
-
-        if self.name in rules.lists:
-            self.reduce_list(rules, rules.lists[self.name])
-            return elem_no_squash
-        elif self.name in rules.maps:
-            self.reduce_map(rules, rules.maps[self.name])
-            return elem_no_squash
-
-        if self.is_leaf():
-            return elem_no_squash
-
-        values = []
-        values_no_squash = []
-        for child_elem in self.value:
-            if child_elem is None:
-                continue
-            assert hasattr(child_elem, '_cleanup'), (
-                f"{self=} {self._is_leaf=} {self.value=}")
-            child_no_squash = child_elem._cleanup(
-                rules,
-                _for_choice = self.name in rules.choice_symbols
-            )
-            if child_elem.value is not None or child_elem.name in rules.keep_symbols:
-                values.append(child_elem)
-                values_no_squash.append(child_no_squash)
-
-        if not values:
-            self.value = None
-            return elem_no_squash
-
-        self.value = values
-
-        if_squash = self.name in rules.squash_symbols
-
-        if if_squash:
-            assert isinstance(self.value, list)
-            assert len(self.value) == 1, f"{self.name=} {self.value=}"
-            assert len(self.value) == len(values_no_squash)
-            child_elem = self.value[0]
-            child_no_squash = values_no_squash[0]
-            assert isinstance(child_elem, TElement)
-
-            keep_parent = _for_choice or self.name in rules.keep_symbols
-            keep_child = child_no_squash or child_elem.name in rules.keep_symbols
-
-            if keep_parent and keep_child:
-                if_squash = False
-                elem_no_squash = True
-            else:
-                squash_parent = keep_child or _for_container
-
-        if if_squash:
-            if squash_parent:
-                elem_no_squash = child_no_squash
-                self.name = child_elem.name
-                self.value = child_elem.value
-                self._is_leaf = child_elem._is_leaf
-            else:
-                elem_no_squash = keep_parent
-                self.value = child_elem.value
-                self._is_leaf = child_elem._is_leaf
-
-        return elem_no_squash
-
-    def reduce_list(self, rules, list_properties):
-        """Transform self.value subtree into a [TElement, ] of list values."""
-        open_token, delimiter, tail_symbol, close_token = list_properties
-
-        self._is_leaf = True
-
-        if self.value is None:
-            if open_token is None:
-                # looks like in most cases if the list has no explicit open/close
-                # brackets then "no values" is an empty list, not None.
-                self.value = []
-            return
-
-        assert isinstance(self.value, (list, tuple))
-
-        if open_token is not None:
-            assert self.value[0].name == open_token, f"{self=}, {open_token=}"
-            assert self.value[-1].name == close_token
-            self.value = self.value[1:-1]
-        new_values = []
-
-        # depending on grammar the first element may look
-        # like (item, opt_list) or like (opt_list)
-        assert len(self.value) <= 2, f"{self}"
-        if len(self.value) == 2:
-            list_element = self.value[0]
-            if list_element.value is not None:
-                # None value here means that this list_element corresponds to
-                # null production - that is there is no list element.
-                list_element._cleanup(rules, _for_container=True)
-                new_values.append(list_element)
-            assert self.value[1].name == tail_symbol, (
-                f"expected {tail_symbol}; got:\n{self.value[0]}")
-            tail_value = self.value[1]
-        else:
-            assert self.value[0].name == tail_symbol, (
-                f"expected {tail_symbol}; got:\n{self.value[0]}")
-            tail_value = self.value[0]
-
-        next_elements = tail_value._reduce_tail_list(
-            rules, delimiter, tail_symbol)
-        next_elements.reverse()
-        if next_elements and next_elements[-1] is None and delimiter is not None:
-            # this element corresponds to the empty space after the last delimiter
-            next_elements.pop()
-
-        new_values.extend(next_elements)
-        # new_values now contains TElement objects and Nones.
-        # If some TElement is a leaf - replace it with it's value
-        new_values = [
-            x.value if isinstance(x, TElement) and x.is_leaf() else x
-            for x in new_values
-        ]
-        self.value = new_values
-
-    def _reduce_tail_list(self, rules, delimiter, tail_symbol):
-        # TElement corresponding to list tail -> [TElement, ] of list values
-        assert self.name == tail_symbol, (
-            f"{self.name=}, {tail_symbol=} {delimiter=}, {self=}")
-
-        if self.value is None:
-            return []
-
-        assert isinstance(self.value, (list, tuple))
-        # depending on grammar implementaion, whether this is the last
-        # element or not and other factors current element may look differently
-
-        assert len(self.value) <= 3, f"{self.value=}"
-        prod_values = [
-            e for e in self.value if e.name is not None and e.name != delimiter]
-        if len(prod_values) == 2:
-            if prod_values[0].name == tail_symbol:
-                tail_elem = prod_values[0]
-                item_elem = prod_values[1]
-                assert item_elem.name != tail_symbol, f"{self.value=}"
-            else:
-                assert prod_values[1].name == tail_symbol, f"{self.value=}"
-                tail_elem = prod_values[1]
-                item_elem = prod_values[0]
-                assert item_elem.name != tail_symbol, f"{self.value=}"
-        elif len(prod_values) == 1:
-            item_elem = prod_values[0]
-            tail_elem = None
-        elif len(prod_values) == 0:
-            item_elem = None
-            tail_elem = None
-        else:
-            assert False, f"{self.value=}"
-
-        if tail_elem is not None:
-            assert item_elem is not None, f"{self.signature()=}"
-            list_values = tail_elem._reduce_tail_list(
-                rules, delimiter, tail_symbol)
-        else:
-            list_values = []
-
-        if item_elem is not None:
-            item_elem._cleanup(rules, _for_container=True)
-            if item_elem.value is None:
-                list_values.append(None)
-            else:
-                list_values.append(item_elem)
-
-        return list_values
-
-    def reduce_map(self, rules, map_properties):
-        """Transform self.value subtree into {name: TElement}"""
-        (
-            open_token,
-            map_elements_name,
-            _items_delimiter,
-            _map_element_name,
-            _delimiter,
-            close_token
-        ) = map_properties
-        assert isinstance(self.value, (list, tuple))
-
-        self._is_leaf = True
-
-        if self.value is None:
-            return
-
-        assert len(self.value) == 3, f"{self}"
-        assert self.value[0].name == open_token
-        assert self.value[1].name == map_elements_name
-        assert self.value[2].name == close_token
-
-        self.value = self.value[1]._reduce_elements_map_tail(
-            rules, map_properties)
-
-    def _reduce_elements_map_tail(self, rules, map_properties):
-        (
-            _open_token,
-            map_elements_name,
-            items_delimiter,
-            map_element_name,
-            delimiter,
-            _close_token
-        ) = map_properties
-
-        assert self.name == map_elements_name
-
-        if self.value is None or len(self.value) == 0:
-            return {}
-
-        if self.value[-1].name != map_elements_name:
-            the_map = {}
-        else:
-            the_map = self.value[-1]._reduce_elements_map_tail(
-                rules, map_properties)
-
-        child_elements = []
-        for e in self.value:
-            if e.name == map_element_name:
-                child_elements.append(e)
-            elif e.name in (items_delimiter, map_elements_name):
-                continue
-            elif e.name is None:
-                # self is a map tail, but it contains no elements
-                # (there is a ',' after last element)
-                assert len(self.value) == 1
-                break
-            else:
-                assert False, f"unexpected element {e}"
-
-        for item_element in child_elements:
-            assert len(item_element.value) == 3
-            assert item_element.value[1].name == delimiter
-            key_elem = item_element.value[0]
-            if key_elem.is_leaf() and (
-                key_elem.value is None or isinstance(key_elem.value, str)
-            ):
-                key = key_elem.value
-            else:
-                key = key_elem
-            value_element = item_element.value[2]
-            value_element._cleanup(rules, _for_container=True)
-            if value_element.is_leaf():
-                the_map[key] = value_element.value
-            else:
-                the_map[key] = value_element
-
-        return the_map
-
 
 class ProdRule:
-    """Info about prroduction rule 'A' -> ('B', 'C', 'D').
+    """Info about production rule 'A' -> ('B', 'C', 'D').
 
     Name 'production' is used for the result symbols, ('B', 'C', 'D') in this case.
     """
-    __slots__ = 'symbol', 'production', 'sort_n', '_is_factorization_suffix'
+    __slots__ = 'symbol', 'production', 'sort_n'
 
     def __init__(self, symbol, production, sort_n):
         self.symbol = symbol
         self.production = production
         self.sort_n = sort_n
-        self._is_factorization_suffix = False
 
     def __str__(self):
-        return f"'{self.symbol}' -> {self.production}"
+        return f"'{self.symbol}' -> {self.production} #{self.sort_n}"
 
 
-class ProdSequence:
-    """Production which matches a sequence of elements.
+#########################
+# Production Templates
 
-    Can be considered as a short syntax for declaring of productions which
-    implement parsing a list of elements. Several auxiliary symbols and
-    productions will be created to implement parsing of sequences, but all
-    these auxiliary symbols are stripped out from the final result. This happens
-    unconditionally (unlike similar processing of actual list productions, which
-    happens during optional cleanup procedure).
+class ProdsTemplate:
+    """Base class for Production Templates.
+
+    Production Template is an object, which can generate multiple productions
+    for LLParser grammar. Optionally it can post-process corresponding sub-tree
+    of the parsing results.
     """
-    def __init__(self, *productions):
-        self.productions = list(productions)
+    CAN_POST_PROCESS_TELEM = True
+
+    def __init__(self):
+        self.result_symbol = None
+
+    def _ensure_initialized(self):
+        assert self.result_symbol is not None, (
+            f"{self} is not initialized. Call 'complete_init' "
+            f"method to complete initialzation")
+
+    def complete_init(self, result_symbol: str, terminals, parser_summary) -> None:
+        """Complete initialization.
+
+        Method is called during construction of LLParser to let the ProdsTemplate
+        the context where it was created.
+        """
+        _ = terminals
+        _ = parser_summary
+        assert self.result_symbol is None, (
+            f"{self} is already initialized (with result symbol "
+            f"'{self.result_symbol}')")
+        self.result_symbol = result_symbol
+
+    def verify_grammar(self, llparser, nullables, parser_summary):
+        pass
+
+    def gen_productions(self):
+        assert False, f"not implemented in {str(type(self))}"
+        yield from []
+
+    @staticmethod
+    def _find_index(symbols_list, symbol):
+        # mini helper: list.index but returns None if item not found
+        try:
+            i = symbols_list.index(symbol)
+        except ValueError:
+            i = None
+        return i
+
+
+class ProdSequence(ProdsTemplate):
+    """Productions which match a sequence of elements.
+
+    Creates productions which match "any of given symbols in any order".
+    Resulting TElement is a leaf, it's value is a list of matched TElement objects.
+    """
+    CAN_POST_PROCESS_TELEM = False
+
+    def __init__(self, *symbols):
+        super().__init__()
+        self.symbols = list(symbols)
+        self.element_symbol_name = None
+
+    def complete_init(self, result_symbol, terminals, parser_summary) -> None:
+        """Complete initialization."""
+        assert result_symbol is not None
+        super().complete_init(result_symbol, terminals, parser_summary)
+        assert self.result_symbol is not None
+
+        self.element_symbol_name = f"{self.result_symbol}__ELEMENT"
+
+        # as of now self.symbols may contain special 'AnyTokenExcept' item.
+        # It's time to replace it with actual tokens
+        num_special_items = sum(
+            1 if isinstance(s, AnyTokenExcept) else 0
+            for s in self.symbols)
+        if num_special_items > 1:
+            raise GrammarError(
+                parser_summary,
+                f"production for symbol '{self.result_symbol}' contains "
+                f"{num_special_items} 'AnyTokenExcept' elements. "
+                f"Max allowed number is 1.")
+        elif num_special_items == 1:
+            new_ss = []
+            for s in self.symbols:
+                if isinstance(s, AnyTokenExcept):
+                    new_ss.extend(
+                        s.get_tokens(terminals, self.result_symbol, parser_summary))
+                else:
+                    new_ss.append(s)
+            self.symbols = new_ss
+
+    def gen_productions(self):
+        """Generate the productions to match the sequence of elements."""
+        self._ensure_initialized()
+        # Corresponding productions are similar to productions of a list
+        # 'THE_SEQUENCE': [
+        #    ('SEQUENCE__ELEMENT', 'THE_SEQUENCE'),
+        #    None,
+        #  ]
+        yield self.result_symbol, [
+            (self.element_symbol_name, self.result_symbol),
+            (),
+        ]
+        # 'SEQUENCE__ELEMENT': [
+        #    (symbol, ),
+        #    ...
+        #  ]
+        yield self.element_symbol_name, [
+            (s, ) for s in self.symbols
+        ]
+
+
+class ListProds(ProdsTemplate):
+    """Production Template for matching list structures.
+
+    Instead of specifying all the productions required to parse a list of some
+    items in LLParser constructor, it is possible to specify a single template:
+
+    'LIST_PROD': ListProds(
+        '[', 'LIST_ITEM', ',', ']',
+        allow_final_delimiter=True, optional=False)
+
+    It is necessary to specify name of the symbol corresponding to the list item,
+    but None can be specified in place of '[', ',', ']',
+    """
+    def __init__(
+        self,
+        open_br: str, item_symbol: str, delimiter: str, close_br: str, *,
+        allow_final_delimiter=None,
+        optional=None,
+    ):
+        """ListProds constructor.
+
+        Arguments:
+        - open_br: optional name of "open bracket" symbol
+        - item_symbol: name of the symbol of list item
+        - delimiter: name of list delimiter symbol
+        - close_br: optional name of "close bracket" symbol
+        - allow_final_delimiter: allow lists like [1, 2, 3, ]
+        - optional: indicates that the whole list is optional
+
+        Example:
+        'LIST_PROD': ListProds('[', 'LIST_ITEM', ',', ']')
+
+        """
+        assert (open_br is None) == (close_br is None), (
+            f"'open_br' and 'close_br' can be None only simultaneously: "
+            f"{open_br=}; {close_br=}")
+
+        if allow_final_delimiter is None:
+            allow_final_delimiter = delimiter is not None and open_br is not None
+
+        if allow_final_delimiter:
+            assert delimiter is not None and open_br is not None, (
+                f"In ListProd for '{item_symbol}': allow_final_delimiter can "
+                f"be True only if open_br, close_br and delimiter are not None")
+
+        if optional is not None:
+            assert open_br is not None, (
+                f"'optional' argument is implemented only for lists with brackets")
+        else:
+            optional = False
+
+        super().__init__()
+
+        self.open_br = open_br
+        self.item_symbol = item_symbol
+        self.delimiter = delimiter
+        self.close_br = close_br
+        self.allow_final_delimiter = allow_final_delimiter
+        self.optional = optional
+
+        self.list_tail_symbol = None
+        self.list_prods_signatures = None
+        self.tail_prods_signatures = None
+
+    def complete_init(self, result_symbol, terminals, parser_summary) -> None:
+        """Complete initialization."""
+        assert result_symbol is not None
+        super().complete_init(result_symbol, terminals, parser_summary)
+        assert self.result_symbol is not None
+
+        has_brackets = self.open_br is not None
+        has_separator = self.delimiter is not None
+
+        if has_brackets or has_separator:
+            self.list_tail_symbol = f"{self.result_symbol}__TAIL"
+        else:
+            self.list_tail_symbol = self.result_symbol
+
+        # list_prods
+        # 'THE_LIST': [
+        #     ('[', ']'),
+        #     ('[', 'ITEM', 'THE_LIST__TAIL', ']'),
+        #     None,   <- only if self.optional
+        # ],
+        list_prods = [
+            [self.open_br, self.close_br],
+            [self.open_br, self.item_symbol, self.list_tail_symbol, self.close_br],
+        ]
+        if not has_brackets:
+            # for lists with brackets it is important that ('[', ']') production
+            # goes first. So that "[ ]" be interpreted as empty list, not a list
+            # with None element inside (in case 'ITEM' is nullable).
+            #
+            # But in case there are no brackets it is necessary to try "empty list"
+            # option only if the list in empty indeed
+            list_prods.reverse()
+
+        if self.optional:
+            list_prods.append([])
+
+        if self.list_tail_symbol == self.result_symbol:
+            # it happens iff there are no brakets and no separator
+            # in this case there is no need to use separate symbol for tail
+            list_tail_prods = list_prods
+        else:
+            # list_tail_prods
+            #
+            # 'THE_LIST__TAIL': [
+            #     (',', 'ITEM', 'THE_LIST__TAIL'),
+            #     (',', ),     <- if last delimiter allowed
+            #     None,
+            # ],
+            list_tail_prods = [
+                [self.delimiter, self.item_symbol, self.list_tail_symbol],
+                [self.delimiter, ],
+                [],
+            ]
+            if not self.allow_final_delimiter:
+                list_tail_prods.pop(1)
+
+        # now list_prods and list_tail_prods contain names of symbols
+        # for LIST and LIST__TAIL productions. But these lists
+        # may contain None values in place of delimiter.
+        # Following methods will purge these extra items.
+
+        self.list_prods_signatures = dict(
+            self._make_expected_signature(self.result_symbol, prod)
+            for prod in list_prods
+        )
+        self.tail_prods_signatures = dict(
+            self._make_expected_signature(self.list_tail_symbol, prod)
+            for prod in list_tail_prods
+        )
+
+    def verify_grammar(self, llparser, nullables, parser_summary):
+        """Verify that ListProds is compatible with the LLParser."""
+        if self.delimiter is None and self.item_symbol in nullables:
+            raise GrammarError(
+                parser_summary,
+                f"List item symbol '{self.item_symbol}' is nullable. "
+                f"It is prohibited for lists without separator symbol.")
+
+    def _make_expected_signature(self, symbol, prod_symbols):
+        # constructor helper, prepares signatures of expected TElement objects
+        # and positions of 'item' and 'tail' child elements
+        prod_symbols = tuple(s for s in prod_symbols if s is not None)
+
+        signature = TElemSignature(symbol, prod_symbols)
+        positions = (
+            self._find_index(prod_symbols, self.item_symbol),
+            self._find_index(prod_symbols, self.list_tail_symbol),
+        )
+        return signature, positions
+
+    def __str__(self):
+        result = self.result_symbol or "??"
+        op = "" if self.open_br is None else self.open_br
+        cl = "" if self.close_br is None else self.close_br
+        sep = "" if self.delimiter is None else f"{self.delimiter} "
+        return (
+            f"{type(self).__name__}<{result} -> "
+            f"{op}{self.item_symbol}{sep}...{cl}>")
+
+    def gen_productions(self):
+        """Generate grammar productions."""
+        self._ensure_initialized()
+
+        yield self.result_symbol, [
+            signature.child_names
+            for signature in self.list_prods_signatures.keys()
+        ]
+
+        if self.list_tail_symbol != self.result_symbol:
+            # these symbols are equal iff no brackets are used.
+            # in this case self.tail_prods_signatures contains same
+            # signatures as self.list_prods_signatures, so no need
+            # to generate additional productions
+            yield self.list_tail_symbol, [
+                signature.child_names
+                for signature in self.tail_prods_signatures.keys()
+            ]
+
+    def transform_t_elem(self, t_elem: TElement, cleanuper) -> None:
+        """Transform subtree corresponding to the list into a single TElement.
+
+        Result TElement is a leaf, it's value is a list of parsed values.
+        """
+        signature = t_elem.signature()
+        assert signature in self.list_prods_signatures, (
+            f"Can't make a list from TElement {t_elem} with signature "
+            f"{signature}. Expected TElement with one of following signatures: \n"
+            f"{', '.join(s for s in sorted(self.list_prods_signatures))}")
+        item_elem_pos, tail_elem_pos = self.list_prods_signatures[signature]
+
+        if self.optional and t_elem.value is None:
+            return
+
+        values_list = []
+        if item_elem_pos is not None:
+            item_t_elem = t_elem.value[item_elem_pos]
+            cleanuper._cleanup(item_t_elem, for_container=True)
+            values_list.append(item_t_elem)
+
+        if tail_elem_pos is not None:
+            tail_t_elem = t_elem.value[tail_elem_pos]
+            self._parse_tail_t_elem(tail_t_elem, cleanuper, values_list)
+
+        # new_values now contains TElement objects.
+        # If some TElement is a leaf - replace it with it's value
+        values_list = [
+            x.value if x.is_leaf() else x
+            for x in values_list
+        ]
+
+        if (
+            len(values_list) > 0
+            and values_list[-1] is None
+            and self.allow_final_delimiter
+        ):
+            # "[1, 2, 3, ]" may be interpreted as ["1", "2", "3", None].
+            # Do not do it if final delimiter is allowed.
+            values_list.pop()
+        elif (
+            self.open_br is None
+            and len(values_list) == 1
+            and values_list[0] is None
+        ):
+            # missing list without brackets may be interpreted as containing a single
+            # None value. But empty list is a more apropriate interpretation.
+            values_list = []
+
+        t_elem._is_leaf = True
+        t_elem.value = values_list
+
+    def _parse_tail_t_elem(self, t_elem: TElement, cleanuper, values_list) -> None:
+        # helper for self.transform_t_elem.
+        # process subtree corresponding to 'THE_LIST__TAIL' symbol.
+        signature = t_elem.signature()
+        assert signature in self.tail_prods_signatures, (
+            f"Unexpected TElement {t_elem} with signature {signature} encountered "
+            f"while processing list tail. Expected TElement with one of following "
+            f"signatures: \n"
+            f"{', '.join(s for s in sorted(self.tail_prods_signatures))}")
+        item_elem_pos, tail_elem_pos = self.tail_prods_signatures[signature]
+
+        if item_elem_pos is not None:
+            item_t_elem = t_elem.value[item_elem_pos]
+            cleanuper._cleanup(item_t_elem, for_container=True)
+            values_list.append(item_t_elem)
+
+        if tail_elem_pos is not None:
+            tail_t_elem = t_elem.value[tail_elem_pos]
+            self._parse_tail_t_elem(tail_t_elem, cleanuper, values_list)
+
+
+class MapProds(ProdsTemplate):
+    """Production Template for matching map-like structures.
+
+    Instead of specifying all the productions required to parse a map of some
+    items in LLParser constructor, it is possible to specify a single template:
+
+    'MAP_PROD': llparser.MapProds('{', 'WORD', ':', 'VALUE', ',', '}'),
+    """
+
+    def __init__(
+        self, open_br: str,
+        key_symbol: str, assign_symbol: str, val_symbol: str,
+        delimiter: str, close_br: str, *,
+        optional=None,
+        allow_final_delimiter=True,
+    ):
+        """MapProds constructor.
+
+        Arguments:
+        - open_br: name of "open bracket" symbol
+        - key_symbol: name of the symbol of map key item
+        - assign_symbol: name of the 'assignment' symbol
+        - val_symbol: name of the symbol of map key item
+        - delimiter: name of list delimiter symbol
+        - close_br: name of "close bracket" symbol
+        - allow_final_delimiter: allow maps like "{a=1, b=2, }"
+        - optional: indicates that the whole list is optional
+
+        Example:
+        'MAP_PROD': llparser.MapProds('{', 'WORD', ':', 'VALUE', ',', '}'),
+        """
+
+        assert (open_br is None) == (close_br is None), (
+            f"'open_br' and 'close_br' can be None only simultaneously: "
+            f"{open_br=}; {close_br=}")
+
+        assert assign_symbol is not None
+        assert delimiter is not None
+
+        if optional is not None:
+            assert open_br is not None, (
+                f"'optional' argument is implemented only for lists with brackets")
+        else:
+            optional = False
+
+        super().__init__()
+
+        self.open_br = open_br
+        self.key_symbol = key_symbol
+        self.assign_symbol = assign_symbol
+        self.val_symbol = val_symbol
+        self.delimiter = delimiter
+        self.close_br = close_br
+        self.optional = optional
+        self.allow_final_delimiter = allow_final_delimiter
+
+        self.kv_pair_symbol = None
+        self.kv_tail_symbol = None
+
+        self.map_prods_signatures = None
+        self.kv_tail_prods_signatures = None
+        self.kv_prod_signature = None
+
+    def complete_init(self, result_symbol, terminals, parser_summary) -> None:
+        """Complete initialization."""
+        assert result_symbol is not None
+        super().complete_init(result_symbol, terminals, parser_summary)
+        assert self.result_symbol is not None
+
+        self.kv_pair_symbol = f"{self.result_symbol}__KV_PAIR"
+        self.kv_tail_symbol = f"{self.result_symbol}__ELEMENTS"
+
+        # map_prods
+        # 'THE_MAP': [
+        #     ('{', '}'),
+        #     ('{', 'THE_MAP__KV_PAIR', 'THE_MAP__KV_TAIL', '}'),
+        #     None,    <- only if self.optional
+        # ],
+        map_prods = [
+            [self.open_br, self.close_br],
+            [self.open_br, self.kv_pair_symbol, self.kv_tail_symbol, self.close_br],
+        ]
+        if self.optional:
+            map_prods.append([])
+
+        # map_kv_tail
+        # 'THE_MAP__KV_TAIL': [
+        #     (',', 'THE_MAP__KV_PAIR', 'THE_MAP__KV_TAIL'),
+        #     (',', ),  <- if last delimiter allowed
+        #     None,
+        # ],
+        map_kv_tail_prods = [
+            [self.delimiter, self.kv_pair_symbol, self.kv_tail_symbol],
+            [self.delimiter, ],
+            [],
+        ]
+        if not self.allow_final_delimiter:
+            map_kv_tail_prods.pop(1)
+
+        # kv_prod
+        # 'THE_MAP__KV_PAIR': [
+        #     ('KEY', ':', 'VALUE'),
+        # ]
+        kv_prod = [self.key_symbol, self.assign_symbol, self.val_symbol]
+
+        self.map_prods_signatures = dict(
+            self._make_expected_signature(self.result_symbol, prod)
+            for prod in map_prods
+        )
+        self.kv_tail_prods_signatures = dict(
+            self._make_expected_signature(self.kv_tail_symbol, prod)
+            for prod in map_kv_tail_prods
+        )
+        self.kv_prod_signature = TElemSignature(self.kv_pair_symbol, tuple(kv_prod))
+
+    def _make_expected_signature(self, symbol, prod_symbols):
+        # constructor helper, prepares signatures of expected TElement objects
+        # and positions of 'kv_pair' and 'kv_tail' child elements
+        prod_symbols = tuple(s for s in prod_symbols if s is not None)
+
+        signature = TElemSignature(symbol, prod_symbols)
+        positions = (
+            self._find_index(prod_symbols, self.kv_pair_symbol),
+            self._find_index(prod_symbols, self.kv_tail_symbol),
+        )
+        return signature, positions
+
+    def gen_productions(self):
+        """Generate grammar productions."""
+        self._ensure_initialized()
+
+        yield self.result_symbol, [
+            signature.child_names
+            for signature in self.map_prods_signatures.keys()
+        ]
+
+        yield self.kv_tail_symbol, [
+            signature.child_names
+            for signature in self.kv_tail_prods_signatures.keys()
+        ]
+
+        yield self.kv_pair_symbol, [
+            self.kv_prod_signature.child_names
+        ]
+
+    def transform_t_elem(self, t_elem: TElement, cleanuper) -> None:
+        """Transform subtree corresponding to the map into a single TElement.
+
+        Result TElement is a leaf, it's value is the map of parsed keys/values.
+        """
+        signature = t_elem.signature()
+        assert signature in self.map_prods_signatures, (
+            f"Can't make a map from TElement {t_elem} with signature "
+            f"{signature}. Expected TElement with one of following signatures: \n"
+            f"{', '.join(s for s in sorted(self.map_prods_signatures))}")
+        kv_pair_pos, kv_tail_pos = self.map_prods_signatures[signature]
+
+        if self.optional and t_elem.value is None:
+            return
+
+        kv_pairs = []
+        if kv_pair_pos is not None:
+            kv_pair = self._parse_kv_pair(t_elem.value[kv_pair_pos], cleanuper)
+            kv_pairs.append(kv_pair)
+
+        if kv_tail_pos is not None:
+            self._parse_kv_tail(t_elem.value[kv_tail_pos], cleanuper, kv_pairs)
+
+        t_elem._is_leaf = True
+        t_elem.value = dict(kv_pairs)
+
+    def _parse_kv_tail(self, t_elem: TElement, cleanuper, kv_pairs):
+        # helper for self.transform_t_elem.
+        # process subtree corresponding to 'THE_MAP__KV_TAIL' symbol.
+        signature = t_elem.signature()
+        assert signature in self.kv_tail_prods_signatures, (
+            f"Unexpected TElement {t_elem} with signature {signature} encountered "
+            f"while processing map contents. Expected TElement with one of following "
+            f"signatures: \n"
+            f"{', '.join(s for s in sorted(self.kv_tail_prods_signatures))}")
+        kv_pair_pos, kv_tail_pos = self.kv_tail_prods_signatures[signature]
+
+        if kv_pair_pos is not None:
+            kv_pair = self._parse_kv_pair(t_elem.value[kv_pair_pos], cleanuper)
+            kv_pairs.append(kv_pair)
+
+        if kv_tail_pos is not None:
+            self._parse_kv_tail(t_elem.value[kv_tail_pos], cleanuper, kv_pairs)
+
+    def _parse_kv_pair(self, t_elem: TElement, cleanuper):
+        # helper for self.transform_t_elem.
+        # process subtree corresponding to 'THE_MAP__KV_PAIR' symbol.
+        signature = t_elem.signature()
+
+        assert signature == self.kv_prod_signature, (
+            f"Unexpected TElement {t_elem} with signature {signature} encountered "
+            f"while processing map's key-value pair. Expected TElement with "
+            f"signature: {self.kv_prod_signature}")
+
+        key_elem = t_elem.value[0]
+        val_elem = t_elem.value[2]
+
+        cleanuper._cleanup(key_elem, for_container=True)
+        cleanuper._cleanup(val_elem, for_container=True)
+
+        key = key_elem.value if key_elem.is_leaf() else key_elem
+        val = val_elem.value if val_elem.is_leaf() else val_elem
+
+        return (key, val)
 
 
 class AnyTokenExcept:
@@ -964,6 +1161,22 @@ class AnyTokenExcept:
     """
     def __init__(self, *tokens):
         self.tokens = tokens
+
+    def get_tokens(self, terminals, for_symbol, parser_summary):
+        """Get list of all terminals except those specified for constructor.
+
+        Arguments:
+        - terminals: all the terminals
+        - for_symbol: context (for reporting purposes only).
+        """
+        tokens_to_exclude = set(self.tokens)
+        unexpected_tokens = tokens_to_exclude - terminals
+        if unexpected_tokens:
+            raise GrammarError(
+                parser_summary,
+                f"unknown terminal(s) specified in 'AnyTokenExcept' item: "
+                f"of productions of symbol '{for_symbol}': {unexpected_tokens}")
+        return [t for t in terminals if t not in tokens_to_exclude]
 
 
 class _StackElement:
@@ -1016,26 +1229,22 @@ class _StackElement:
 
 
 class ParserSummary:
-    """Contains information about LLParser.
+    """Contains information about LLParser. Used for reporting only.
 
-    It is used for reporting purposes only.
-    Main purpose of this class is to keep information about LLParser
-    even if the LLParser was not created. Some grammar errors may be raised
-    during LLParser consctruction, but to properly report these problems
-    it's good to have all all the processed data structures.
+    This class keeps information about LLParser even if the LLParser's construction
+    failed. To report such errors it's good to have all parser's properties
+    accumulated in the single place.
     """
 
-    def __init__(
-            self, terminals, parse_table,
-            nullables, first_sest, follow_sets,
-            cleanup_rules,
-        ):
-        self.terminals = terminals
-        self.parse_table = parse_table
-        self.nullables = nullables
-        self.first_sest = first_sest
-        self.follow_sets = follow_sets
-        self.cleanup_rules = cleanup_rules
+    def __init__(self):
+        self.terminals = None
+        self.orig_prods_map = None
+        self.prods_map = None
+        self.parse_table = None
+        self.nullables = None
+        self.first_sest = None
+        self.follow_sets = None
+        self.cleanuper = None
 
     def gen_detailed_descr(self):
         """Generate lines of human-readable description of the LLParser."""
@@ -1043,29 +1252,72 @@ class ParserSummary:
 
         yield "= Parser summary ="
         yield ""
+        if self.terminals is None:
+            yield "-- no parser data ready yet --"
+            return
         yield f"Terminals: {self.terminals}"
         yield ""
-        yield "Parse Table:"
-        cur_symbol = None
-        for (symbol, token), prod_rs in self.parse_table.items():
-            if symbol != cur_symbol:
-                yield f"    '{symbol}':"
-                cur_symbol = symbol
-            token_descr = mk_descr_len(token, 10)
-            for prod in prod_rs:
-                yield f"        {token_descr}->{prod.production}"
+        yield from self._descr_prods_map("Original Productions", self.orig_prods_map)
         yield ""
-        yield f"Nullables: {self.nullables}"
+        yield from self._descr_prods_map("Factorized Productions", self.prods_map)
         yield ""
-        yield "FirstSets:"
-        for symbol, firsts in sorted(self.first_sest.items()):
-            yield f"    {mk_descr_len(symbol, 10)}: {sorted(firsts)}"
+
+        if self.parse_table is None:
+            yield "Parse Table: <n/a>"
+        else:
+            yield "Parse Table:"
+            cur_symbol = None
+            for (symbol, token), prod_rs in self.parse_table.items():
+                if symbol != cur_symbol:
+                    yield f"    '{symbol}':"
+                    cur_symbol = symbol
+                token_descr = mk_descr_len(token, 10)
+                for prod in prod_rs:
+                    yield f"        {token_descr}->{prod.production}"
         yield ""
-        yield "FollowSets:"
-        for symbol, follows in sorted(self.follow_sets.items()):
-            yield f"    {mk_descr_len(symbol, 10)}: {sorted(follows)}"
-        yield "Cleanup Rules:"
-        yield from self.cleanup_rules.gen_detailed_descr()
+
+        if self.nullables is None:
+            yield "Nullables: <n/a>"
+            yield "Not Nullables: <n/a>"
+        else:
+            yield f"Nullables: {self.nullables}"
+            not_nullables = self.prods_map.keys() - self.nullables
+            yield f"Not Nullables: {not_nullables}"
+        yield ""
+
+        if self.first_sest is None:
+            yield "FirstSets: <n/a>"
+        else:
+            yield "FirstSets:"
+            for symbol, firsts in sorted(self.first_sest.items()):
+                yield f"    {mk_descr_len(symbol, 10)}: {sorted(firsts)}"
+        yield ""
+
+        if self.follow_sets is None:
+            yield "FollowSets: <n/a>"
+        else:
+            yield "FollowSets:"
+            for symbol, follows in sorted(self.follow_sets.items()):
+                yield f"    {mk_descr_len(symbol, 10)}: {sorted(follows)}"
+        yield ""
+
+        if self.cleanuper is None:
+            yield "Cleanup Rules: <n/a>"
+        else:
+            yield "Cleanup Rules:"
+            yield from self.cleanuper.gen_detailed_descr()
+        yield ""
+
+    def _descr_prods_map(self, map_name, prods_map):
+        # generates description of grammar's productions
+        if prods_map is None:
+            yield f"{map_name}: <n/a>"
+            return
+        yield f"{map_name}:"
+        for prod_rs in prods_map.values():
+            yield ""
+            for rule in prod_rs:
+                yield f"    {rule}"
 
 
 class LLParser:
@@ -1074,22 +1326,18 @@ class LLParser:
     _END_TOKEN_NAME = '$END$'
     _INIT_PRODUCTION_NAME = '$START$'
 
-    ProdSequence = ProdSequence
-    AnyTokenExcept = AnyTokenExcept
-
     def __init__(
             self,
             tokenizer_str,
             *,
             productions,
-            span_matchers=None,
             synonyms=None,
+            span_matchers=None,
             keywords=None,
             skip_tokens=None,
             start_symbol_name='E',
             keep_symbols=None,
-            lists=None,
-            maps=None,
+            smart_factorization=True,
         ):
         r"""Constructor of LLParser.
 
@@ -1122,12 +1370,6 @@ class LLParser:
             {'COMMENT_ML': r"(?P<END_COMMENT>(\*[^/]|[^*])*)\*/"}
         - keep_symbols: names of symbols which should not be cleaned-up during
             optional cleanup procedure. Check doc of 'cleanup' method.
-        - lists: rules for cleanup. The cleanup procedure replaces subtree
-            corresponding to list with actual list of values. This argument contains
-            names of tokens wich correspond to list and list elements:
-                {'LIST': ('[', ',', 'OPT_LIST', ']')}
-        - maps: similar to 'lists', but describes maps. Example:
-                {'MAP': ('{', 'MAP_ELEMENTS', ',', 'MAP_ELEMENT', ':', '}'),}
         """
         self.tokenizer = _Tokenizer(
             tokenizer_str,
@@ -1135,6 +1377,15 @@ class LLParser:
             synonyms=synonyms, keywords=keywords)
 
         self.terminals = self.tokenizer.get_all_token_names()
+
+        # used only for printing detailed description of the parser
+        self._summary = ParserSummary()
+        self._summary.terminals = self.terminals
+
+        bad_terminals = [t for t in self.terminals if '__' in t]
+        assert not bad_terminals, (
+            f"Invalid terminals names detected: {bad_terminals}. "
+            f"Names containing '__' are reserved")
 
         if skip_tokens is None:
             # by default we skip 'SPACE' and 'COMMENT' tokens
@@ -1145,17 +1396,25 @@ class LLParser:
             unexpected = self.skip_tokens - self.terminals
             if unexpected:
                 raise GrammarError(
+                    self._summary,
                     f"uknown token names specified in 'skip_tokens' "
                     f"arg: {unexpected}")
 
         self.start_symbol_name = start_symbol_name
-        self.prods_map, self._seq_symbols = self._create_productions(
-            productions, self.terminals)
+        orig_prods_map, self._seq_symbols, self.prod_templates = (
+            self._create_productions(productions, self.terminals, self._summary))
+        self._summary.orig_prods_map = orig_prods_map
+
+        self.prods_map, self._suffix_symbols = self._factorize_productions(
+            orig_prods_map, self.terminals, smart_factorization)
+
+        # TODO: order of these operations is strange and unexpected.
+        # do something with it.
         self.terminals.add(self._END_TOKEN_NAME)
 
-        self._verify_grammar_structure_part1()
+        self._summary.prods_map = self.prods_map
 
-        nullables = self._get_nullables(self.prods_map)
+        self._verify_grammar_structure_part1(self._summary)
 
         self.prods_map[self._INIT_PRODUCTION_NAME] = [
             ProdRule(
@@ -1165,34 +1424,24 @@ class LLParser:
             )
         ]
 
-        squash_symbols, choice_symbols = self._make_squash_data(keep_symbols)
+        nullables = self._get_nullables(self.prods_map)
+        self._summary.nullables = nullables
 
-        self.cleanup_rules = TElementCleanupRules(
-            keep_symbols=keep_symbols,
-            squash_symbols=squash_symbols, choice_symbols=choice_symbols,
-            lists=lists,
-            maps=maps,
-        )
-        self.cleanup_rules.verify_integrity(
-            self.terminals,
-            set(self.prods_map.keys()))
+        for prod_template in self.prod_templates.values():
+            prod_template.verify_grammar(self, nullables, self._summary)
+
+        self.cleanuper = StdCleanuper.make(self, keep_symbols)
+        self._summary.cleanuper = self.cleanuper
 
         self.parse_table, first_sets, follow_sets = self._make_llone_table(
             self.prods_map, self.terminals, nullables,
             self.start_symbol_name,
         )
+        self._summary.parse_table = self.parse_table
+        self._summary.first_sest = first_sets
+        self._summary.follow_sets = follow_sets
 
-        # used only for printing detailed description of the parser
-        self._summary = ParserSummary(
-            self.terminals,
-            self.parse_table,
-            nullables,
-            first_sets,
-            follow_sets,
-            self.cleanup_rules,
-        )
-
-        self._verify_grammar_structure_part2(nullables)
+        self._verify_grammar_structure_part2(nullables, self._summary)
 
     def parse(self, text, *, src_name="input text", debug=False, do_cleanup=True):
         """Parse the text."""
@@ -1236,7 +1485,9 @@ class LLParser:
                     new_elem_value = None
 
                 t_elem = TElement(top.symbol, new_elem_value)
-                if cur_prod._is_factorization_suffix:
+                if (len(cur_prod.production) > 0
+                    and cur_prod.production[-1] in self._suffix_symbols
+                ):
                     # this production corresponds to a factorized group
                     # X -> (..common prefix.., X_Sxx)
                     # It's time to merge suffix contents into self
@@ -1260,7 +1511,7 @@ class LLParser:
                         print("RAW RESULT:")
                         root.printme()
                     if do_cleanup:
-                        self.cleanup(root)
+                        self.cleanuper.cleanup(root)
                         if debug:
                             print("FINAL RESULT:")
                             root.printme()
@@ -1323,17 +1574,19 @@ class LLParser:
             attempted_prods = top.prod_rs
             raise ParsingError(top.symbol, next_tokens, attempted_prods)
 
-    def cleanup(self, t_element) -> None:
-        """Clean up the tree with root in t_element.
+    def cleanup(self, t_elem: TElement) -> None:
+        """Clean up the tree with root in TElement.
 
         Usually the cleanup is performed in parse method, in this case there is
         no need to repeat the cleanup. Use this method only if parse was called
         with do_cleanup=False.
         """
-        t_element.cleanup(
-            self.cleanup_rules,
-            _for_choice=True,  # keep root element during cleanup
-        )
+        if self.cleanuper is None:
+            logger.warning(
+                "LLParser %s was created without cleanuper, skip cleanup operation",
+                self)
+            return
+        self.cleanuper.cleanup(t_elem)
 
     def is_ambiguous(self) -> bool:
         """Checks if grammar is LL1.
@@ -1341,7 +1594,7 @@ class LLParser:
         """
         return any(len(prods) != 1 for prods in self.parse_table.values())
 
-    def _verify_grammar_structure_part1(self):
+    def _verify_grammar_structure_part1(self, parser_summary):
         # initial verification of grammar structure
         # to be called before parse_table is prepared
         #
@@ -1349,14 +1602,17 @@ class LLParser:
         # can be detected and/or properly reported only after parser is prepared
         if self.start_symbol_name not in self.prods_map:
             raise GrammarError(
+                parser_summary,
                 f"no productions for start symbol '{self.start_symbol_name}'")
 
         if self._END_TOKEN_NAME in self.prods_map:
             raise GrammarError(
+                parser_summary,
                 f"production specified for end symbol '{self._END_TOKEN_NAME}'")
 
         if self._INIT_PRODUCTION_NAME in self.prods_map:
             raise GrammarError(
+                parser_summary,
                 f"production specified explicitely for "
                 f"special symbol '{self._INIT_PRODUCTION_NAME}'")
 
@@ -1365,6 +1621,7 @@ class LLParser:
 
         if bad_tokens:
             raise GrammarError(
+                parser_summary,
                 f"ProdRule(s) specified for terminal symbols {bad_tokens}")
 
         all_prod_symbols = {
@@ -1377,19 +1634,22 @@ class LLParser:
 
         if unknown_symbols:
             raise GrammarError(
+                parser_summary,
                 f"unexpected symbols {unknown_symbols} used in productions")
 
         if self._END_TOKEN_NAME in all_prod_symbols:
             raise GrammarError(
+                parser_summary,
                 f"special end token '{self._END_TOKEN_NAME}' is explicitely "
                 f"used in productions")
 
         if self._INIT_PRODUCTION_NAME in all_prod_symbols:
             raise GrammarError(
+                parser_summary,
                 f"special start symbol '{self._INIT_PRODUCTION_NAME}' is explicitely "
                 f"used in productions")
 
-    def _verify_grammar_structure_part2(self, nullables):
+    def _verify_grammar_structure_part2(self, nullables, parser_summary):
         # verification of grammar structure
         # to be called after parse_table is prepared
 
@@ -1439,7 +1699,8 @@ class LLParser:
                             (s, prod_rules[prod_id], symbol_id)
                             for s, prod_rules, prod_id, symbol_id in stack[i:]
                         ]
-                        raise GrammarIsRecursive(cycle_data, nullables)
+                        raise GrammarIsRecursive(
+                            parser_summary, cycle_data, nullables)
 
                 if cur_symbol in processed_symbols:
                     _next_prod(stack)
@@ -1462,7 +1723,6 @@ class LLParser:
     def _log_cur_prod(self, parse_stack, tokens):
         # log current production
         top = parse_stack[-1]
-        #prefix = "  "*(len(parse_stack) - 1)
         prefix = "  "*top.log_offset
         if top.cur_prod_id == 0:
             self._log_debug(
@@ -1476,7 +1736,6 @@ class LLParser:
     def _log_match_result(self, parse_stack, tokens):
         # log result of the match
         top = parse_stack[-1]
-        #prefix = "  "*(len(parse_stack) - 1)
         prefix = "  "*top.log_offset
         cur_prod = top.get_cur_prod()
         is_success = len(top.values) == len(cur_prod.production)
@@ -1671,7 +1930,7 @@ class LLParser:
         return fsets
 
     @classmethod
-    def _create_productions(cls, prods_init_data, terminals, do_factorization=True):
+    def _create_productions(cls, prods_init_data, terminals, parser_summary):
         # constructor helper.
         # create ProdRule objects from productions data specified in constructor
 
@@ -1679,52 +1938,112 @@ class LLParser:
 
         prods_map = {}  # {symbol: [ProdRule, ]}
         seq_symbols = set()
+        prod_templates = {}  # {symbol: ProdsTemplate}
 
-        for symbol, productions in prods_init_data.items():
-            assert '__' not in symbol, (
-                f"Invalid production symbol '{symbol}'. Symbol names containing "
-                f"'__' are reserved")
+        def _gen_prods_data():
+            # internal helper, expands ProdsTemplate objects
+            for symbol, productions in prods_init_data.items():
+                assert '__' not in symbol, (
+                    f"Invalid production symbol '{symbol}'. Symbol names containing "
+                    f"'__' are reserved")
 
-            is_seq_symbol = isinstance(productions, ProdSequence)
+                if isinstance(productions, ProdsTemplate):
+                    prods_template = productions
+                    prods_template.complete_init(symbol, terminals, parser_summary)
 
-            # validate list of symbols specified in production
-            prods_list = productions.productions if is_seq_symbol else productions
-            for prod in prods_list:
+                    yield from prods_template.gen_productions()
+
+                    if isinstance(productions, ProdSequence):
+                        seq_symbols.add(symbol)
+
+                    if prods_template.CAN_POST_PROCESS_TELEM:
+                        prod_templates[symbol] = prods_template
+
+                    continue
+
+                assert isinstance(productions, list)
+                yield symbol, productions
+
+        for symbol, productions in _gen_prods_data():
+            for prod in productions:
+                # detect incorrect productions like: "SYMBOL" -> "OTHER"
+                # Should be: "SYMBOL" -> ("OTHER", )
                 assert not isinstance(prod, str), (
                     f"invalid production {symbol} -> '{prod}'. "
                     f"(result should be tuple, not string)")
 
-            if is_seq_symbol:
-                seq_item_name = f"{symbol}__ITEM"
-                prods_map[symbol] = [
-                    ProdRule(symbol, (seq_item_name, symbol), next(_sort_n_gen)),
-                    ProdRule(symbol, (), next(_sort_n_gen)),
-                ]
-                prods_map[seq_item_name] = cls._make_prod_rules_list(
-                    seq_item_name, prods_list, terminals, _sort_n_gen)
-                seq_symbols.add(symbol)
-            else:
-                prods_map[symbol] = cls._make_prod_rules_list(
-                    symbol, prods_list, terminals, _sort_n_gen)
+            assert symbol not in prods_map, (
+                f"{symbol} already in {prods_map}")
 
-        if do_factorization:
-            prods_map = cls._factorize_productions(prods_map)
+            prods_map[symbol] = cls._make_prod_rules_list(
+                symbol, productions, terminals, _sort_n_gen, parser_summary)
 
-        return prods_map, seq_symbols
+        return prods_map, seq_symbols, prod_templates
 
     @classmethod
-    def _factorize_productions(cls, prods_map):
+    def _factorize_productions(cls, prods_map, terminals, smart_factorization):
+        # transform the grammar represented by 'prods_map' by factoring out
+        # common prefixes of some productions into separate productions.
         result_rules = {}
+        suffix_symbols = set()
 
         for symbol, prod_rules in prods_map.items():
-            for s, rr in cls._factorize_prods_list(symbol, prod_rules):
+            for s, rr in cls._factorize_prods_list(
+                symbol, prod_rules, suffix_symbols,
+            ):
                 assert s not in result_rules
                 result_rules[s] = rr
 
-        return result_rules
+        # roll-back some factorizations. This will make parsing less efficient
+        # (need to measure), but will make grammar simpler.
+        if smart_factorization:
+            suffixes_to_remove = set()
+            for symbol, rr in sorted(
+                result_rules.items(), key=lambda kv: -len(kv[0])
+            ):
+                # rules are sorted by length. This is to make sure that
+                # 'suffix' symbols are processed before corresponding parent.
+                new_rules = []
+                for prod_rule in rr:
+                    if len(prod_rule.production) != 2:
+                        new_rules.append(prod_rule)
+                        continue
+                    first_symbol = prod_rule.production[0]
+                    if first_symbol not in terminals:
+                        new_rules.append(prod_rule)
+                        continue
+                    last_symbol = prod_rule.production[1]
+                    if last_symbol not in suffix_symbols:
+                        new_rules.append(prod_rule)
+                        continue
+                    suffix_productions = result_rules[last_symbol]
+                    if len(suffix_productions) > 5:
+                        new_rules.append(prod_rule)
+                        continue
+
+                    for suffix_rule in suffix_productions:
+                        new_rules.append(
+                            tuple([first_symbol] + list(suffix_rule.production))
+                        )
+                    suffixes_to_remove.add(last_symbol)
+
+                if len(rr) != len(new_rules):
+                    final_new_rules = []
+                    for i, r in enumerate(new_rules):
+                        if isinstance(r, ProdRule):
+                            final_new_rules.append(ProdRule(symbol, r.production, i))
+                        else:
+                            final_new_rules.append(ProdRule(symbol, r, i))
+                    rr[:] = final_new_rules
+
+            for s in suffixes_to_remove:
+                del result_rules[s]
+                suffix_symbols.remove(s)
+
+        return result_rules, suffix_symbols
 
     @classmethod
-    def _factorize_prods_list(cls, symbol, prod_rules):
+    def _factorize_prods_list(cls, symbol, prod_rules, suffix_symbols):
         # factorize (combine productions with common prefix) all the productions
         # of a given symbol
         #
@@ -1732,6 +2051,7 @@ class LLParser:
         # symbols created during factorization process
 
         result_rules_list = []  # [ProdRule, ]
+        suffix_prods = []  # [(symbol, [ProdRule, ]]
 
         _grp_id_gen = itertools.count()
 
@@ -1742,12 +2062,16 @@ class LLParser:
             else:
                 assert len(chunk) > 0
                 group_production, extra_prods = cls._factorize_common_prefix_prods(
-                    symbol, next(_grp_id_gen), chunk)
+                    symbol, next(_grp_id_gen), chunk, suffix_symbols)
                 for s, rr in extra_prods.items():
-                    yield s, rr
+                    # yield s, rr <- yield suffix symbols later, for prettier result
+                    # TODO: do not use the accumulator suffix_prods after proper
+                    # sorting of map symbols is implemented
+                    suffix_prods.append((s, rr))
                 result_rules_list.append(group_production)
 
         yield symbol, result_rules_list
+        yield from suffix_prods
 
     @classmethod
     def _split_prods_rules(cls, prod_rules):
@@ -1771,7 +2095,9 @@ class LLParser:
             yield cur_chunk
 
     @classmethod
-    def _factorize_common_prefix_prods(cls, symbol, group_id, prods_chunk):
+    def _factorize_common_prefix_prods(
+        cls, symbol, group_id, prods_chunk, suffix_symbols,
+    ):
         # H -> (A, B, C, D)    => H -> (A, B, H__S0x) ;  H__S0x -> (C, D)
         #   -> (A, B, X, Y)                                     -> (X, Y)
         #   -> (A, B, Z)                                        -> (Z, )
@@ -1797,7 +2123,6 @@ class LLParser:
             symbol,
             tuple(list(common_prefix) + [grp_symbol_suffix]),
             prods_chunk[0].sort_n)
-        group_prod_rule._is_factorization_suffix = True
 
         # make productions for the suffix
         suff_prods_counter = itertools.count()
@@ -1809,15 +2134,20 @@ class LLParser:
             )
             for orig_prod_rule in prods_chunk
         ]
+        assert grp_symbol_suffix not in suffix_symbols
+        suffix_symbols.add(grp_symbol_suffix)
 
-        aux_symbols_prod_rules = dict(  # {symbol: [ProdRule, ]}
-            cls._factorize_prods_list(grp_symbol_suffix, suffix_prod_rules)
+        aux_symbols_prod_rules = dict( # {symbol: [ProdRule, ]}
+            cls._factorize_prods_list(
+                grp_symbol_suffix, suffix_prod_rules, suffix_symbols)
         )
 
         return group_prod_rule, aux_symbols_prod_rules
 
     @staticmethod
-    def _make_prod_rules_list(symbol, productions, terminals, sort_n_gen):
+    def _make_prod_rules_list(
+        symbol, productions, terminals, sort_n_gen, parser_summary,
+    ):
         # Constructor helper. Creates list of ProdRule objects from the
         # productions data specified as consctructor argument.
         #
@@ -1832,38 +2162,74 @@ class LLParser:
                 result.append(ProdRule(symbol, production, next(sort_n_gen)))
             elif isinstance(production, list):
                 raise GrammarError(
+                    parser_summary,
                     f"invalid production: {production}. "
                     f"It must be a tuple, not a list")
             elif isinstance(production, AnyTokenExcept):
                 if special_token_encountered:
                     raise GrammarError(
+                        parser_summary,
                         f"productions for symbol '{symbol}' contain several "
                         f"elemens of type 'AnyTokenExcept'. Only one such "
                         f"element is allowed")
                 special_token_encountered = True
-                tokens_to_exclude = set(production.tokens)
-                unexpected_tokens = tokens_to_exclude - terminals
-                if unexpected_tokens:
-                    raise GrammarError(
-                        f"unknown terminal(s) specified in 'AnyTokenExcept' item "
-                        f"of productions of symbol '{symbol}': {unexpected_tokens}")
-                for t in terminals - tokens_to_exclude:
+                for t in production.get_tokens(terminals, symbol, parser_summary):
                     result.append(
                         ProdRule(symbol, (t, ), next(sort_n_gen))
                     )
 
         return result
 
-    def _make_squash_data(self, keep_symbols):
-        # prepare information about potentially squashable symbols
-        # (part of clenup procedure)
+
+#########################
+# Cleanuper
+
+# TODO: make base class
+#    LLParser produces a tree of TElement objects.
+#    This tree usually contains too many elements, corresponding to
+
+class StdCleanuper:
+    """Default Cleanuper, used by LLParser for post-processing parse results.
+
+    Converts TElement sutrees corresponding to ListProds and MapProds into
+    lists and dictionaries.
+    Makes the result tree more compact by removing some elements, which do
+    not contain 'useful' information.
+    TODO: try to descibe cleanup rules.
+    """
+
+    def __init__(self, prod_templates, choice_symbols, keep_symbols, squash_symbols):
+        self.prod_templates = prod_templates
+        self.choice_symbols = choice_symbols
+        self.keep_symbols = keep_symbols
+        self.squash_symbols = squash_symbols
+
+    @classmethod
+    def make(cls, llparser: LLParser, keep_symbols) -> Self:
 
         keep_symbols = set() if keep_symbols is None else keep_symbols
+        keep_symbols.add(llparser.start_symbol_name)
+
+        squash_symbols, choice_symbols = cls._make_squash_data(llparser)
+
+        return StdCleanuper(
+            llparser.prod_templates, choice_symbols, keep_symbols, squash_symbols)
+
+    @classmethod
+    def _make_squash_data(cls, llparser: LLParser):
+        # prepare information about potentially squashable symbols
+        # (part of clenup procedure)
+        #
+        # Method returns:
+        # - squash_symbols: symbols which can potentially be "squashed"
+        # - choice_symbols: symbols which have only zero- or one-value productions
 
         squash_symbols = set()
         choice_symbols = set()
 
-        for symbol, prod_rules in self.prods_map.items():
+        for symbol, prod_rules in llparser.prods_map.items():
+            if symbol in llparser._suffix_symbols:
+                continue
             n_null_prods = sum(
                 1 if len(r.production) == 0 else 0
                 for r in prod_rules)
@@ -1879,3 +2245,90 @@ class LLParser:
                 choice_symbols.add(symbol)
 
         return squash_symbols, choice_symbols
+
+    def gen_detailed_descr(self):
+        yield f"  keep_symbols: {sorted(self.keep_symbols)}"
+        yield f"  choice_symbols: {sorted(self.choice_symbols)}"
+        yield f"  squash_symbols: {sorted(self.squash_symbols)}"
+        if self.prod_templates is None:
+            yield f"  Prod Templates: <n/a>"
+        else:
+            yield f"  Prod Templates:"
+            for _, prod_template in sorted(self.prod_templates.items()):
+                yield f"    - {prod_template}"
+
+    def cleanup(self, t_elem: TElement) -> None:
+        """Transform TElement subtree according to own rules."""
+        self._cleanup(t_elem)
+
+    def _cleanup(
+            self, t_elem: TElement,
+            for_container: bool = False, for_choice: bool = False,
+        ) -> bool:
+        # internal helper to be used during cleanup.
+        #
+        # returns 'elem_no_squash' - bool, which tells parent TElement if
+        # this element can be squashed
+
+        elem_no_squash = for_choice
+
+        if t_elem.name in self.prod_templates:
+            # process lists and maps templates
+            self.prod_templates[t_elem.name].transform_t_elem(t_elem, self)
+            return elem_no_squash
+
+        if t_elem.is_leaf():
+            return elem_no_squash
+
+        values = []
+        values_no_squash = []
+        for child_elem in t_elem.value:
+            if child_elem is None:
+                # TODO: remove the if completely
+                assert False, "I guess it should not ever happen"
+                continue
+            child_no_squash = self._cleanup(
+                child_elem,
+                for_choice = t_elem.name in self.choice_symbols,
+            )
+
+            values.append(child_elem)
+            values_no_squash.append(child_no_squash)
+
+        if not values:
+            t_elem.value = None
+            return elem_no_squash
+
+        t_elem.value = values
+
+        if_squash = t_elem.name in self.squash_symbols
+
+        if if_squash:
+            assert isinstance(t_elem.value, list)
+            assert len(t_elem.value) == 1, f"{t_elem.name=} {t_elem.value=}"
+            assert len(t_elem.value) == len(values_no_squash)
+            child_elem = t_elem.value[0]
+            child_no_squash = values_no_squash[0]
+            assert isinstance(child_elem, TElement)
+
+            keep_parent = for_choice or t_elem.name in self.keep_symbols
+            keep_child = child_no_squash or child_elem.name in self.keep_symbols
+
+            if keep_parent and keep_child:
+                if_squash = False
+                elem_no_squash = True
+            else:
+                squash_parent = keep_child or for_container
+
+        if if_squash:
+            if squash_parent:
+                elem_no_squash = child_no_squash
+                t_elem.name = child_elem.name
+                t_elem.value = child_elem.value
+                t_elem._is_leaf = child_elem._is_leaf
+            else:
+                elem_no_squash = keep_parent
+                t_elem.value = child_elem.value
+                t_elem._is_leaf = child_elem._is_leaf
+
+        return elem_no_squash
