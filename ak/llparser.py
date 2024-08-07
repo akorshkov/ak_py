@@ -518,6 +518,8 @@ class TElement:
         """
         if isinstance(self.value, dict):
             return self.value.get(name, default)
+        if self.value is None:
+            return default
         matches = [
             e
             for e in self.value
@@ -553,7 +555,7 @@ class TElement:
         name exists.
         """
         t_elem = self.get_path_elem(path)
-        if t_elem is None:
+        if t_elem is None or t_elem.value is None:
             return default
         return t_elem.value
 
