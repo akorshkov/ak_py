@@ -1071,6 +1071,15 @@ class MapProds(ProdsTemplate):
         )
         return signature, positions
 
+    def __str__(self):
+        result = self.result_symbol or "??"
+        sep = "" if self.delimiter is None else f"{self.delimiter} "
+
+        return (
+            f"{type(self).__name__}<{result} -> "
+            f"{self.open_br}{self.key_symbol}{self.assign_symbol}"
+            f"{self.val_symbol}{sep}...{self.close_br}>")
+
     def gen_productions(self):
         """Generate grammar productions."""
         self._ensure_initialized()
