@@ -102,14 +102,14 @@ class TestParserTokenizer(unittest.TestCase):
             ], tokens_values)
 
         t = tokens[0]
-        self.assertEqual(t.src_pos.coords, (2, 13))
+        self.assertEqual(t.start_pos.coords, (2, 13))
 
         t = tokens[-2]  # the last 'class' keyword before comment
-        self.assertEqual(t.src_pos.coords, (5, 15))
+        self.assertEqual(t.start_pos.coords, (5, 15))
 
         # just to make sure that 'line', 'col' and 'coords' report same data
-        self.assertEqual(t.src_pos.line, 5)
-        self.assertEqual(t.src_pos.col, 15)
+        self.assertEqual(t.start_pos.line, 5)
+        self.assertEqual(t.start_pos.col, 15)
 
     def test_tokenize_text_with_comments(self):
         """Test misc combinations of comments."""
@@ -130,6 +130,36 @@ class TestParserTokenizer(unittest.TestCase):
             src_name="test string")
         )
 
+        # verify positions of the tokens cover whole text
+        for t, next_t in zip(tokens[:-1], tokens[1:]):
+            if t.end_pos.line == next_t.start_pos.line:
+                # actually it is enough to test that
+                # t.end_pos.coords == next_t.start_pos.coords
+                # Fact that t.end_pos is the same object as next_t.start_pos
+                # is a minor optimization
+                self.assertIs(
+                    t.end_pos, next_t.start_pos,
+                    f"not adjacent {t} and {next_t}",
+                )
+            else:
+                self.assertEqual(
+                    t.end_pos.line + 1, next_t.start_pos.line,
+                    f"not adjacent {t} and {next_t}",
+                )
+                self.assertEqual(
+                    1, next_t.start_pos.col,
+                    f"not adjacent {t} and {next_t}",
+                )
+
+        # check the span of multi-like token. The long comment which
+        # contains "strE", "strF" and "strG".
+        ml_token = next(
+            (t for t in tokens if t.name == 'COMMENT' and "strE" in t.value),
+            None,
+        )
+        self.assertIsNotNone(ml_token, "faild to find the token for test")
+        self.assertEqual(ml_token.span, ((5, 21), (9, 37)))
+
         tokens_values = [
             t.value for t in tokens
             if t.name not in {'SPACE', 'COMMENT'}
@@ -140,7 +170,7 @@ class TestParserTokenizer(unittest.TestCase):
 
         # make sure positions of tokens are not affected by comments
         tt_coords = {
-            t.value: t.src_pos.coords for t in tokens if t.value is not None}
+            t.value: t.start_pos.coords for t in tokens if t.value is not None}
         self.assertEqual(tt_coords['str0'], (2, 13))
         self.assertEqual(tt_coords['str1'], (3, 13))
         self.assertEqual(tt_coords['str2'], (3, 43))
@@ -184,11 +214,15 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
             f"subtree is:\n{x}",
         )
 
-        self.assertEqual(x.src_pos.coords, (1, 1))
+        self.assertEqual(x.span, ((1, 1), (1, 4)))
 
         word_elem = x.value[0]
         self.assertEqual(word_elem.name, 'WORD')
-        self.assertEqual(word_elem.src_pos.coords, (1, 1))
+        self.assertEqual(word_elem.span, ((1, 1), (1, 4)))
+
+        opt_word_elem = x.value[1]
+        self.assertEqual(opt_word_elem.name, 'OPT_WORD')
+        self.assertEqual(opt_word_elem.span, ((1, 4), (1, 4)))
 
 
 class TestSquashing(unittest.TestCase):
@@ -583,24 +617,24 @@ class TestParsingClasslookingObj(unittest.TestCase):
         self.assertEqual(('E', ), x.signature())
         self.assertIsInstance(x.value, list)
         self.assertEqual(len(x.value), 1)  # one class in source text
-        self.assertEqual(x.src_pos.coords, (1, 1))
+        self.assertEqual(x.span, ((1, 1), (1, 31)))
 
         # tree element which corresponds to the whole class
         c = x.value[0]
         self.assertEqual(c.get_path_val('OBJ_NAME'), 'MyClass')
-        self.assertEqual(c.src_pos.coords, (1, 1))
+        self.assertEqual(c.span, ((1, 1), (1, 31)))
 
         # corresponds to text ": Base"
         opt_base_elem = c.get('OPT_PARENT')
-        self.assertEqual(opt_base_elem.src_pos.coords, (1, 15))
+        self.assertEqual(opt_base_elem.span, ((1, 15), (1, 21)))
 
         base_elem = opt_base_elem.get('OBJ_NAME')
         self.assertEqual(base_elem.value, "Base")
-        self.assertEqual(base_elem.src_pos.coords, (1, 17))
+        self.assertEqual(base_elem.span, ((1, 17), (1, 21)))
 
         # contents elem: coresponds to text "some"
         cnt_elem = c.get('CONTENTS')
-        self.assertEqual(cnt_elem.src_pos.coords, (1, 24))
+        self.assertEqual(cnt_elem.span, ((1, 24), (1, 28)))
 
     def test_parsing_keep_symbols(self):
         """Test prohibit to remove some nodes during cleanup."""
@@ -736,18 +770,18 @@ class TestArithmeticsParser(unittest.TestCase):
         #      WORD: bb
 
         self.assertEqual(('E', 'SLAG'), x.signature())
-        self.assertEqual(x.src_pos.coords, (1, 1))
+        self.assertEqual(x.span, ((1, 1), (1, 8)))
 
         x = x.get('SLAG')
         self.assertEqual(('SLAG', 'WORD', '*', 'SLAG'), x.signature())
-        self.assertEqual(x.src_pos.coords, (1, 1))
+        self.assertEqual(x.span, ((1, 1), (1, 8)))
 
         self.assertEqual(
-            x.value[2].src_pos.coords, (1, 6),
+            x.value[2].span, ((1, 6), (1, 8)),
             "corresponds to source text 'bb'")
 
         self.assertEqual(
-            x.value[2].get('WORD').src_pos.coords, (1, 6),
+            x.value[2].get('WORD').span, ((1, 6), (1, 8)),
             "corresponds to source text 'bb'")
 
 
@@ -783,7 +817,7 @@ class TestArithmeticsParser(unittest.TestCase):
     def test_expression_with_brackets(self):
         """Test more complex valid expression with brackets"""
         parser = self._make_test_parser()
-        #                 123456789 123456789
+        #                 123456789 123456789 123456789
         x = parser.parse("(a) + ( b - c * d ) + ( x )")
 
         self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
@@ -794,8 +828,8 @@ class TestArithmeticsParser(unittest.TestCase):
         second_slag = x.value[2]
         self.assertEqual(('E', 'SLAG', '+', 'E'), second_slag.signature())
         self.assertEqual(
-            second_slag.src_pos.coords, (1, 7),
-            "corresponds to text '( b - c * d )'")
+            second_slag.span, ((1, 7), (1, 28)),
+            "corresponds to text '( b - c * d ) + ( x )'")
 
     def test_bad_expression(self):
         # test parsing bad expressions
@@ -864,43 +898,47 @@ class TestListParsers(unittest.TestCase):
 
         parser = self._make_test_parser('[', '?LIST_ITEM', ',', ']')
 
+        #                 123456789 1234
         x = parser.parse("  [ a, b,, d]")
+        # after the cleanup the result value is the parsed list.
+        # it corresponds to text '[ a, b,, d]'
         self.assertEqual(('E', ), x.signature())
         self.assertTrue(x.is_leaf(), f"it's not a tree node, so it's a leaf: {x}")
         self.assertEqual(['a', 'b', None, 'd'], x.value)
-        self.assertEqual(x.src_pos.coords, (1, 3))
+        self.assertEqual(x.span, ((1, 3), (1, 14)))
 
         x = parser.parse("[ ]")
         self.assertEqual(('E', ), x.signature())
         self.assertTrue(x.is_leaf(), f"it's not a tree node, so it's a leaf: {x}")
         self.assertEqual([], x.value)
 
-        #                 123456789 123456789
+        #                 123456789 123456789 12
         x = parser.parse("[a, b, [d, e, f], c,]")
         self.assertEqual(('E', ), x.signature())
         self.assertEqual(['a', 'b', ['d', 'e', 'f'], 'c'], x.value)
-        self.assertEqual(x.src_pos.coords, (1, 1))
+        self.assertEqual(x.span, ((1, 1), (1, 22)))
 
     def test_list_parser_std_item_not_nullable(self):
         """Test list with brackets and delimiter. Item is NOT nullable"""
         parser = self._make_test_parser('[', 'LIST_ITEM', ',', ']')
 
+        #                 123456789 123456
         x = parser.parse("  [ a, b, c, d]")
         self.assertEqual(('E', ), x.signature())
         self.assertTrue(x.is_leaf(), f"it's not a tree node, so it's a leaf: {x}")
         self.assertEqual(['a', 'b', 'c', 'd'], x.value)
-        self.assertEqual(x.src_pos.coords, (1, 3))
+        self.assertEqual(x.span, ((1, 3), (1, 16)))
 
         x = parser.parse("[ ]")
         self.assertEqual(('E', ), x.signature())
         self.assertTrue(x.is_leaf(), f"it's not a tree node, so it's a leaf: {x}")
         self.assertEqual([], x.value)
 
-        #                 123456789 123456789
+        #                 123456789 123456789 12
         x = parser.parse("[a, b, [d, e, f], c,]")
         self.assertEqual(('E', ), x.signature())
         self.assertEqual(['a', 'b', ['d', 'e', 'f'], 'c'], x.value)
-        self.assertEqual(x.src_pos.coords, (1, 1))
+        self.assertEqual(x.span, ((1, 1), (1, 22)))
 
         with self.assertRaises(llparser.ParsingError):
             # one of values is missing, but list item is not nullable
@@ -1175,7 +1213,7 @@ f /* g, h
 
         err_msg = str(exc.exception)
         self.assertIn("span is never closed", err_msg)
-        self.assertIn("(2, 19)", err_msg)
+        self.assertIn("(2, 20)", err_msg)
 
 
 class TestMapGrammar(unittest.TestCase):

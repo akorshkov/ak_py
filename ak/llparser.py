@@ -92,7 +92,10 @@ class Error(Exception):
 
 
 class SrcPos:
-    """Human-readable description of a position in source text."""
+    """Human-readable description of a position in source text.
+
+    Line and column enumeration is 1-based.
+    """
     __slots__ = 'src_name', 'coords'
 
     def __init__(self, src_name, line, col):
@@ -156,7 +159,7 @@ class GrammarIsRecursive(GrammarError):
 class ParsingError(Error):
     """Unexpected token kind of errors."""
     def __init__(self, symbol, next_tokens, attempted_prod_rules):
-        self.src_pos = next_tokens[0].src_pos
+        self.src_pos = next_tokens[0].start_pos
         attempted_productions = [pr.production for pr in attempted_prod_rules]
         msg = (
             f"fail at {next_tokens}.\n"
@@ -167,22 +170,28 @@ class ParsingError(Error):
 class _Token:
     # information about a single token
     # (first phase of parsing is to split text into tokens)
-    __slots__ = 'name', 'src_pos', 'value'
+    __slots__ = 'name', 'value', 'start_pos', 'end_pos'
 
-    def __init__(self, name, src_pos, value):
+    def __init__(self, name, value, start_pos, end_pos):
         self.name = name
-        self.src_pos = src_pos
         self.value = value
+        self.start_pos = start_pos  # SrcPos
+        self.end_pos = end_pos  # SrcPos
 
     def __str__(self):
-        if self.src_pos is not None:
-            s = f"{self.name}({self.src_pos.line},{self.src_pos.col}){{{self.value}}}"
-        else:
-            s = f"{self.name}(-,-){{{self.value}}}"
-        return s
+        _mk_coords = lambda pos: f"{pos.line},{pos.col}"
+        return (
+            f"{self.name}({_mk_coords(self.start_pos)}-{_mk_coords(self.end_pos)})"
+            f"{{{self.value}}}"
+        )
 
     def __repr__(self):
         return str(self)
+
+    @property
+    def span(self):
+        """Returns ((start_line, start_column), (end_line, end_column))"""
+        return (self.start_pos.coords, self.end_pos.coords)
 
 
 class _Tokenizer:
@@ -232,10 +241,6 @@ class _Tokenizer:
         - text: text to split into tokens. It may be:
           - string. In this case it is split into lines first
           - Iterable[str]
-
-        Parsing is performed in two phases: first all comments are removed,
-        then remaining text is split into tokens.
-        Comments and 'space' tokens are not yielded.
         """
         if isinstance(text, str):
             enumereted_lines = enumerate(
@@ -249,10 +254,10 @@ class _Tokenizer:
 
         cur_span_symbol = None
         cur_span_start_text = None
-        cur_span_start_pos = None
         cur_span_lines = None
         span_body_matcher = None
 
+        prev_end_pos = SrcPos(src_name, 1, 1)
         for line_id, text_line in enumereted_lines:
             col = 0
             while col < len(text_line):
@@ -271,13 +276,15 @@ class _Tokenizer:
                         value = "\n".join(cur_span_lines)
                         token_name = self.synonyms.get(
                             cur_span_symbol, cur_span_symbol)
+                        new_end_pos = SrcPos(src_name, line_id, match.end() + 1)
                         yield _Token(
                             token_name,
-                            SrcPos(src_name, line_id, col + 1),
-                            value)
+                            value,
+                            prev_end_pos, new_end_pos,
+                        )
+                        prev_end_pos = new_end_pos
                         cur_span_symbol = None
                         cur_span_start_text = None
-                        cur_span_start_pos = None
                         cur_span_lines = None
                         span_body_matcher = None
                         col = match.end()
@@ -295,7 +302,6 @@ class _Tokenizer:
                         # like opening of a comment '/*'.
                         cur_span_symbol = token_name
                         cur_span_start_text = text_line
-                        cur_span_start_pos = (line_id, col)
                         cur_span_lines = []
                     else:
                         token_name = self.synonyms.get(token_name, token_name)
@@ -303,20 +309,23 @@ class _Tokenizer:
                         if keyword_token is not None:
                             # this token is not a word, but keyword
                             token_name = keyword_token
+                        new_end_pos = SrcPos(src_name, line_id, match.end() + 1)
                         yield _Token(
                             token_name,
-                            SrcPos(src_name, line_id, col + 1),
-                            value)
+                            value,
+                            prev_end_pos, new_end_pos,
+                        )
+                        prev_end_pos = new_end_pos
                     col = match.end()
 
         if cur_span_symbol is not None:
             raise LexicalError(
-                SrcPos(src_name, cur_span_start_pos[0], cur_span_start_pos[1]),
+                prev_end_pos,
                 cur_span_start_text,
                 "span is never closed")
 
         yield _Token(
-            self.end_token_name, None, None)
+            self.end_token_name, None, prev_end_pos, prev_end_pos)
 
     @classmethod
     def _prepare_span_matchers(cls, span_matchers, matcher):
@@ -374,9 +383,9 @@ class TElement:
         - [misc_value, ] - for nodes, corresponding to list productions
         - {key: TElement} - for maps
     """
-    __slots__ = 'name', 'value', '_is_leaf', 'src_pos'
+    __slots__ = 'name', 'value', 'start_pos', 'end_pos', '_is_leaf'
 
-    def __init__(self, name, value, *, src_pos=None, is_leaf=None):
+    def __init__(self, name, value, *, start_pos=None, end_pos=None, is_leaf=None):
         self.name = name
         self.value = value
         is_valid_inner_node = (
@@ -393,25 +402,27 @@ class TElement:
                     "for not-leaf elements the value must be a "
                     "list of TElement objects")
 
+        assert (start_pos is None) == (end_pos is None), (
+            f"{start_pos=}; {end_pos=} - only one is specified")
+
         if self._is_leaf:
-            if self.value is not None:
-                assert src_pos is not None, (
-                    "src position must be explicitely specified for "
-                    "not-null leaf elements")
-            self.src_pos = src_pos
+            assert start_pos is not None, (
+                f"src position must be explicitely specified for a leaf TElement: "
+                f"{name=}, {value=}, {start_pos=}"
+            )
+            self.start_pos = start_pos
+            self.end_pos = end_pos
         else:
-            if src_pos is not None:
-                self.src_pos = src_pos
-            else:
+            # during parsing the positions of non-leaf node are calculated
+            # but these positions are specified explicitely during
+            # cleanup process and cloning
+            if start_pos is None:
                 assert is_valid_inner_node
-                for t_elem in self.value:
-                    if t_elem.src_pos is not None:
-                        self.src_pos = t_elem.src_pos
-                        break
-                else:
-                    # all the child elements of this TElement are nulls - there
-                    # is no source text corresponding to this TElement
-                    self.src_pos = None
+                self.start_pos = self.value[0].start_pos
+                self.end_pos = self.value[-1].end_pos
+            else:
+                self.start_pos = start_pos
+                self.end_pos = end_pos
 
     def __str__(self):
         return "\n".join(self.gen_descr())
@@ -435,11 +446,18 @@ class TElement:
         prod_tuple = () if self.is_leaf() else tuple(x.name for x in self.value)
         return TElemSignature(self.name, prod_tuple)
 
+    @property
+    def span(self):
+        """Returns ((start_line, start_column), (end_line, end_column))"""
+        return (self.start_pos.coords, self.end_pos.coords)
+
     def clone(self):
         """Create a copy of self."""
         return TElement(
             self.name, self._clone_value(self.value),
-            src_pos=self.src_pos, is_leaf=self._is_leaf)
+            is_leaf=self._is_leaf,
+            start_pos=self.start_pos, end_pos=self.end_pos,
+        )
 
     @classmethod
     def _clone_value(cls, value):
@@ -1222,13 +1240,6 @@ class _StackElement:
 
     def next_matched(self, value, new_token_pos):
         """Register found matching value for current symbol in current production."""
-        if value is None:
-            # current symbol matches null production
-            assert self.cur_token_pos == new_token_pos
-            assert len(self.values) == 0
-            self.values.append(TElement(None, None))
-            return
-
         assert isinstance(value, TElement)
         self.values.append(value)
         self.cur_token_pos = new_token_pos
@@ -1482,7 +1493,7 @@ class LLParser:
             self._log_cur_prod(parse_stack, tokens)
 
         while True:
-            top = parse_stack[-1]
+            top = parse_stack[-1]  # _StackElement
             cur_prod = top.get_cur_prod()
             if len(top.values) == len(cur_prod.production):
                 # production matched
@@ -1494,8 +1505,17 @@ class LLParser:
                     # result of the production is empty.
                     # really not sure if to leave it [] or make it None.
                     new_elem_value = None
+                    # anyway, as there are no child elements it's necessary
+                    # to find out the element position now
+                    cur_src_pos = tokens[top.cur_token_pos].start_pos
+                    t_elem = TElement(
+                        top.symbol, new_elem_value,
+                        start_pos=cur_src_pos,
+                        end_pos=cur_src_pos,
+                    )
+                else:
+                    t_elem = TElement(top.symbol, new_elem_value)
 
-                t_elem = TElement(top.symbol, new_elem_value)
                 if (len(cur_prod.production) > 0
                     and cur_prod.production[-1] in self._suffix_symbols
                 ):
@@ -1539,7 +1559,8 @@ class LLParser:
                     top.next_matched(
                         TElement(
                             cur_symbol, next_token.value,
-                            src_pos=next_token.src_pos,
+                            start_pos=next_token.start_pos,
+                            end_pos=next_token.end_pos,
                         ),
                         top.cur_token_pos+1)
                     continue
