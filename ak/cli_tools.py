@@ -91,6 +91,7 @@ class ArgParser:
               ('command_2', ('help_text', 'description)),
             ]
         - default_command: if specified, it must be one of 'commands'. By default
+            the first command is the default.
         - _no_log: do not display '-v' option
         - _no_log_file: does not affect arguments procesing, but in case it is
             specified, adds '_no_log_file' attribute to the result 'args'.
