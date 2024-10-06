@@ -102,6 +102,9 @@ class SrcPos:
         self.src_name = src_name
         self.coords = (line, col)
 
+    def __str__(self):
+        return f"<{self.src_name}>{self.coords}"
+
     @property
     def line(self):
         """Return line number of the position (first line has number 1)"""
@@ -450,6 +453,65 @@ class TElement:
     def span(self):
         """Returns ((start_line, start_column), (end_line, end_column))"""
         return (self.start_pos.coords, self.end_pos.coords)
+
+    def get_orig_text(self, text):
+        """Get part of the original text which corresponds to the TElement.
+
+        The TElement object knows only the location of the corresponding text in the
+        original source text, so the original text is required.
+
+        Arguments:
+        - text: the whole source text. It may be:
+          - string. In this case it is split into lines first
+          - Iterable[str]
+        """
+        assert self.start_pos is not None
+        assert self.end_pos is not None
+        assert self.start_pos.coords <= self.end_pos.coords, (
+            f"TElement '{self}' has invalid coordinates in source text. "
+            f"End position {self.end_pos} comes before the "
+            f"start position {self.start_pos}")
+
+        start_l, start_c = self.start_pos.coords
+        end_l, end_c = self.end_pos.coords
+        start_l -= 1
+        start_c -= 1
+        end_l -= 1
+        end_c -= 1
+
+        assert start_l >= 0 and start_c >= 0 and end_l >= 0 and end_c >= 0
+
+        if isinstance(text, str):
+            lines = text.split('\n')
+        elif isinstance(text, list):
+            # the text is already a list of strings
+            lines = text
+        else:
+            assert isinstance(text, collections.abc.Iterable), (
+                f"unexpected type of the object to parse: {str(type(text))}")
+            lines = list(text)
+
+        assert end_l < len(lines), (
+            f"invalid TElement position {self.end_pos}. Last line of source text "
+            f"has number {len(lines)}")
+
+        if start_l == end_l:
+            assert end_c <= len(lines[end_l]), (
+                f"invalid TElement position {self.end_pos}. Length of line "
+                f"#{self.end_pos.line} is {len(lines[end_l])}")
+            result = lines[start_l][start_c:end_c]
+        else:
+            assert start_c <= len(lines[start_l]), (
+                f"invalid TElement position {self.start_pos}. Length of line "
+                f"#{self.start_pos.line} is {len(lines[start_l])}")
+            result_lines = [lines[start_l][start_c:]]
+            for i in range(start_l+1, end_l):
+                result_lines.append(lines[i])
+            assert end_c <= len(lines[end_l])
+            result_lines.append(lines[end_l][:end_c])
+            result = "\n".join(result_lines)
+
+        return result
 
     def clone(self):
         """Create a copy of self."""
@@ -1466,7 +1528,19 @@ class LLParser:
         self._verify_grammar_structure_part2(nullables, self._summary)
 
     def parse(self, text, *, src_name="input text", debug=False, do_cleanup=True):
-        """Parse the text."""
+        """Parse the text.
+
+        Arguments:
+        - text: text to parse. It may be:
+          - string. In this case it is split into lines first
+          - Iterable[str]
+        - src_name: arbitrary name of the input, to be used in diagnostic
+            messages. For example name of the file the text comes from.
+        - debug: print parsing details to log
+        - do_cleanup: (=True) - cleanup the result (parsed tree). Cleanup
+            process converts subtrees corresponding to lists into actual lists,
+            etc. Check StdCleanuper class documentation for more details.
+        """
         tokens = [
             t for t in self.tokenizer.tokenize(text, src_name)
             if t.name not in self.skip_tokens

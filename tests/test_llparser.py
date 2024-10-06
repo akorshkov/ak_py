@@ -608,9 +608,10 @@ class TestParsingClasslookingObj(unittest.TestCase):
 
         parser = self._make_test_parser()
 
-        #                          1         2
-        #                 123456789 123456789 123456789
-        x = parser.parse("class MyClass : Base { some };")
+        #                    1         2
+        #           123456789 123456789 123456789
+        src_text = "class MyClass : Base { some };"
+        x = parser.parse(src_text)
 
         self.assertIsInstance(x, TElement)
         self.assertEqual(x.name, 'E')
@@ -627,6 +628,7 @@ class TestParsingClasslookingObj(unittest.TestCase):
         # corresponds to text ": Base"
         opt_base_elem = c.get('OPT_PARENT')
         self.assertEqual(opt_base_elem.span, ((1, 15), (1, 21)))
+        self.assertEqual(opt_base_elem.get_orig_text(src_text), ": Base")
 
         base_elem = opt_base_elem.get('OBJ_NAME')
         self.assertEqual(base_elem.value, "Base")
@@ -692,6 +694,38 @@ class TestParsingClasslookingObj(unittest.TestCase):
         self.assertIsNone(c0.get('BAD_CHILD'))
         self.assertIsNone(c0.get_path_elem('BAD_ELEM.PATH'))
         self.assertIsNone(c0.get_path_val('BAD_ELEM.PATH'))
+
+    def test_orig_text_missing_element(self):
+        """Test behavior of get_orig_text method."""
+        parser = self._make_test_parser()
+
+        #                    1         2
+        #           123456789 123456789 123
+        src_text = "class MyClass { some };"
+        x = parser.parse(src_text)
+
+        self.assertEqual(x.get_orig_text(src_text), src_text)
+
+        c0 = x.value[0]
+        obj_name_elem = c0.get_path_elem('OBJ_NAME')
+        self.assertEqual(obj_name_elem.get_orig_text(src_text), "MyClass")
+
+        null_t_elem = c0.get_path_elem('OPT_PARENT')
+        self.assertTrue(null_t_elem.is_leaf())
+        self.assertIsNone(null_t_elem.value)
+
+        self.assertEqual(
+            null_t_elem.start_pos.line, 1,
+            "the position of this empty element in source text is still defined "
+            "and it is must be in line #1")
+
+        self.assertEqual(null_t_elem.get_orig_text(src_text), "")
+
+        self.assertIn(
+            null_t_elem.start_pos.col, [14, 15],
+            "the position of this empty element in source text is still defined. "
+            "Column number must be either immediately after 'MyClass' "
+            "or immediately before the following '{'.")
 
 
 class TestArithmeticsParser(unittest.TestCase):
@@ -817,8 +851,9 @@ class TestArithmeticsParser(unittest.TestCase):
     def test_expression_with_brackets(self):
         """Test more complex valid expression with brackets"""
         parser = self._make_test_parser()
-        #                 123456789 123456789 123456789
-        x = parser.parse("(a) + ( b - c * d ) + ( x )")
+        #           123456789 123456789 123456789
+        src_text = "(a) + ( b - c * d ) + ( x )"
+        x = parser.parse(src_text)
 
         self.assertEqual(('E', 'SLAG', '+', 'E'), x.signature())
 
@@ -830,6 +865,9 @@ class TestArithmeticsParser(unittest.TestCase):
         self.assertEqual(
             second_slag.span, ((1, 7), (1, 28)),
             "corresponds to text '( b - c * d ) + ( x )'")
+        self.assertEqual(
+            second_slag.get_orig_text(src_text),
+            "( b - c * d ) + ( x )")
 
     def test_bad_expression(self):
         # test parsing bad expressions
@@ -1423,6 +1461,33 @@ class TestMapGrammar(unittest.TestCase):
         self.assertEqual({'a'}, the_map.keys())
 
         self.assertEqual(the_map['a'], 'aa')
+
+    def test_get_orig_text(self):
+        """Test method which gets original text corresponding to TElement."""
+        parser = self._make_test_parser()
+
+        src_text = """[
+              a, [], {}, <x1>,
+              {
+                k1: <{k11: v11, k12: {}}>,
+                k2: v2,
+                k3: [v31, v31, v33],
+                k4: {},
+                k5: {
+                  k11: [],
+                  k12: {k112: v112},
+                }
+              }
+            ]"""
+        x = parser.parse(src_text)
+        self.assertIsInstance(x, TElement)
+
+        # there are no leading or trailing spaces around the whole list.
+        # so, original text corresponding to E is the whole source text
+        self.assertEqual(x.get_orig_text(src_text), src_text)
+
+        obj_t_elem = x.value[0].value[4]['k1']
+        self.assertEqual(obj_t_elem.get_orig_text(src_text), "<{k11: v11, k12: {}}>")
 
     def test_telements_clone(self):
         """Test TElement helper methods"""
