@@ -1500,14 +1500,6 @@ class LLParser:
 
         self._verify_grammar_structure_part1(self._summary)
 
-        self.prods_map[self._INIT_PRODUCTION_NAME] = [
-            ProdRule(
-                self._INIT_PRODUCTION_NAME,
-                (self.start_symbol_name, self._END_TOKEN_NAME, ),
-                -1,
-            )
-        ]
-
         nullables = self._get_nullables(self.prods_map)
         self._summary.nullables = nullables
 
@@ -1527,7 +1519,10 @@ class LLParser:
 
         self._verify_grammar_structure_part2(nullables, self._summary)
 
-    def parse(self, text, *, src_name="input text", debug=False, do_cleanup=True):
+    def parse(
+        self, text, *,
+        src_name="input text", debug=False, do_cleanup=True, start_symbol_name=None,
+    ):
         """Parse the text.
 
         Arguments:
@@ -1540,7 +1535,17 @@ class LLParser:
         - do_cleanup: (=True) - cleanup the result (parsed tree). Cleanup
             process converts subtrees corresponding to lists into actual lists,
             etc. Check StdCleanuper class documentation for more details.
+        - start_symbol_name: optional name of the start symbol.
+            Usually the start_symbol_name is specified in constructor. This
+            argument is supposed to be used for parser debugging purposes only,
+            to check how small parts of source text are parsed.
         """
+        if start_symbol_name is not None:
+            assert start_symbol_name in self.prods_map, (
+                f"unknown start parsing symbol '{start_symbol_name}' specified")
+        else:
+            start_symbol_name = self.start_symbol_name
+
         tokens = [
             t for t in self.tokenizer.tokenize(text, src_name)
             if t.name not in self.skip_tokens
@@ -1560,7 +1565,12 @@ class LLParser:
         # init parse stack
         _put_on_stack(_StackElement(
             self._INIT_PRODUCTION_NAME, 0,
-            self.prods_map[self._INIT_PRODUCTION_NAME]))
+            [ProdRule(
+                self._INIT_PRODUCTION_NAME,
+                (start_symbol_name, self._END_TOKEN_NAME),
+                -1,
+            )]
+        ))
 
         longest_stack = []
         if debug:

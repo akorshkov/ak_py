@@ -727,6 +727,25 @@ class TestParsingClasslookingObj(unittest.TestCase):
             "Column number must be either immediately after 'MyClass' "
             "or immediately before the following '{'.")
 
+    def test_explicit_start_symbol(self):
+        """Test parsing with explicitely specified start symbol."""
+        parser = self._make_test_parser()
+
+        # parser expects source text looking like this:
+        # "class MyClass : Base { some };"
+
+        x = parser.parse(" : Base", start_symbol_name='OPT_PARENT')
+        self.assertIsInstance(x, TElement)
+        self.assertEqual(x.name, 'OPT_PARENT')
+        self.assertEqual(x.value[0].name, ":")
+        self.assertEqual(x.value[1].name, 'OBJ_NAME')
+        self.assertEqual(x.value[1].value, "Base")
+
+        x = parser.parse("some", start_symbol_name='CONTENTS')
+        self.assertIsInstance(x, TElement)
+        self.assertEqual(x.name, 'CONTENTS')
+        self.assertEqual(x.value, "some")
+
 
 class TestArithmeticsParser(unittest.TestCase):
     """Test simple parser of arithmetic operations."""
