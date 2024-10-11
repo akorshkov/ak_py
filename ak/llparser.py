@@ -639,6 +639,81 @@ class TElement:
             return default
         return t_elem.value
 
+    def find_all(self, predicate=None):
+        """Returns a list of child TElement objects which match the predicate.
+
+        Arguments:
+        - predicate: may be one of
+          - None (default) - return all objects
+          - str - interpreted as a name of TElement
+          - iterable(str) - interpreted as a collection of matching TElement names
+          - callable - callable predicate TElement => bool.
+        """
+        return list(self.iter_all(predicate))
+
+    def find_first(self, predicate=None):
+        """Returns a single TElement object which match the predicate or None.
+
+        Arguments are similar to 'find_all' method.
+        """
+        for t_elem in self.iter_all(predicate):
+            return t_elem
+        return None
+
+    def iter_all(self, predicate=None):
+        """Yield all the child TElement objects which match the predicate.
+
+        Arguments are similar to 'find_all' method.
+        """
+        if predicate is None:
+            _predicate = lambda t_elem: True
+        elif callable(predicate):
+            _predicate = predicate
+        elif isinstance(predicate, str):
+            # this is a name of TElement
+            _predicate = lambda t_elem: t_elem.name == predicate
+        elif isinstance(predicate, collections.abc.Iterable):
+            # this is a list of acceptable TElement names
+            acceptable_names = set(predicate)
+            _predicate = lambda t_elem: t_elem.name in acceptable_names
+        else:
+            assert False, (
+                f"unexpected predicate of type {type(predicate)} specified. "
+                f"The predicate can be None, string, list of strings or callable")
+
+        for t_elem in self._iter_children():
+            if _predicate(t_elem):
+                yield t_elem
+
+    def _iter_children(self):
+        # iterate through all the child TElement objects
+
+        cur_stack = [[self, ], ]
+        cur_pos = [0]
+
+        while cur_stack:
+            assert len(cur_stack) == len(cur_pos)
+            if cur_pos[-1] < 0:
+                cur_pos.pop()
+                cur_stack.pop()
+                continue
+            cur_elem = cur_stack[-1][cur_pos[-1]]
+            cur_pos[-1] -= 1
+            value = None
+            if isinstance(cur_elem, TElement):
+                yield cur_elem
+                value = cur_elem.value
+
+            children_list = None
+            if isinstance(value, list):
+                children_list = value
+            elif isinstance(value, dict):
+                children_list = [x for item in value.items() for x in item]
+
+            if children_list:
+                cur_stack.append(children_list)
+                cur_pos.append(len(children_list) - 1)
+
 
 class ProdRule:
     """Info about production rule 'A' -> ('B', 'C', 'D').
@@ -1060,8 +1135,8 @@ class MapProds(ProdsTemplate):
             f"'open_br' and 'close_br' can be None only simultaneously: "
             f"{open_br=}; {close_br=}")
 
-        assert assign_symbol is not None
-        assert delimiter is not None
+        assert assign_symbol is not None, "MapProds w/o assign_symbol not implemented"
+        assert delimiter is not None, "MapProds w/o delimiter not implemented"
 
         if optional is not None:
             assert open_br is not None, (

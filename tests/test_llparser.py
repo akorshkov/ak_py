@@ -573,8 +573,6 @@ class TestParsingClasslookingObj(unittest.TestCase):
                 'COMMA': ',',
                 'BR_OPEN_CURL': '{',
                 'BR_CLOSE_CURL': '}',
-                'BR_OPEN': '[',
-                'BR_CLOSE': ']',
                 'COLON': ':',
                 'SEMI_COLON': ';',
             },
@@ -745,6 +743,189 @@ class TestParsingClasslookingObj(unittest.TestCase):
         self.assertIsInstance(x, TElement)
         self.assertEqual(x.name, 'CONTENTS')
         self.assertEqual(x.value, "some")
+
+    def test_find_all_method(self):
+        """Test TElement get methods."""
+        parser = self._make_test_parser()
+
+        x = parser.parse(
+            "class MyClass : Base { some };"
+            "class MyClass1 : Base1 { some1 };"
+        )
+
+        # find_all w/o arguments should return all the TElement objects.
+        # Let's check it returns at least something
+        t_elems = list(x.find_all())
+        self.assertTrue(len(t_elems) > 0)
+        for t_elem in t_elems:
+            self.assertIsInstance(t_elem, TElement)
+
+        # test search by name
+        classes_e_elems = x.find_all('CLASS')
+        self.assertEqual(len(classes_e_elems), 2)
+
+        # test search in subtree
+        t_elems = classes_e_elems[0].find_all('OPT_PARENT')
+        self.assertEqual(len(t_elems), 1)
+
+        # test search by list of names
+        t_elems = x.find_all(['CLASS', 'OPT_PARENT'])
+        self.assertEqual(len(t_elems), 4)
+
+        # test filtering using lambda
+        # we expect to find 2 'CLASS' and two 'OPT_PARENT' elements because
+        # each of them has 'OBJ_NAME' child
+        t_elems = x.find_all(
+            lambda t_elem: t_elem.get_path_elem('OBJ_NAME') is not None)
+        self.assertEqual(len(t_elems), 4)
+        for t_elem in t_elems:
+            self.assertIn(t_elem.name, {'CLASS', 'OPT_PARENT'})
+
+
+class TestComplexStructureOfClasslooingObjects(unittest.TestCase):
+    """Test parser of a complex combination of lists, maps and objects."""
+
+    def _make_test_parser(self):
+        # prepare the parser for tests
+        return LLParser(
+            r"""
+            (?P<SPACE>\s+)
+            |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
+            |(?P<COMMA>,)
+            |(?P<BR_OPEN>\()
+            |(?P<BR_CLOSE>\))
+            |(?P<BR_OPEN_CURL>\{)
+            |(?P<BR_CLOSE_CURL>\})
+            |(?P<BR_OPEN_SQ>\[)
+            |(?P<BR_CLOSE_SQ>\])
+            |(?P<COLON>:)
+            |(?P<EQUAL>=)
+            |(?P<SEMI_COLON>;)
+            """,
+            synonyms={
+                'COMMA': ',',
+                'BR_OPEN': '(',
+                'BR_CLOSE': ')',
+                'BR_OPEN_CURL': '{',
+                'BR_CLOSE_CURL': '}',
+                'BR_OPEN_SQ': '[',
+                'BR_CLOSE_SQ': ']',
+                'COLON': ':',
+                'EQUAL': '=',
+                'SEMI_COLON': ';',
+            },
+            keywords={
+                ('WORD', 'class'): '$CLASS',
+            },
+            productions={
+                'E': [
+                    ('SECTIONS_LIST', ),
+                ],
+                'SECTIONS_LIST': llparser.ListProds('[', 'SECTION', ',', ']'),
+                'SECTION': [
+                    ('OBJ_NAME', '=', 'CLASSES_MAP'),
+                ],
+                'CLASSES_MAP': llparser.MapProds(
+                    '{', 'CLASS_KEY', ':', 'CLASS', ',', '}'),
+                'CLASS_KEY': [
+                    ('OBJ_NAME', '(', 'WORD', ')'),
+                ],
+                'OBJ_NAME': [
+                    ('WORD', ),
+                ],
+                'CLASS': [
+                    ('$CLASS', 'OBJ_NAME', 'OPT_PARENT', '{', 'CONTENTS', '}'),
+                ],
+                'OPT_PARENT': [
+                    (':', 'OBJ_NAME'),
+                    None,
+                ],
+                'CONTENTS': [
+                    ('OBJ_NAME', ),
+                    ('SECTIONS_LIST', ),
+                ],
+            },
+            keep_symbols={'CONTENTS',},
+        )
+
+    def test_find_all_withing_maps(self):
+        """Test that find_all method finds objects inside maps/dictionaries.
+
+        After the cleanup the parsed tree contains not only TElement objects.
+        Some of the objects are simple lists or dictionaries.
+
+        Still the find_all method should iterate through all the elements.
+        """
+
+        parser = self._make_test_parser()
+
+        src_text = """
+            [
+                SECTION1 = {
+                    S1CL1(S1P1) : class class1 : base1 { content1 },
+                    S1KEY(AAAA) : class class2 {[
+                        inner_section = {
+                            inn1(op1) : class classInner : baseInner {[
+                                sect_ii = {
+                                    sii(kii) : class clsii { cont_ii }
+                                }
+                            ]},
+                            inn2(op2) : class classInner2 {
+                                inner_2_contents
+                            }
+                        }
+                    ]}
+                },
+                SECTION2 = {
+                    S2KEY1(S2P1) : class class3 : baseX {[
+                        inner_section_2 = {
+
+                        }
+                    ]}
+                }
+            ]
+        """
+        x = parser.parse(src_text)
+
+        # 1. examine all the 'OBJ_NAME' elements.
+        expected_obj_names = set()
+        # there are 5 SECTION objects
+        # Name of the each of them is an OBJ_NAME TElement
+        expected_obj_names.update(
+            ['SECTION1', 'inner_section', 'sect_ii', 'SECTION2', 'inner_section_2'])
+        # then there are 6 different classes
+        expected_obj_names.update(
+            ['class1', 'class2', 'classInner', 'clsii', 'classInner2', 'class3'])
+        # if class has a base - it contains OBJ_NAME
+        expected_obj_names.update(['base1', 'baseInner', 'baseX'])
+        # there is a 'CLASS_KEY' before each CLASS. Each of them has OBJ_NAME
+        expected_obj_names.update(
+            ['S1CL1', 'S1KEY', 'inn1', 'sii', 'inn2', 'S2KEY1'])
+        # and in case class content is a single word - it is also OBJ_NAME
+        expected_obj_names.update(['content1', 'cont_ii', 'inner_2_contents'])
+
+        actual_obj_names = {t.value for t in x.iter_all('OBJ_NAME')}
+
+        self.assertEqual(expected_obj_names, actual_obj_names)
+
+        # 1. find a single element
+        t_elem = x.find_first(
+            lambda t_elem: t_elem.get_path_val('OBJ_NAME') == 'class3')
+        self.assertIsNotNone(t_elem)
+
+        expected_orig_text = """class class3 : baseX {[
+                        inner_section_2 = {
+
+                        }
+                    ]}"""
+
+        class3_orig_text = t_elem.get_orig_text(src_text)
+        self.assertEqual(class3_orig_text, expected_orig_text)
+
+        # 2. check find_first returns None if nothing found
+        t_elem = x.find_first(
+            lambda t_elem: t_elem.get_path_val('OBJ_NAME') == 'classNA')
+        self.assertIsNone(t_elem)
 
 
 class TestArithmeticsParser(unittest.TestCase):
