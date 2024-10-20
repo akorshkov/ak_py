@@ -639,7 +639,7 @@ class TElement:
             return default
         return t_elem.value
 
-    def find_all(self, predicate=None):
+    def find_all(self, predicate=None, *, exclude_root=True, bottom_first=False):
         """Returns a list of child TElement objects which match the predicate.
 
         Arguments:
@@ -648,19 +648,28 @@ class TElement:
           - str - interpreted as a name of TElement
           - iterable(str) - interpreted as a collection of matching TElement names
           - callable - callable predicate TElement => bool.
+        - exclude_root: (=True). Indicates if to exclude the self even if it matches
+            the predicate. By default only the descendant elements are reported.
+        - bottom_first: (=False). Specifies, that an element should be reported
+            only after all it's descendants are reported. By default an element
+            is reported before any of it's descendants.
+            In both cases depth-first-search iteration method is used.
         """
-        return list(self.iter_all(predicate))
+        return list(self.iter_all(
+            predicate, exclude_root=exclude_root, bottom_first=bottom_first))
 
-    def find_first(self, predicate=None):
+    def find_first(self, predicate=None, *, exclude_root=True, bottom_first=False):
         """Returns a single TElement object which match the predicate or None.
 
         Arguments are similar to 'find_all' method.
         """
-        for t_elem in self.iter_all(predicate):
+        for t_elem in self.iter_all(
+            predicate, exclude_root=exclude_root, bottom_first=bottom_first
+        ):
             return t_elem
         return None
 
-    def iter_all(self, predicate=None):
+    def iter_all(self, predicate=None, *, exclude_root=True, bottom_first=False):
         """Yield all the child TElement objects which match the predicate.
 
         Arguments are similar to 'find_all' method.
@@ -681,11 +690,12 @@ class TElement:
                 f"unexpected predicate of type {type(predicate)} specified. "
                 f"The predicate can be None, string, list of strings or callable")
 
-        for t_elem in self._iter_children():
+        for t_elem in self._iter_children(bottom_first):
             if _predicate(t_elem):
-                yield t_elem
+                if not exclude_root or self is not t_elem:
+                    yield t_elem
 
-    def _iter_children(self):
+    def _iter_children(self, bottom_first):
         # iterate through all the child TElement objects
 
         cur_stack = [[self, ], ]
@@ -693,15 +703,26 @@ class TElement:
 
         while cur_stack:
             assert len(cur_stack) == len(cur_pos)
-            if cur_pos[-1] < 0:
+            if cur_pos[-1] >= len(cur_stack[-1]):
                 cur_pos.pop()
                 cur_stack.pop()
+                if not cur_stack:
+                    continue
+                # finish processing current element
+                if bottom_first:
+                    cur_elem = cur_stack[-1][cur_pos[-1]]
+                    if isinstance(cur_elem, TElement):
+                        yield cur_elem
+                cur_pos[-1] += 1
                 continue
+
             cur_elem = cur_stack[-1][cur_pos[-1]]
-            cur_pos[-1] -= 1
+
+            # start processing current element
             value = None
             if isinstance(cur_elem, TElement):
-                yield cur_elem
+                if not bottom_first:
+                    yield cur_elem
                 value = cur_elem.value
 
             children_list = None
@@ -709,10 +730,11 @@ class TElement:
                 children_list = value
             elif isinstance(value, dict):
                 children_list = [x for item in value.items() for x in item]
+            else:
+                children_list = []
 
-            if children_list:
-                cur_stack.append(children_list)
-                cur_pos.append(len(children_list) - 1)
+            cur_stack.append(children_list)
+            cur_pos.append(0)
 
 
 class ProdRule:

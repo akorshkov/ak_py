@@ -181,8 +181,8 @@ class TestParserTokenizer(unittest.TestCase):
 class TestSimpleParserWithNullProductions(unittest.TestCase):
     """Test very primitive parser with nullable productions."""
 
-    def test_parser(self):
-        parser = LLParser(
+    def _make_test_parser(self):
+        return LLParser(
             r"""
             (?P<SPACE>\s+)
             |(?P<WORD>[a-zA-Z_][a-zA-Z0-9_]*)
@@ -197,6 +197,9 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
                 ],
             },
         )
+
+    def test_parser(self):
+        parser = self._make_test_parser()
 
         x = parser.parse("aaa", do_cleanup=False)
         # x.printme()
@@ -223,6 +226,28 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
         opt_word_elem = x.value[1]
         self.assertEqual(opt_word_elem.name, 'OPT_WORD')
         self.assertEqual(opt_word_elem.span, ((1, 4), (1, 4)))
+
+    def test_find_method(self):
+        """Test find_all method in this simple case."""
+        parser = self._make_test_parser()
+        x = parser.parse("aaa", do_cleanup=False)
+        # x.printme()
+
+        all_t_elems = x.find_all()
+        all_t_elems_bottom_first = x.find_all(bottom_first=True)
+
+        self.assertEqual(len(all_t_elems), len(all_t_elems_bottom_first))
+
+        elems_names = {t.name for t in all_t_elems}
+        self.assertEqual(
+            elems_names, {'WORD', 'OPT_WORD'},
+            "by default the start element is not reported")
+
+        elems_names = {t.name for t in x.find_all(exclude_root=False)}
+        self.assertEqual(
+            elems_names, {'E', 'WORD', 'OPT_WORD'},
+            "the start element 'E' is reported because of 'exclude_root' arg.")
+
 
 
 class TestSquashing(unittest.TestCase):
@@ -785,6 +810,33 @@ class TestParsingClasslookingObj(unittest.TestCase):
 class TestComplexStructureOfClasslooingObjects(unittest.TestCase):
     """Test parser of a complex combination of lists, maps and objects."""
 
+    _SRC_TEXT = """
+        [
+            SECTION1 = {
+                S1CL1(S1P1) : class class1 : base1 { content1 },
+                S1KEY(AAAA) : class class2 {[
+                    inner_section = {
+                        inn1(op1) : class classInner : baseInner {[
+                            sect_ii = {
+                                sii(kii) : class clsii { cont_ii }
+                            }
+                        ]},
+                        inn2(op2) : class classInner2 {
+                            inner_2_contents
+                        }
+                    }
+                ]}
+            },
+            SECTION2 = {
+                S2KEY1(S2P1) : class class3 : baseX {[
+                    inner_section_2 = {
+
+                    }
+                ]}
+            }
+        ]
+    """
+
     def _make_test_parser(self):
         # prepare the parser for tests
         return LLParser(
@@ -856,36 +908,8 @@ class TestComplexStructureOfClasslooingObjects(unittest.TestCase):
 
         Still the find_all method should iterate through all the elements.
         """
-
         parser = self._make_test_parser()
-
-        src_text = """
-            [
-                SECTION1 = {
-                    S1CL1(S1P1) : class class1 : base1 { content1 },
-                    S1KEY(AAAA) : class class2 {[
-                        inner_section = {
-                            inn1(op1) : class classInner : baseInner {[
-                                sect_ii = {
-                                    sii(kii) : class clsii { cont_ii }
-                                }
-                            ]},
-                            inn2(op2) : class classInner2 {
-                                inner_2_contents
-                            }
-                        }
-                    ]}
-                },
-                SECTION2 = {
-                    S2KEY1(S2P1) : class class3 : baseX {[
-                        inner_section_2 = {
-
-                        }
-                    ]}
-                }
-            ]
-        """
-        x = parser.parse(src_text)
+        x = parser.parse(self._SRC_TEXT)
 
         # 1. examine all the 'OBJ_NAME' elements.
         expected_obj_names = set()
@@ -914,18 +938,66 @@ class TestComplexStructureOfClasslooingObjects(unittest.TestCase):
         self.assertIsNotNone(t_elem)
 
         expected_orig_text = """class class3 : baseX {[
-                        inner_section_2 = {
+                    inner_section_2 = {
 
-                        }
-                    ]}"""
+                    }
+                ]}"""
 
-        class3_orig_text = t_elem.get_orig_text(src_text)
+        class3_orig_text = t_elem.get_orig_text(self._SRC_TEXT)
         self.assertEqual(class3_orig_text, expected_orig_text)
 
         # 2. check find_first returns None if nothing found
         t_elem = x.find_first(
             lambda t_elem: t_elem.get_path_val('OBJ_NAME') == 'classNA')
         self.assertIsNone(t_elem)
+
+    def test_find_all_exclude_root_arg(self):
+        """Test 'exclude_root' arg of find_* methods."""
+        parser = self._make_test_parser()
+        x = parser.parse(self._SRC_TEXT)
+
+        class2_t_elem = x.find_first(
+            lambda t_elem: t_elem.get_path_val('OBJ_NAME') == 'class2')
+
+        desc_classes = class2_t_elem.find_all('CLASS')
+        self.assertEqual(
+            len(desc_classes), 3,
+            "'class2' TElement contains 'classInner', 'clsii' and 'classInner2' "
+            "objects. The 'class2' must not be included into search results "
+            "because 'exclude_root' argument is not specified")
+
+        classes_in_subtree = class2_t_elem.find_all('CLASS', exclude_root=False)
+        self.assertEqual(
+            len(classes_in_subtree), 4,
+            "the root element 'class2' is also included into search results "
+            "because it matches search criteria and 'exclude_root' specified")
+
+    def test_find_all_bottom_first_arg(self):
+        """Test 'bottom_first' arg of find_* methods."""
+        parser = self._make_test_parser()
+        x = parser.parse(self._SRC_TEXT)
+
+        # 1. smoke test: make sure number of all the elements doesn't depend
+        # on iteration option
+        num_t_elems = len(x.find_all())
+        self.assertEqual(len(x.find_all(bottom_first=True)), num_t_elems)
+        self.assertEqual(len(x.find_all(bottom_first=False)), num_t_elems)
+
+        # 2. check the order of found items
+        def _get_found_names(bottom_first=False):
+            desc_classes = x.find_all('CLASS', bottom_first=bottom_first)
+            return [
+                cls_name for t in desc_classes
+                if (cls_name := t.get_path_val('OBJ_NAME')) in {
+                    'class2', 'classInner', 'clsii'}
+            ]
+
+        found_names = _get_found_names(bottom_first=False)
+        # by default found element reported in 'top-first' order,
+        self.assertEqual(found_names, ['class2', 'classInner', 'clsii'])
+
+        found_names = _get_found_names(bottom_first=True)
+        self.assertEqual(found_names, ['clsii', 'classInner', 'class2'])
 
 
 class TestArithmeticsParser(unittest.TestCase):
