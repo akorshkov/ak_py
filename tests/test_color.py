@@ -1,10 +1,13 @@
 """Test ColorFmt and ColorTest"""
 
 import unittest
+import io
+from typing import Iterator
 
 from ak.color import (
     ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser,
     get_global_colors_config, set_global_colors_config,
+    sh_fmt, sh_print,
 )
 
 
@@ -261,21 +264,21 @@ class TestColoredTextProperties(unittest.TestCase):
         t = ColorFmt('GREEN')("text")
 
         # just check formatting produce no errors
-        s = f"{t}"        # printed as "text"
-        s = f"{t:s}"      # same, 's' format specifier is optional
-        s = f"{t:10}"     # printed as "text      "
-        s = f"{t:>10}"    # printed as "      text"
-        s = f"{t:>>10}"   # printed as ">>>>>>text"
+        _ = f"{t}"        # printed as "text"
+        _ = f"{t:s}"      # same, 's' format specifier is optional
+        _ = f"{t:10}"     # printed as "text      "
+        _ = f"{t:>10}"    # printed as "      text"
+        _ = f"{t:>>10}"   # printed as ">>>>>>text"
 
         # test bad format strings
         with self.assertRaises(ValueError) as exc:
-            f"{t:d}"
+            _ = f"{t:d}"
 
         err_msg = str(exc.exception)
         self.assertIn("invalid format type 'd'", err_msg)
 
         with self.assertRaises(ValueError) as exc:
-            f"{t:1a0}"
+            _ = f"{t:1a0}"
 
         err_msg = str(exc.exception)
         self.assertIn("invalid width '1a0'", err_msg)
@@ -307,7 +310,7 @@ class TestColoredTextProperties(unittest.TestCase):
 
         for index in [8, 9, 100]:
             with self.assertRaises(IndexError) as exc:
-                text[index]
+                _ = text[index]
             err_msg = str(exc.exception)
             self.assertIn(str(index), err_msg)
             self.assertIn("out of range", err_msg)
@@ -888,3 +891,190 @@ class TestColorsConfig(unittest.TestCase):
 
         colors_conf = self.TstColorsConfig({}, use_effects=False)
         _ = colors_conf.make_report()
+
+
+class TestGlobalColorsFormattingMethods(unittest.TestCase):
+    """Test global methods for processing syntax-highlighted text"""
+
+    class TstColorsConfig(ColorsConfig):
+        # not a nice-loking colors config, but ok for test purposes
+        DFLT_CONFIG = {
+            "TEXT": "",
+            "NAME": "BLUE:bold",
+            "DESCR": "YELLOW",
+        }
+
+    class _DummySHTextGenerator:
+        def __init__(self, *sh_lines):
+            self._sh_lines = sh_lines
+
+        def sh_lines(self) -> Iterator[SHText]:
+            yield from self._sh_lines
+
+        def sh_text(self) -> SHText:
+            return SHText("\n").join(self._sh_lines)
+
+    def test_global_color_conf_usage(self):
+        """Test setting of global color config.
+
+        sh_fmt global function uses it, so we will use this function for test.
+        """
+
+        blue_colors_conf = self.TstColorsConfig()
+        red_colors_conf = self.TstColorsConfig({'NAME': "RED"})
+
+        sample_plain_text = "sample text"
+        sample_sh_text = SHText(("NAME", sample_plain_text))
+
+        # 1. global config contains colors
+        set_global_colors_config(blue_colors_conf)
+
+        blue_ct = sh_fmt(sample_sh_text)
+        self.assertIsInstance(blue_ct, ColoredText)
+        self.assertEqual(blue_ct.plain_text(), sample_plain_text)
+        self.assertNotEqual(
+            str(blue_ct), sample_plain_text,
+            "blue_ct object is expected to contain color sequences because "
+            "the global config contains some color configuration for "
+            "the 'NAME' syntax group")
+
+        # 2. palette is explicitley specified for sh_fmt
+        red_ct = sh_fmt(sample_sh_text, palette=red_colors_conf.make_palette())
+        self.assertIsInstance(red_ct, ColoredText)
+        self.assertEqual(red_ct.plain_text(), sample_plain_text)
+        self.assertNotEqual(
+            str(blue_ct), str(red_ct),
+            "even though the global color config is still the same, "
+            "different palette was used to prepare the red_ct, so "
+            "different color sequences are expected")
+
+        # 3. set different gobal colors
+        set_global_colors_config(red_colors_conf)
+        new_red_ct = sh_fmt(sample_sh_text)
+        self.assertEqual(
+            str(new_red_ct), str(red_ct),
+            "according to the global config the sample_sh_text now should be red")
+
+        # reset global golors config
+        set_global_colors_config(None)
+
+    def test_sh_fmt_method(self):
+        """sh_fmt - converts single argument into ColoredText."""
+
+        # test misc types of arguments the sh_fmt accepts
+        # 1. SHText
+        sample_text = "sample text"
+        ct = sh_fmt(SHText(("NAME", sample_text)))
+        self.assertEqual(ct.plain_text(), sample_text)
+        self.assertNotEqual(str(ct), sample_text)
+
+        # 2. simple string
+        ct = sh_fmt(sample_text)
+        self.assertEqual(ct.plain_text(), sample_text)
+        self.assertEqual(str(ct), sample_text)
+
+        # 3. SHText generator
+        obj_with_shtext_descr = self._DummySHTextGenerator(
+            SHText(("NAME", "usual")),
+            SHText(("CATEGORY", "description")),
+        )
+        ct = sh_fmt(obj_with_shtext_descr)
+        self.assertEqual(ct.plain_text(), "usual\ndescription")
+
+        # 4. other types should be treated as strings
+        x = ("NAME", "name")
+        ct = sh_fmt(x)
+        self.assertIsInstance(ct, ColoredText)
+        # even though the argument looks like a colored chunk argument of SHText,
+        # it should not be interpreted as colored text. It's just a tuple.
+        # So, the result should be '("NAME", "name")' or "('NAME', 'name')"
+        self.assertEqual(ct.plain_text(), str(x))
+
+    def test_sh_print_method(self):
+        """Test sh_print function."""
+
+        # 1. print simple string
+        with io.StringIO() as output:
+            sh_print("sample", file=output)
+            result = output.getvalue()
+        self.assertEqual(result, "sample\n")
+
+        # 2. print SHText object
+        with io.StringIO() as output:
+            sh_print(SHText(("NAME", "test name text")), file=output)
+            result = output.getvalue()
+        self.assertIn("test name text", result)
+        self.assertNotEqual(result, "test name text\n")  # color sequences expected
+
+        # 3. print SHText generator
+        obj_with_shtext_descr = self._DummySHTextGenerator(
+            SHText(("NAME", "usual")),
+            SHText(("CATEGORY", "description")),
+        )
+        with io.StringIO() as output:
+            sh_print(obj_with_shtext_descr, file=output)
+            result = output.getvalue()
+        # obj description consists of 2 lines.
+        # each line ends with '\n'
+        lines = result.split('\n')
+        self.assertEqual(len(lines), 3)
+        self.assertIn("usual", lines[0])
+        self.assertIn("description", lines[1])
+        self.assertEqual(lines[2], "")
+
+        # 4. print several items
+        with io.StringIO() as output:
+            sh_print(
+                "item1",
+                "item2",
+                SHText(("NAME", "name")),
+                obj_with_shtext_descr,
+                SHText(("NUMBER", "25")),
+                file=output)
+            result = output.getvalue()
+
+        plain_text_result = ColoredText.strip_colors(result)
+        # all printed items are separated by ' ', obj_with_shtext_descr
+        # consists of two lines, so the result also consists of two lines
+        expected_text = (
+            "item1 item2 name usual\n"
+            "description 25\n")
+        self.assertEqual(plain_text_result, expected_text)
+
+        # 5. make sure other objects are can be printed
+        # (the same way standard 'print' prints them)
+
+        # 5.1. this item looks like a syntax group of SHText.
+        # But it must not be interpreted as colored text, it should be printed
+        # as a simple tuple.
+        x = ("NAME", "name")
+
+        with io.StringIO() as output:
+            sh_print(x, file=output)
+            result = output.getvalue()
+
+        self.assertEqual(result, f"{x}\n")
+
+        # 5.2. test printing miscellaneous other objects
+
+        items_to_print = [
+            [],
+            {},
+            "text",
+            "",
+            ("NAME", "name"),
+            ("NAME", "name", 5),
+            None,
+            True,
+            False,
+        ]
+
+        with io.StringIO() as output:
+            sh_print(*items_to_print, file=output)
+            result = output.getvalue()
+
+        with io.StringIO() as output:
+            print(*items_to_print, file=output)
+            expected_result = output.getvalue()
+
+        self.assertEqual(result, expected_result)

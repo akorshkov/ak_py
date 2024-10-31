@@ -267,8 +267,9 @@ class PPObjBase:
 
     def __repr__(self):
         # this method does not return text but prints it because the
-        # text is supposed to be colored, and python console does not
-        # print colored text correctly
+        # text is supposed to be colored, and python console displays
+        # representation of of returned object (a string with special characters
+        # in this case) instead of the colored text.
         for line in self.gen_pplines():
             print(line)
         return ""

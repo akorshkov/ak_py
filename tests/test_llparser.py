@@ -249,7 +249,6 @@ class TestSimpleParserWithNullProductions(unittest.TestCase):
             "the start element 'E' is reported because of 'exclude_root' arg.")
 
 
-
 class TestSquashing(unittest.TestCase):
     """Test squashing elements during TElement cleanup."""
 
