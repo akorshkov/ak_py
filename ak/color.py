@@ -334,6 +334,43 @@ class SHText(_CTText):
         return part
 
 
+class SyntaxGroupsUser:
+    """Base class for objects which produce SHText.
+
+    Helps to specify names of syntax groups to be used when producing SHText.
+
+    Derive the class which produces SHText from SyntaxGroupsUser to override
+    the default names of the syntax groups in SHText objects it produces.
+    """
+    _SYNTAX_GROUPS_NAMES = None
+
+    @classmethod
+    def make_syntax_groups_names(cls, syntax_names, syntax_names_prefix):
+        """Make the {syntax_id: syntax_name}.
+
+        The result is based on defaults _SYNTAX_GROUPS_NAMES and arguments.
+
+        Arguments:
+        - syntax_names: (optional) {syntax_id: overridden_syntax_name}
+        - syntax_names_prefix: (optional) prefix to add to default syntax names.
+        """
+        assert cls._SYNTAX_GROUPS_NAMES is not None, (
+            f"_SYNTAX_GROUPS_NAMES not specified in SyntaxGroupsUser-derived "
+            f"class {cls}")
+        if syntax_names is None and  syntax_names_prefix is None:
+            return cls._SYNTAX_GROUPS_NAMES
+
+        if syntax_names is None:
+            syntax_names = {}
+        return {
+            syntax_id : syntax_names.get(
+                syntax_id,
+                dflt_syntax_name if syntax_names_prefix is None
+                    else f"{syntax_names_prefix}.{dflt_syntax_name}")
+            for syntax_id, dflt_syntax_name in cls._SYNTAX_GROUPS_NAMES.items()
+        }
+
+
 class ColoredText(_CTText):
     """Colored text. Consists of several mono-colored parts."""
 
@@ -717,7 +754,7 @@ def set_global_colors_config(colors_config):
 
 
 def get_global_palette():
-    """!!!!! """
+    """Get the Palette corresponding to the global colors config."""
     global _GLOBAL_PALETTE
     if _GLOBAL_PALETTE is None:
         _GLOBAL_PALETTE = get_global_colors_config().make_palette()
@@ -1008,7 +1045,7 @@ class ColorsConfig:
 
 
 def sh_fmt(arg, *, palette=None) -> ColoredText:
-    """Convert an argument to ColoredText.
+    """Convert an argument to ColoredText using global colors config.
 
     Arguments:
     - arg: can be either
@@ -1027,6 +1064,14 @@ def sh_fmt(arg, *, palette=None) -> ColoredText:
     if isinstance(arg, SHText):
         return palette(arg)
     return palette(str(arg))
+
+
+def sh_lines_fmt(sh_lines, palette=None) -> Iterator[ColoredText]:
+    """Convert multiple SHText into ColoredText objects using global colors config."""
+    if palette is None:
+        palette = get_global_palette()
+    for sh_text in sh_lines:
+        yield palette(sh_text)
 
 
 def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):

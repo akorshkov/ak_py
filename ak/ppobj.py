@@ -10,7 +10,8 @@ import sys
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import ColoredText, Palette, PaletteUser
+from ak.color import (
+    SHText, SyntaxGroupsUser, ColoredText, Palette, PaletteUser, sh_lines_fmt)
 
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
@@ -20,20 +21,8 @@ CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
 #########################
 # generic pretty-printing
 
-class _PrettyPrinterBase:
-    # Interface of PrettyPrinter object
 
-    def gen_pplines(self, obj_to_print) -> Iterator[str]:
-        """Generate lines of pretty text. To be implemented in derived classes."""
-        _ = obj_to_print
-        raise NotImplementedError
-
-    def get_pptext(self, obj_to_print) -> str:
-        """obj_to_print -> pretty string."""
-        return "\n".join(self.gen_pplines(obj_to_print))
-
-
-class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
+class PrettyPrinter(SyntaxGroupsUser):
     """Print json-like python objects with color highliting."""
 
     _CONSTANTS_LITERALS = (
@@ -41,66 +30,94 @@ class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
         {True: 'true', False: 'false', None: 'null'},
     )
 
-    def __init__(self, *, fmt_json=False, use_colors=True):
+    _SYNTAX_GROUPS_NAMES = {
+        'NAME': 'NAME',
+        'NUMBER': 'NUMBER',
+        'KEYWORD': 'KEYWORD',
+    }
+
+    def __init__(
+        self, *, fmt_json=False, syntax_names=None, syntax_names_prefix=None,
+    ):
         """Create PrettyPrinter for printing json-like objects.
 
         Arguments:
         - fmt_json: if True generate output in json form, else - in python form.
             The difference is in value of constans only ('true' vs 'True', etc.)
-        - use_colors: if False, colors configuration is ignored and plain text is
-            produced. If True - global colors configuration is used (produced
-            text may be plain, if global config specifies so).
+        - syntax_names: (optional) dictionary { item_type: syntax_group_name }
+        - syntax_names_prefix: (optional) if specified
         """
         self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
-        palette = self.get_palette() if use_colors else Palette({})
-        self._color_name = palette.get_color('NAME')
-        self._color_number = palette.get_color('NUMBER')
-        self._color_keyword = palette.get_color('KEYWORD')
 
-    @classmethod
-    def _init_palette(cls, color_config):
-        # init palette based on global colors config
-        return Palette({
-            'NAME': color_config.get_color('NAME'),
-            'NUMBER': color_config.get_color('NUMBER'),
-            'KEYWORD': color_config.get_color('KEYWORD'),
-        })
+        syntax_names = self.make_syntax_groups_names(
+            syntax_names, syntax_names_prefix)
+        self.name_syntax_id = syntax_names["NAME"]
+        self.number_syntax_id = syntax_names["NUMBER"]
+        self.keyword_syntax_id = syntax_names["KEYWORD"]
 
     def gen_pplines(self, obj_to_print) -> Iterator[str]:
         """Generate lines of colored text - pretty representation of the object."""
+        for colored_text in sh_lines_fmt(self.gen_sh_lines(obj_to_print)):
+            yield str(colored_text)
 
+    def get_pptext(self, obj_to_print) -> str:
+        """obj_to_print -> pretty string."""
+        return "\n".join(self.gen_pplines(obj_to_print))
+
+    def gen_sh_lines(self, obj_to_print) -> Iterator[SHText]:
+        """obj_to_print -> SHText objects.
+
+        Each SHText corresponds to one line of the result.
+        """
         line_chunks = []
 
-        for chunk in self._gen_pp_str_for_obj(obj_to_print, offset=0):
+        for chunk in self._gen_sh_text_chunks_for_obj(obj_to_print, offset=0):
             if chunk == "\n":
-                yield "".join(line_chunks)
+                # indicator of the new line
+                yield SHText(*line_chunks)
                 line_chunks = []
             else:
                 line_chunks.append(chunk)
 
         if line_chunks:
-            yield "".join(line_chunks)
+            yield SHText(*line_chunks)
 
-    def _gen_pp_str_for_obj(self, obj_to_print, offset=0) -> Iterator[str]:
+    def _gen_sh_text_chunks_for_obj(
+        self, obj_to_print, offset=0,
+    ) -> Iterator[str|tuple]:
         # generate parts for colored text result
+
+        # helper to calulate total text length of items which can be either str
+        # or a tuple: ("SYNTAX_NAME", "text")
+        sum_chunks_len = lambda chunks: sum(
+            len(c) if isinstance(c, str) else len(c[1])
+            for c in chunks)
+
         if self._value_is_simple(obj_to_print):
-            yield str(self._colorp_simple_value(obj_to_print))
+            yield self._simple_val_to_sh_item(obj_to_print)
         elif isinstance(obj_to_print, dict):
             sorted_keys = sorted(
                 obj_to_print.keys(), key=self._mk_type_sort_value
             )
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print object in one line
-                chunks = [
-                    self._colorp_dict_key(key) + ": " + self._colorp_simple_value(
-                        obj_to_print[key])
-                    for key in sorted_keys
-                ]
-                # note, next line calculates length of text as printed on screen
-                scr_len = sum(len(chunk) for chunk in chunks) + 2 * len(chunks)
+                chunks = ["{"]
+                is_first = True
+                for key in sorted_keys:
+                    if not is_first:
+                        chunks.append(", ")
+                    else:
+                        is_first = False
+                    chunks.append(self._dict_key_to_sh_item(key))
+                    chunks.append(": ")
+                    chunks.append(self._simple_val_to_sh_item(obj_to_print[key]))
+                chunks.append("}")
+                # now chunks contains strings and tuples ("SYNTAX_NAME", "text")
+                scr_len = sum_chunks_len(chunks)
+
                 oneline_fmt = offset + scr_len < 200  # not exactly correct, ok
                 if oneline_fmt:
-                    yield "{" + ", ".join(str(c) for c in chunks) + "}"
+                    yield from chunks
                     return
 
             # print object in multiple lines
@@ -114,22 +131,31 @@ class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
                     yield ","
                 yield "\n"
                 yield prefix
-                yield str(self._colorp_dict_key(key))
+                yield self._dict_key_to_sh_item(key)
                 yield ": "
-                yield from self._gen_pp_str_for_obj(obj_to_print[key], offset+2)
+                yield from self._gen_sh_text_chunks_for_obj(
+                    obj_to_print[key], offset+2)
             yield "\n"
             yield " " * offset + "}"
         elif isinstance(obj_to_print, list):
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print values in one line
                 chunks = [
-                    self._colorp_simple_value(item) for item in obj_to_print
+                    self._simple_val_to_sh_item(item) for item in obj_to_print
                 ]
-                scr_len = sum(len(chunk) for chunk in chunks) + 2 * len(chunks)
+                scr_len = sum_chunks_len(chunks) + 2 * len(chunks)
                 oneline_fmt = not chunks or offset + scr_len < 200
                 if oneline_fmt:
                     # print the list in one line
-                    yield "[" + ", ".join(str(c) for c in chunks) + "]"
+                    yield "["
+                    is_first = True
+                    for chunk in chunks:
+                        if is_first:
+                            is_first = False
+                        else:
+                            yield ", "
+                        yield chunk
+                    yield "]"
                 else:
                     # print the list in several lines (but each line may
                     # contain several values)
@@ -143,15 +169,17 @@ class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
                             yield prefix
                             len_yielded = offset + 2
                         yield str(chunk)
-                        len_yielded += len(chunk)
+                        len_yielded += (
+                                len(chunk) if isinstance(chunk, str)
+                                else len(chunk[1]))
                         is_first_in_line = False
                         if i == len(chunks) - 1:
                             # last element of the list
                             yield "\n"
                             break
-                        else:
-                            yield ","
-                            len_yielded += 1
+
+                        yield ","
+                        len_yielded += 1
 
                         if len_yielded < 150:
                             yield " "
@@ -175,7 +203,7 @@ class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
                         yield ","
                     yield "\n"
                     yield prefix
-                    yield from self._gen_pp_str_for_obj(item, offset+2)
+                    yield from self._gen_sh_text_chunks_for_obj(item, offset+2)
                 yield "\n"
                 yield " " * offset + "]"
         else:
@@ -198,14 +226,14 @@ class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
             return False
         return True
 
-    def _colorp_simple_value(self, value):
-        # value -> formatted string
+    def _simple_val_to_sh_item(self, value) -> str|tuple:
+        # value -> str or ("SYNTAX_NAME", "text")
         if isinstance(value, str):
             return '"' + value + '"'
         elif self.is_keyword_value(value):
-            return self._color_keyword(self._consts[value])
+            return (self.keyword_syntax_id, self._consts[value])
         elif isinstance(value, Number):
-            return self._color_number(str(value))
+            return (self.number_syntax_id, str(value))
         elif isinstance(value, dict):
             assert not value
             return "{}"
@@ -213,14 +241,13 @@ class PrettyPrinter(_PrettyPrinterBase, PaletteUser):
             assert not value
             return "[]"
         assert False, "value is not simple"
-        return None
 
-    def _colorp_dict_key(self, key):
-        # dictionary key -> formatted string
+    def _dict_key_to_sh_item(self, key):
+        # dictionary key -> str or ("SYNTAX_NAME", "text")
         if isinstance(key, str):
-            return self._color_name('"' + key + '"')
+            return (self.name_syntax_id, '"' + key + '"')
         else:
-            return self._color_name(str(key))
+            return (self.name_syntax_id, str(key))
 
     @classmethod
     def _mk_type_sort_value(cls, value):
@@ -1263,6 +1290,7 @@ class PPTable(PPObjBase, PaletteUser):
             records,
             Palette({}) if no_color else self.get_palette(),
             header=header,
+            footer=footer,
             fmt=fmt,
             fmt_obj=fmt_obj,
             limits=limits,
@@ -1347,7 +1375,7 @@ class PPTable(PPObjBase, PaletteUser):
             all records are always printed.
         - skip_columns: list of names of columns which should not be printed.
             (overrides value of 'fmt' argument)
-        - skip_header: do not print the header (names of columns). Affects]
+        - skip_header: do not print the header (names of columns). Affects
             'delimited' format only
         - additional_columns: [(column_name, value), ] Values for 'additional'
             columns. Can be used when several tables are printed into the same file
@@ -1479,7 +1507,7 @@ class _PPTableImpl:
     def _get_fmt(self):
         # getter of 'fmt' property.
         return self._ppt_fmt
-    
+
     def remove_columns(self, columns_names):
         """Remove columns from table."""
         self._ppt_fmt.remove_columns(columns_names)
