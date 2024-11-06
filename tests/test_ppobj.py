@@ -3,7 +3,7 @@
 import unittest
 from collections import namedtuple
 
-from ak.color import ColoredText
+from ak.color import ColoredText, SHText
 from ak import ppobj
 from ak.ppobj import PrettyPrinter
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
@@ -15,12 +15,31 @@ from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 class TestPrettyPrinter(unittest.TestCase):
     """Test PrettyPrinter"""
 
+    def _verify_format(self, text):
+        # perform some common checks of the json-looing obj printing result
+        plain_text = ColoredText.strip_colors(text)
+        lines = [s.lstrip() for s in plain_text.split("\n")]
+        for i, line in enumerate(lines):
+            self.assertNotIn(
+                " \n", line,
+                f"trailing spaces found in line {i}:\n|{line}|\nFull text:\n"
+                f"{text}")
+            # not a very good tests, because these substrings may be found inside
+            # string literals. But no such string literals are used in tests.
+            for bad_str in ["[ ", " ]", "{ ", " }", " ,", "_Chunk"]:
+                self.assertNotIn(
+                    bad_str, line,
+                    f"'{bad_str}' found in line {i}:\n|{line}|\nFull text:\n"
+                    f"{text}")
+
     def test_simple_usage(self):
         """Test processing of good json-looking object"""
         pp = PrettyPrinter().get_pptext
 
         # check that some text produced w/o errors
         s = pp({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]})
+
+        self._verify_format(s)
 
         self.assertIn("some_name", s)
         self.assertIn("42", s)
@@ -55,7 +74,11 @@ class TestPrettyPrinter(unittest.TestCase):
             "z": 7,
             3: None
         })
-        self.assertIn("ccc", s)
+
+        self._verify_format(s)
+
+        plain_text = ColoredText.strip_colors(s)
+        self.assertIn('"ccc": 80', plain_text)
 
     def test_ppobj_long_list(self):
         """Test pretty-printing a very long list of items."""
@@ -65,14 +88,14 @@ class TestPrettyPrinter(unittest.TestCase):
                 {
                     "name": "x1",
                     "oitems": [
-                        "aaaaaaa", "bbbbbbbb", "ccccccc", "ddddddd",
-                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
-                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
-                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
-                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
-                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
-                        "eeeeeee", "ffffffff", "ggggggg", "hhhhhhh",
-                        "iiiiiii", "jjjjjjjj", "kkkkkkk", "lllllll",
+                        "aaaaaaa", "bbbbbbb", "ccccccc", "ddddddd",
+                        "eeeeeee", "fffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "fffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "fffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "fffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "fffffff", "ggggggg", "hhhhhhh",
+                        "eeeeeee", "fffffff", "ggggggg", "hhhhhhh",
+                        "iiiiiii", "jjjjjjj", "kkkkkkk", "lllllll",
                         "zzzzzzz", 101, 201, 301
                     ],
                     "status": 1,
@@ -80,8 +103,20 @@ class TestPrettyPrinter(unittest.TestCase):
                 }
             ],
         })
+
+        self._verify_format(s)
+
         self.assertIn("zzzzzzz", s)
         self.assertIn("101", s)
+        self.assertIn("301", s)
+
+        plain_text = ColoredText.strip_colors(s)
+        # test formatting of the long list values.
+        # The values in the "oitems" list will be printed on several lines.
+        # This test does not care how exactly all the items are splitte into lines.
+        # But several first items must fit to the very first line and so should
+        # be present together in the same line.
+        self.assertIn('"aaaaaaa", "bbbbbbb",', plain_text)
 
     def test_pprint_in_joson_fmt(self):
         """Test pprinter in json mode: result string should be colored valid json.
@@ -95,6 +130,9 @@ class TestPrettyPrinter(unittest.TestCase):
             "t": True,
             "f": False,
         })
+
+        self._verify_format(s)
+
         self.assertIn("null", s)
         self.assertIn("true", s)
         self.assertIn("false", s)
@@ -215,7 +253,7 @@ def verify_table_format(
     for i, line in enumerate(text_lines):
         testcase.assertEqual(
             table_width, len(line),
-            f"length of line #{i} {len(line)}:\n{line}\nis different from "
+            f"length of line #{i} = {len(line)}:\n{line}\nis different from "
             f"lengths of other lines. Table\n{table}")
 
 
@@ -575,7 +613,9 @@ class TestPPTable(unittest.TestCase):
         # 0. prepare custom field type
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_text(self, value, fmt_modifier, palette):
+            def make_desired_text(
+                self, value, fmt_modifier, syntax_names,
+            ) -> ([SHText._Chunk], int):
                 """Custom format value for a table column.
 
                 This one appends some text to a value.
@@ -584,13 +624,13 @@ class TestPPTable(unittest.TestCase):
                 But if format modifier was specified for a table column
                 this modifier wil be appended.
                 """
-                fmt = palette.get_color("NUMBER")
+                syntax_name = syntax_names.get("TABLE.NUMBER")
                 if not fmt_modifier:
-                    text = fmt(str(value) + " custom descr")
+                    text_items = [SHText._Chunk(syntax_name, str(value) + " custom descr")]
                 else:
-                    text = fmt(str(value) + " " + fmt_modifier)
+                    text_items = [SHText._Chunk(syntax_name, str(value) + " " + fmt_modifier)]
 
-                return text, ppobj.ALIGN_LEFT
+                return text_items, ppobj.ALIGN_LEFT
 
             def is_fmt_modifier_ok(self, fmt_modifier):
                 """Verify 'fmt_modifier' is acceptable by this Field Type.

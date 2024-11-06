@@ -908,7 +908,7 @@ class TestGlobalColorsFormattingMethods(unittest.TestCase):
         def __init__(self, *sh_lines):
             self._sh_lines = sh_lines
 
-        def sh_lines(self) -> Iterator[SHText]:
+        def gen_sh_lines(self) -> Iterator[SHText]:
             yield from self._sh_lines
 
         def sh_text(self) -> SHText:

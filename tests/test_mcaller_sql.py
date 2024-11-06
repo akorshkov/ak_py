@@ -8,6 +8,7 @@ from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
 from ak import ppobj
 from ak.ppobj import PPTableFieldType, PPTable
+from ak.color import SHText
 
 from .test_ppobj import verify_table_format
 
@@ -124,10 +125,12 @@ class TestMCallerSQL(unittest.TestCase):
         # 0. prepare custom field type
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_text(self, value, fmt_modifier, palette):
+            def make_desired_text(
+                self, value, fmt_modifier, syntax_names,
+            ) -> ([str|tuple], int):
                 """adds some text to a value """
-                fmt = palette.get_color("NUMBER")
-                text = fmt(str(value) + " custom descr")
+                syntax_name = syntax_names.get("TABLE.NUMBER")
+                text = [SHText._Chunk(syntax_name, str(value) + " custom descr")]
                 return text, ppobj.ALIGN_LEFT
 
         custom_field_type = CustomFieldType()

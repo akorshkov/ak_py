@@ -10,8 +10,7 @@ import sys
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import (
-    SHText, SyntaxGroupsUser, ColoredText, Palette, PaletteUser, sh_lines_fmt)
+from ak.color import SHText, SyntaxGroupsUser, sh_lines_fmt
 
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
@@ -36,6 +35,16 @@ class PrettyPrinter(SyntaxGroupsUser):
         'KEYWORD': 'KEYWORD',
     }
 
+    _CHUNK_SPACE = SHText._Chunk("", " ")
+    _CHUNK_COMMA_SPACE = SHText._Chunk("", ", ")
+    _CHUNK_COLON_SPACE = SHText._Chunk("", ": ")
+    _CHUNK_COMMA = SHText._Chunk("", ",")
+
+    _CHUNK_OPEN_SQ_BR = SHText._Chunk("", "[")
+    _CHUNK_CLOSE_SQ_BR = SHText._Chunk("", "]")
+    _CHUNK_OPEN_CURL_BR = SHText._Chunk("", "{")
+    _CHUNK_CLOSE_CURL_BR = SHText._Chunk("", "}")
+
     def __init__(
         self, *, fmt_json=False, syntax_names=None, syntax_names_prefix=None,
     ):
@@ -57,63 +66,56 @@ class PrettyPrinter(SyntaxGroupsUser):
 
     def gen_pplines(self, obj_to_print) -> Iterator[str]:
         """Generate lines of colored text - pretty representation of the object."""
-        for colored_text in sh_lines_fmt(self.gen_sh_lines(obj_to_print)):
+        for colored_text in sh_lines_fmt(self._gen_sh_lines(obj_to_print)):
             yield str(colored_text)
 
     def get_pptext(self, obj_to_print) -> str:
         """obj_to_print -> pretty string."""
         return "\n".join(self.gen_pplines(obj_to_print))
 
-    def gen_sh_lines(self, obj_to_print) -> Iterator[SHText]:
+    def _gen_sh_lines(self, obj_to_print) -> Iterator[SHText]:
         """obj_to_print -> SHText objects.
 
         Each SHText corresponds to one line of the result.
         """
         line_chunks = []
 
-        for chunk in self._gen_sh_text_chunks_for_obj(obj_to_print, offset=0):
-            if chunk == "\n":
+        for chunk in self._gen_sh_chunks_for_obj(obj_to_print, offset=0):
+            if chunk is None:
                 # indicator of the new line
-                yield SHText(*line_chunks)
+                yield SHText.make(line_chunks)
                 line_chunks = []
             else:
                 line_chunks.append(chunk)
 
         if line_chunks:
-            yield SHText(*line_chunks)
+            yield SHText.make(line_chunks)
 
-    def _gen_sh_text_chunks_for_obj(
+    def _gen_sh_chunks_for_obj(
         self, obj_to_print, offset=0,
-    ) -> Iterator[str|tuple]:
+    ) -> Iterator[SHText._Chunk]:
         # generate parts for colored text result
 
-        # helper to calulate total text length of items which can be either str
-        # or a tuple: ("SYNTAX_NAME", "text")
-        sum_chunks_len = lambda chunks: sum(
-            len(c) if isinstance(c, str) else len(c[1])
-            for c in chunks)
-
         if self._value_is_simple(obj_to_print):
-            yield self._simple_val_to_sh_item(obj_to_print)
+            yield self._simple_val_to_sh_chunk(obj_to_print)
         elif isinstance(obj_to_print, dict):
             sorted_keys = sorted(
                 obj_to_print.keys(), key=self._mk_type_sort_value
             )
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print object in one line
-                chunks = ["{"]
+                chunks = [self._CHUNK_OPEN_CURL_BR]  # "{"
                 is_first = True
                 for key in sorted_keys:
                     if not is_first:
-                        chunks.append(", ")
+                        chunks.append(self._CHUNK_COMMA_SPACE)
                     else:
                         is_first = False
-                    chunks.append(self._dict_key_to_sh_item(key))
-                    chunks.append(": ")
-                    chunks.append(self._simple_val_to_sh_item(obj_to_print[key]))
-                chunks.append("}")
-                # now chunks contains strings and tuples ("SYNTAX_NAME", "text")
-                scr_len = sum_chunks_len(chunks)
+                    chunks.append(self._dict_key_to_sh_chunk(key))
+                    chunks.append(self._CHUNK_COLON_SPACE)
+                    chunks.append(self._simple_val_to_sh_chunk(obj_to_print[key]))
+                chunks.append(self._CHUNK_CLOSE_CURL_BR)  # "}"
+                scr_len = SHText.calc_chunks_len(chunks)
 
                 oneline_fmt = offset + scr_len < 200  # not exactly correct, ok
                 if oneline_fmt:
@@ -121,96 +123,95 @@ class PrettyPrinter(SyntaxGroupsUser):
                     return
 
             # print object in multiple lines
-            yield "{"
-            prefix = " " * (offset + 2)
+            yield self._CHUNK_OPEN_CURL_BR  # "{"
+            prefix = SHText._Chunk("", " " * (offset + 2))
             is_first = True
             for key in sorted_keys:
                 if is_first:
                     is_first = False
                 else:
-                    yield ","
-                yield "\n"
+                    yield self._CHUNK_COMMA
+                yield None
                 yield prefix
-                yield self._dict_key_to_sh_item(key)
-                yield ": "
-                yield from self._gen_sh_text_chunks_for_obj(
+                yield self._dict_key_to_sh_chunk(key)
+                yield self._CHUNK_COLON_SPACE
+                yield from self._gen_sh_chunks_for_obj(
                     obj_to_print[key], offset+2)
-            yield "\n"
-            yield " " * offset + "}"
+            yield None
+            yield SHText._Chunk("", " " * offset + "}")
         elif isinstance(obj_to_print, list):
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print values in one line
-                chunks = [
-                    self._simple_val_to_sh_item(item) for item in obj_to_print
+                items_chunks = [
+                    self._simple_val_to_sh_chunk(item) for item in obj_to_print
                 ]
-                scr_len = sum_chunks_len(chunks) + 2 * len(chunks)
-                oneline_fmt = not chunks or offset + scr_len < 200
+                scr_len = SHText.calc_chunks_len(items_chunks) + 2 * len(items_chunks)
+                oneline_fmt = not items_chunks or offset + scr_len < 200
                 if oneline_fmt:
                     # print the list in one line
-                    yield "["
+                    yield self._CHUNK_OPEN_SQ_BR  # "["
                     is_first = True
-                    for chunk in chunks:
+                    for item_chunk in items_chunks:
                         if is_first:
                             is_first = False
                         else:
-                            yield ", "
-                        yield chunk
-                    yield "]"
+                            yield self._CHUNK_COMMA_SPACE
+                        yield item_chunk
+                    yield self._CHUNK_CLOSE_SQ_BR  # "]"
                 else:
                     # print the list in several lines (but each line may
                     # contain several values)
-                    yield "["
-                    yield "\n"
-                    prefix = " " * (offset + 2)
+                    yield self._CHUNK_OPEN_SQ_BR
+                    yield None
+                    prefix = SHText._Chunk("", " " * (offset + 2))
                     len_yielded = 0
                     is_first_in_line = True
-                    for i, chunk in enumerate(chunks):
+                    for i, item_chunk in enumerate(items_chunks):
+                        cur_chunk_len = len(item_chunk.text)
+                        need_new_line = len_yielded + cur_chunk_len > 150
+
+                        if need_new_line and not is_first_in_line:
+                            yield self._CHUNK_COMMA
+                            yield None
+                            len_yielded = 0
+                            is_first_in_line = True
+
                         if is_first_in_line:
                             yield prefix
                             len_yielded = offset + 2
-                        yield str(chunk)
-                        len_yielded += (
-                                len(chunk) if isinstance(chunk, str)
-                                else len(chunk[1]))
-                        is_first_in_line = False
-                        if i == len(chunks) - 1:
-                            # last element of the list
-                            yield "\n"
-                            break
-
-                        yield ","
-                        len_yielded += 1
-
-                        if len_yielded < 150:
-                            yield " "
-                            len_yielded += 1
                         else:
-                            # finish current line
-                            yield "\n"
-                            len_yielded = 0
-                            is_first_in_line = True
+                            yield self._CHUNK_COMMA_SPACE
+                            len_yielded += 2
+                        yield item_chunk
+                        len_yielded += cur_chunk_len
+                        is_first_in_line = False
+
+                        if i == len(items_chunks) - 1:
+                            # last element of the list
+                            yield None
+                            break
                     # all items printed, new line started
-                    yield " " * offset + "]"
+                    yield SHText._Chunk("", " " * offset + "]")
             # print object in multiple lines
             else:
-                prefix = " " * (offset + 2)
-                yield "["
+                prefix = SHText._Chunk("", " " * (offset + 2))
+                yield self._CHUNK_OPEN_SQ_BR  # "["
                 is_first = True
                 for item in obj_to_print:
                     if is_first:
                         is_first = False
                     else:
-                        yield ","
-                    yield "\n"
+                        yield self._CHUNK_COMMA
+                    yield None
                     yield prefix
-                    yield from self._gen_sh_text_chunks_for_obj(item, offset+2)
-                yield "\n"
-                yield " " * offset + "]"
+                    yield from self._gen_sh_chunks_for_obj(item, offset+2)
+                yield None
+                yield SHText._Chunk("", " " * offset + "]")
         else:
-            yield str(obj_to_print)
+            yield SHText._Chunk("", str(obj_to_print))
 
     @classmethod
-    def _all_values_are_simple(cls, obj_to_print):
+    def _all_values_are_simple(cls, obj_to_print) -> bool:
         # checks if all the values in container are 'simple'
         if isinstance(obj_to_print, dict):
             return all(cls._value_is_simple(value) for value in obj_to_print.values())
@@ -219,35 +220,34 @@ class PrettyPrinter(SyntaxGroupsUser):
         return True
 
     @classmethod
-    def _value_is_simple(cls, value):
+    def _value_is_simple(cls, value) -> bool:
         # values that pretty printer treats as simple when deciding
         # how to print the value
         if isinstance(value, (list, tuple, dict)) and value:
             return False
         return True
 
-    def _simple_val_to_sh_item(self, value) -> str|tuple:
-        # value -> str or ("SYNTAX_NAME", "text")
+    def _simple_val_to_sh_chunk(self, value) -> SHText._Chunk:
+        # simple value (number, string, built-in constant) -> SHText._Chunk
         if isinstance(value, str):
-            return '"' + value + '"'
+            return SHText._Chunk("", '"' + value + '"')
         elif self.is_keyword_value(value):
-            return (self.keyword_syntax_id, self._consts[value])
+            return SHText._Chunk(self.keyword_syntax_id, self._consts[value])
         elif isinstance(value, Number):
-            return (self.number_syntax_id, str(value))
+            return SHText._Chunk(self.number_syntax_id, str(value))
         elif isinstance(value, dict):
             assert not value
-            return "{}"
+            return SHText._Chunk("", "{}")
         elif isinstance(value, (list, tuple)):
             assert not value
-            return "[]"
-        assert False, "value is not simple"
+            return SHText._Chunk("", "[]")
+        assert False, f"value {value} is not simple"
 
-    def _dict_key_to_sh_item(self, key):
-        # dictionary key -> str or ("SYNTAX_NAME", "text")
+    def _dict_key_to_sh_chunk(self, key) -> SHText._Chunk:
         if isinstance(key, str):
-            return (self.name_syntax_id, '"' + key + '"')
+            return SHText._Chunk(self.name_syntax_id, '"' + key + '"')
         else:
-            return (self.name_syntax_id, str(key))
+            return SHText._Chunk(self.name_syntax_id, str(key))
 
     @classmethod
     def _mk_type_sort_value(cls, value):
@@ -273,7 +273,7 @@ class PrettyPrinter(SyntaxGroupsUser):
         return any(value is keyword for keyword in [True, False, None])
 
 
-class PPObjBase:
+class PPObjBase(SyntaxGroupsUser):
     """Base class for pretty-printable objects.
 
     PPobj is an object, whose __repr__ method prints (colored) representation
@@ -283,14 +283,18 @@ class PPObjBase:
     a raw data, but PPobj.
     """
 
+    def gen_sh_lines(self) -> Iterator[SHText]:
+        """Generate SHText lines of PPObj representation."""
+        yield from []
+        raise NotImplementedError
+
     def gen_pplines(self) -> Iterator[str]:
         """Generate lines of PPObj representation."""
-        yield ""
-        raise NotImplementedError
+        yield from sh_lines_fmt(self.gen_sh_lines())
 
     def get_pptext(self):
         """Return string - PPObj representation."""
-        return "\n".join(self.gen_pplines())
+        return "\n".join(str(s) for s in self.gen_pplines())
 
     def __repr__(self):
         # this method does not return text but prints it because the
@@ -322,9 +326,9 @@ class PPObj(PPObjBase):
     def __init__(self, obj_to_print):
         self.r = obj_to_print
 
-    def gen_pplines(self) -> Iterator[str]:
-        """Generate lines of colored text - repr of the self.r object."""
-        yield from self._PPRINTER.gen_pplines(self.r)
+    def gen_sh_lines(self) -> Iterator[SHText]:
+        """Generate SHText lines - repr of the self.r object."""
+        yield from sh_lines_fmt(self._PPRINTER._gen_sh_lines(self.r))
 
 
 class PPJson(PPObj):
@@ -345,7 +349,7 @@ class PPTableFieldType:
     column displays 'name' of records), the way information is displayed
     depends on PPTableFieldType associated with this field.
     """
-    _DUMMY_PALETTE = Palette({})  # used in default get_cell_text_len
+    _DUMMY_SYNTAX_NAMES = {}  # used in default get_cell_text_len
 
     def __init__(self, min_width=1, max_width=999):
         self.min_width = min_width
@@ -360,27 +364,30 @@ class PPTableFieldType:
         """Calculate length of text representation of the value (for usual cell)
 
         This implementation is general, but not efficient. Override in
-        derived classes to avoid construction of ColoredText objects - usually
+        derived classes to avoid construction of syntax items objects - usually
         it is not required to find out text length.
         """
-        text, _ = self.make_desired_text(
-            value, fmt_modifier, self._DUMMY_PALETTE)
-        return len(text)
+        syntax_items, _ = self.make_desired_text(
+            value, fmt_modifier, self._DUMMY_SYNTAX_NAMES)
+        return SHText.calc_chunks_len(syntax_items)
 
-    def get_title_cell_text_len(self, value, fmt_modifier):
-        text, _ = self.make_desired_title_cell_text(
-            value, fmt_modifier, self._DUMMY_PALETTE)
-        return len(text)
+    def get_title_cell_text_len(self, value, fmt_modifier) -> int:
+        """Calculate len of the title of a table column."""
+        text_items, _ = self.make_desired_title_cell_text(
+            value, fmt_modifier, self._DUMMY_SYNTAX_NAMES)
+        return SHText.calc_chunks_len(text_items)
 
-    def make_desired_text_for_row_type(
-            self, value, fmt_modifier, cell_type, palette) -> (ColoredText, int):
-        """value -> desired text and alignment for table row of specified type."""
+    def make_desired_sh_text_for_row_type(
+            self, value, fmt_modifier, cell_type, syntax_names,
+    ) -> ([SHText._Chunk], int):
+        """value -> desired SHText and alignment for table row of specified type."""
         if cell_type == CELL_TYPE_TITLE:
-            return self.make_desired_title_cell_text(value, fmt_modifier, palette)
-        return self.make_desired_text(value, fmt_modifier, palette)
+            return self.make_desired_title_cell_text(
+                value, fmt_modifier, syntax_names)
+        return self.make_desired_text(value, fmt_modifier, syntax_names)
 
     def make_desired_text(
-            self, value, fmt_modifier, palette) -> (ColoredText, int):
+            self, value, fmt_modifier, syntax_names) -> ([SHText._Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
 
         Actual text may be truncated (hence different from desired text)
@@ -393,20 +400,18 @@ class PPTableFieldType:
                 f"{type(self)} field type does not support format modifiers. "
                 f"Specified fmt_modifier: '{fmt_modifier}'")
         if PrettyPrinter.is_keyword_value(value):
-            syntax_name = "KEYWORD"
+            syntax_name = syntax_names.get("TABLE.KEYWORD")
             align = ALIGN_RIGHT
         elif isinstance(value, Number):
-            syntax_name = "NUMBER"
+            syntax_name = syntax_names.get("TABLE.NUMBER")
             align = ALIGN_RIGHT
         else:
-            syntax_name = None
+            syntax_name = ""
             align = ALIGN_LEFT
-        fmt = palette.get_color(syntax_name)
-        text = fmt(str(value))
-        return text, align
+        return [SHText._Chunk(syntax_name, str(value))], align
 
     def make_desired_title_cell_text(
-            self, value, _fmt_modifier, palette) -> (ColoredText, int):
+            self, value, _fmt_modifier, syntax_names) -> ([SHText._Chunk], int):
         """value -> desired text and alignment for title table row."""
 
         # values for column title cells are fetched from so called title records
@@ -415,16 +420,20 @@ class PPTableFieldType:
         # column. It is not a enum or uuid - it makes no need to format these values
         # using fmt_modifier.
         str_val = str(value) if value else ""
-        fmt = palette.get_color('COL_TITLE')
-        text = fmt(str_val)
-        return text, ALIGN_CENTER
+        syntax_name = syntax_names.get("TABLE.COL_TITLE")
+        if syntax_name is None:
+            text_items = [SHText._Chunk("", str_val)]
+        else:
+            text_items = [SHText._Chunk(syntax_name, str_val)]
+        return text_items, ALIGN_CENTER
 
-    def make_cell_text(
-            self, value, fmt_modifier, cell_type, width, palette) -> ColoredText:
-        """value -> ColoredText having exactly specified width."""
-        text, align = self.make_desired_text_for_row_type(
-            value, fmt_modifier, cell_type, palette)
-        return self.fit_to_width(text, width, align, palette)
+    def make_cell_sh_text(
+            self, value, fmt_modifier, cell_type, width, syntax_names,
+    ) -> [SHText._Chunk]:
+        """value -> [SHText._Chunk] having exactly specified width."""
+        text, align = self.make_desired_sh_text_for_row_type(
+            value, fmt_modifier, cell_type, syntax_names)
+        return self.fit_to_width(text, width, align, syntax_names)
 
     def _verify_fmt_modifier(self, fmt_modifier):
         # Raise exc if 'fmt_modifier' is not compatible with this field type.
@@ -445,45 +454,49 @@ class PPTableFieldType:
             f"(specified format modifier: '{fmt_modifier}')")
 
     @staticmethod
-    def fit_to_width(text, width, align, palette) -> ColoredText:
-        """text -> ColorText of exactly specified width.
+    def fit_to_width(sh_chunks, width, align, syntax_names) -> [SHText._Chunk]:
+        """[SHText._Chunk] -> [SHText._Chunk] of exactly specified length.
 
         Arguments:
-        - text: either string or ColoredText
+        - sh_chunks: list of SHText._Chunk objects
         - width: desired width of result
         - align: pbobj.ALIGN_LEFT or pbobj.ALIGN_CENTER or pbobj.ALIGN_RIGHT
-        - palette: ak.color.Palette. (In case the text does not fit into width
-            it is not simply truncated, but modified - palette is required to
-            get a color to be used to indicate modifications)
+        - warn_syntax_name: in case the text does not fit into width
+            it is not simply truncated, but modified - warn_syntax_name is required
+            to get a color to be used to indicate modifications
 
         Examples:
         'short'            -> colored 'short    '  or '    short'
         'very long text'   -> colored 'very l...'
         """
         assert width >= 0
-        filler_len = width - len(text)
+        filler_len = width - SHText.calc_chunks_len(sh_chunks)
         if filler_len == 0:
-            return text  # lucky, the text has exactly necessary length
+            return sh_chunks  # lucky, the text has exactly necessary length
         if filler_len > 0:
-            filler_color = palette.get_color(None)
             if align == ALIGN_CENTER:
                 left_filer_len = filler_len // 2
                 right_filler_len = filler_len - left_filer_len
-                return (
-                    filler_color(' '*left_filer_len) +
-                    text +
-                    filler_color(' '*right_filler_len)
-                )
-            filler = filler_color(' '*filler_len)
+                result = [SHText._Chunk("", ' '*left_filer_len)]
+                result.extend(sh_chunks)
+                result.append(SHText._Chunk("", ' '*right_filler_len))
+                return result
+            filler = SHText._Chunk("", ' '*filler_len)
             if align == ALIGN_LEFT:
-                return text + filler
+                return sh_chunks + [filler, ]
             assert align == ALIGN_RIGHT
-            return filler + text
-        # text is longer than necessary. It will be truncated.
+            result = [filler, ]
+            result.extend(sh_chunks)
+            return result
+        # text is longer than necessary. It needs to be truncated.
         # "some long text" -> "some lo..."
         dots_len = min(3, width)
         visible_text_len = width - dots_len
-        return text[:visible_text_len] + palette.get_color("WARN")('.'*dots_len)
+
+        result = SHText.resize_chunks_list(sh_chunks, visible_text_len)
+        result.append(SHText._Chunk(syntax_names["TABLE.WARN"], '.'*dots_len))
+
+        return result
 
 
 class _PPTDefaultFieldType(PPTableFieldType):
@@ -491,7 +504,7 @@ class _PPTDefaultFieldType(PPTableFieldType):
 
     def get_cell_text_len(self, value, _fmt_modifier):
         """Calculate length of text representation of the value."""
-        # caluculate text length w/o constructing ColoredText object for the cell
+        # caluculate text length w/o constructing SHText object for the cell
         return len(str(value))
 
 
@@ -587,7 +600,7 @@ class _PPTableParsedFmt:
                 f"is not applicable for usual fmt. fmt of following columns "
                 f"have 'value_path' description: {descr}")
 
-    def cols_are_explicit(self):
+    def cols_are_explicit(self) -> bool:
         """Check if fmt contains explicit columns list (not special value)."""
         return self.columns not in ["", "*"]
 
@@ -844,21 +857,23 @@ class PPTableColumn:
         return self.field.field_type.get_cell_text_len_for_row_type(
             value, self.fmt_modifier, cell_type)
 
-    def make_cell_text(self, record, palette, cell_type):
+    def make_cell_sh_text(self, record, syntax_names, cell_type) -> [SHText._Chunk]:
         """Fetch value from record and make text for a cell.
 
         Length of created text is exactly self.width.
         """
         value = self.field.fetch_value(record)
-        return self.make_cell_text_by_value(value, palette, cell_type)
+        return self.make_cell_text_by_value(value, syntax_names, cell_type)
 
-    def make_cell_text_by_value(self, value, palette, cell_type):
+    def make_cell_text_by_value(
+            self, value, syntax_names, cell_type,
+    ) -> [SHText._Chunk]:
         """Make text for a cell.
 
         Length of created text is exactly self.width.
         """
-        return self.field.field_type.make_cell_text(
-            value, self.fmt_modifier, cell_type, self.width, palette)
+        return self.field.field_type.make_cell_sh_text(
+            value, self.fmt_modifier, cell_type, self.width, syntax_names)
 
     def to_fmt_str(self):
         """Create fmt string - human readable and editable descr of self."""
@@ -1204,12 +1219,19 @@ class PPTableFormat:
         return ";".join(parts)
 
 
-class PPTable(PPObjBase, PaletteUser):
+class PPTable(PPObjBase):
     """2-D table.
 
     Provides pretty-printing and simple manipulation on 2-D table
     of data (such as results of sql query).
     """
+    _SYNTAX_GROUPS_NAMES = {
+        'TABLE.BORDER': 'TABLE.BORDER',
+        'TABLE.COL_TITLE': 'TABLE.COL_TITLE',
+        'TABLE.NUMBER': 'TABLE.NUMBER',
+        'TABLE.KEYWORD': 'TABLE.KEYWORD',
+        'TABLE.WARN': 'TABLE.WARN',
+    }
 
     def __init__(
             self, records, *,
@@ -1223,6 +1245,8 @@ class PPTable(PPObjBase, PaletteUser):
             title_records=None,
             fields_types=None,
             no_color=False,
+            syntax_names=None,
+            syntax_names_prefix=None,
     ):
         """Constructor of PPTable object - this object prints table.
 
@@ -1284,11 +1308,17 @@ class PPTable(PPObjBase, PaletteUser):
         # In case of table the original object is the list of records:
         self.r = self.records
 
+        if no_color:
+            syntax_names = {k: None for k in self._SYNTAX_GROUPS_NAMES.keys()}
+        else:
+            syntax_names = self.make_syntax_groups_names(
+                syntax_names, syntax_names_prefix)
+
         # self._default_pptable_printer produces 'default' representation of the table
         # (that is what is produced by 'print(pptable)')
         self._default_pptable_printer = _PPTableImpl(
             records,
-            Palette({}) if no_color else self.get_palette(),
+            syntax_names,
             header=header,
             footer=footer,
             fmt=fmt,
@@ -1299,17 +1329,6 @@ class PPTable(PPObjBase, PaletteUser):
             title_records=title_records,
             fields_types=fields_types,
         )
-
-    @classmethod
-    def _init_palette(cls, color_config):
-        # create palette object based on global colors config
-        return Palette({
-            'TBL_BORDER': color_config.get_color('TABLE.BORDER'),
-            'COL_TITLE': color_config.get_color('TABLE.COL_TITLE'),
-            'NUMBER': color_config.get_color('TABLE.NUMBER'),
-            'KEYWORD': color_config.get_color('TABLE.KEYWORD'),
-            'WARN': color_config.get_color('TABLE.WARN'),
-        })
 
     def set_fmt(self, fmt):
         """Specify fmt - a string which describes format of the table.
@@ -1338,9 +1357,9 @@ class PPTable(PPObjBase, PaletteUser):
         """
         self._default_pptable_printer.remove_columns(columns_names)
 
-    def gen_pplines(self) -> Iterator[str]:
+    def gen_sh_lines(self) -> Iterator[SHText]:
         # implementation of PrettyPrinter functionality
-        yield from self._default_pptable_printer.gen_pplines()
+        yield from self._default_pptable_printer.gen_sh_lines()
 
     def print(
             self, *,
@@ -1386,12 +1405,13 @@ class PPTable(PPObjBase, PaletteUser):
             assert False, "not implemented"
 
         if all(x is None for x in (fmt, limits, skip_columns, no_color)):
-            for line in self._default_pptable_printer.gen_pplines():
-                print(line, file=file)
+            for line in sh_lines_fmt(self._default_pptable_printer.gen_sh_lines()):
+                print(str(line), file=file)
             return
 
         # create one-time PPTableFormat to be used for this print
-        fmt_obj = PPTableFormat.mk_by_other(fmt, self._default_pptable_printer._ppt_fmt)
+        fmt_obj = PPTableFormat.mk_by_other(
+            fmt, self._default_pptable_printer._ppt_fmt)
 
         if limits is not None:
             fmt_obj.set_limits(limits)
@@ -1399,11 +1419,15 @@ class PPTable(PPObjBase, PaletteUser):
         if skip_columns:
             fmt_obj.remove_columns(skip_columns)
 
-        palette = Palette({}) if no_color else self._default_pptable_printer.palette
+        if no_color:
+            syntax_names = {
+                k: None for k in self._default_pptable_printer.syntax_names.keys()}
+        else:
+            syntax_names = self._default_pptable_printer.syntax_names
 
-        cur_pptable_printer = _PPTableImpl(self.r, palette, fmt_obj=fmt_obj)
+        cur_pptable_printer = _PPTableImpl(self.r, syntax_names, fmt_obj=fmt_obj)
 
-        for line in cur_pptable_printer.gen_pplines():
+        for line in sh_lines_fmt(cur_pptable_printer.gen_sh_lines()):
             print(line, file=file)
 
 
@@ -1413,12 +1437,12 @@ class _PPTableImpl:
     class _ServiceLine:
         # contents of a 'service' line of a printed table - line, which
         # doesn't correspond to any record (f.e. empty 'break by' line)
-        __slots__ = ('line_text', )
-        def __init__(self, line_text=None):
-            self.line_text = line_text
+        __slots__ = ('sh_text', )
+        def __init__(self, sh_text=None):
+            self.sh_text = sh_text
 
     def __init__(
-            self, records, palette, *,
+            self, records, syntax_names, *,
             header=None,
             footer=None,
             fmt=None,
@@ -1445,8 +1469,8 @@ class _PPTableImpl:
 
         if footer is None:
             footer = f"Total {len(self.records)} records"
-        self._footer = ColoredText(footer)
-        self.palette = palette
+        self._footer = SHText._Chunk("", footer)
+        self.syntax_names = syntax_names
 
     def _init_format(self, fmt, fmt_obj, fields, fields_types) -> PPTableFormat:
         # part of PPTable constructor.
@@ -1514,11 +1538,11 @@ class _PPTableImpl:
 
     def gen_pplines(self) -> Iterator[str]:
         """Produce the lines of PPTable representation"""
-        for line in self._gen_ppcolored_text():
-            yield str(line)
+        for colored_text in sh_lines_fmt(self.gen_sh_lines()):
+            yield str(colored_text)
 
-    def _gen_ppcolored_text(self) -> Iterator[ColoredText]:
-        # generate ColoredText objects - lines of the printed table
+    def gen_sh_lines(self) -> Iterator[SHText]:
+        """Generate SHText objects - lines of the printed table"""
 
         columns = self._ppt_fmt.columns
 
@@ -1566,7 +1590,9 @@ class _PPTableImpl:
         for cell_type, recs_generator in [
             (CELL_TYPE_TITLE, self.title_records),
             (CELL_TYPE_BODY, (
-                rec for rec in table_lines if not isinstance(rec, self._ServiceLine))),
+                rec for rec in table_lines
+                if not isinstance(rec, self._ServiceLine)
+            )),
         ]:
             for rec in recs_generator:
                 for col in columns:
@@ -1580,46 +1606,63 @@ class _PPTableImpl:
 
         table_width = sum(col.width for col in columns) + len(columns) + 1
 
-        border_color = self.palette.get_color("TBL_BORDER")
-        sep = border_color('|')
+        border_color = self.syntax_names["TABLE.BORDER"]
+        warn_color = self.syntax_names["TABLE.WARN"]
+
+        sep = SHText._Chunk(border_color, '|')
 
         # contents of service lines can be created now
-        break_line.line_text = sep + " "*(table_width - 2) + sep
-        skipped_recs_line.line_text = sep + PPTableFieldType.fit_to_width(
-            self.palette.get_color("WARN")("... ") +
-            self.palette.get_color(None)(f"{n_skipped} records skipped"),
+        break_line.sh_text = SHText(sep, " "*(table_width - 2), sep)
+        skipped_line_contents = PPTableFieldType.fit_to_width(
+            [
+                SHText._Chunk(warn_color, "... "),
+                SHText._Chunk("", f"{n_skipped} records skipped"),
+            ],
             table_width - 2,
             ALIGN_LEFT,
-            self.palette) + sep
+            self.syntax_names)
+        skipped_line_contents.insert(0, sep)
+        skipped_line_contents.append(sep)
+        skipped_recs_line.sh_text = SHText.make(skipped_line_contents)
 
         # 1. make first border line
-        border_line = border_color(
-            "".join("+" + "-"*col.width for col in columns) + '+')
+        border_line = SHText.make([
+            SHText._Chunk(
+                border_color,
+                "".join("+" + "-"*col.width for col in columns) + '+')])
         yield border_line
 
         # 2. table header (name)
         if self.header:
-            line = sep + PPTableFieldType.fit_to_width(
-                self.palette.get_color("COL_TITLE")(self.header),
+            line = PPTableFieldType.fit_to_width(
+                [SHText._Chunk(self.syntax_names["TABLE.COL_TITLE"], self.header)],
                 table_width - 2,
                 ALIGN_LEFT,
-                self.palette) + sep
-            yield line
+                self.syntax_names)
+            line.insert(0, sep)
+            line.append(sep)
+            yield SHText.make(line)
 
         # 3. column names
-        line = sep + sep.join(
-            col.make_cell_text_by_value(
+        line = [sep]
+        is_first = True
+        for col in columns:
+            if is_first:
+                is_first = False
+            else:
+                line.append(sep)
+            line.extend(col.make_cell_text_by_value(
                 col.name,
-                self.palette,
+                self.syntax_names,
                 CELL_TYPE_TITLE,
-            ) for col in columns
-        ) + sep
-        yield line
+            ))
+        line.append(sep)
+        yield SHText.make(line)
 
         for title_rec in self.title_records:
             # multi-line column titles
-            yield self._make_table_line(
-                title_rec, columns, sep, self.palette, CELL_TYPE_TITLE)
+            yield SHText.make(self._make_table_line(
+                title_rec, columns, sep, self.syntax_names, CELL_TYPE_TITLE))
 
         # 4. one more border_line
         yield border_line
@@ -1627,28 +1670,35 @@ class _PPTableImpl:
         # 5. table contents - actual records and service lines
         for tl in table_lines:
             if isinstance(tl, self._ServiceLine):
-                yield tl.line_text
+                yield tl.sh_text
             else:
-                yield self._make_table_line(
-                    tl, columns, sep, self.palette, CELL_TYPE_BODY)
+                yield SHText.make(self._make_table_line(
+                    tl, columns, sep, self.syntax_names, CELL_TYPE_BODY))
 
         # 6. final border line
         yield border_line
 
         # 7. summary line
         if self._footer:
-            yield PPTableFieldType.fit_to_width(
-                self._footer,
+            yield SHText.make(PPTableFieldType.fit_to_width(
+                [self._footer],
                 table_width,
                 ALIGN_LEFT,
-                self.palette)
+                self.syntax_names))
 
-    def _make_table_line(self, record, columns, sep, palette, cell_type):
-        # create ColoredText - representaion of a single record in table
-        line = sep + sep.join(
-            col.make_cell_text(record, palette, cell_type)
-            for col in columns
-        ) + sep
+    def _make_table_line(
+        self, record, columns, sep, syntax_names, cell_type,
+    ) -> [SHText._Chunk]:
+        # create SHText chunks - representaion of a single record in table
+        line = [sep]
+        is_first = True
+        for col in columns:
+            if is_first:
+                is_first = False
+            else:
+                line.append(sep)
+            line.extend(col.make_cell_sh_text(record, syntax_names, cell_type))
+        line.append(sep)
         return line
 
 
@@ -1690,7 +1740,9 @@ class PPEnumFieldType(PPTableFieldType):
             (len(str(x)) for x in self.enum_values if x is not None),
             default=1)
 
-        self._cache = {}  # {palette_id: {fmt_modifier: {enum_val: (text, align)}}}
+        # {syntax_names_id: {fmt_modifier: {enum_val: (text, align)}}}
+        self._cache = {}
+
         self._cache_lengths = {
             fmt_modifier: {}
             for fmt_modifier in self._FMT_MODIFIERS
@@ -1703,32 +1755,32 @@ class PPEnumFieldType(PPTableFieldType):
         return self.enum_values.get(value, self.enum_missing_value)[0]
 
     def make_desired_text(
-            self, value, fmt_modifier, palette) -> (ColoredText, int):
+            self, value, fmt_modifier, syntax_names) -> ([SHText._Chunk], int):
         """value -> desired text and alignment"""
 
         # prepare and cache cell text for a enum value
         # cache is prepared for all supported format modifiers
         try:
-            by_fmt_cache = self._cache[id(palette)]
+            by_fmt_cache = self._cache[id(syntax_names)]
         except KeyError:
-            by_fmt_cache = self._cache[id(palette)] = {
+            by_fmt_cache = self._cache[id(syntax_names)] = {
                 fmt_modifier: {}
                 for fmt_modifier in self._FMT_MODIFIERS
             }
             # None and 'full' format modifiers will refer to the same cached vals
             by_fmt_cache[None] = by_fmt_cache['full']
-            self._cache[id(palette)] = by_fmt_cache
+            self._cache[id(syntax_names)] = by_fmt_cache
 
         by_value_cache = by_fmt_cache.get(fmt_modifier, None)
         if by_value_cache is None:
             self._verify_fmt_modifier(fmt_modifier)
 
         if value not in by_value_cache:
-            self._make_text_cache_for_val(value, palette, by_fmt_cache)
+            self._make_text_cache_for_val(value, syntax_names, by_fmt_cache)
 
         return by_value_cache[value]
 
-    def _make_text_cache_for_val(self, value, palette, by_fmt_cache):
+    def _make_text_cache_for_val(self, value, syntax_names, by_fmt_cache) -> None:
         # populate self._cache for value
         # ('by_fmt_cache' is part of self._cache)
         try:
@@ -1739,7 +1791,7 @@ class PPEnumFieldType(PPTableFieldType):
                 # special case: cell will not contain enum's value and name,
                 # but a single None
                 text_ang_alignment = super().make_desired_text(
-                    value, None, palette)
+                    value, None, syntax_names)
                 by_fmt_cache['val'][value] = text_ang_alignment
                 by_fmt_cache['name'][value] = text_ang_alignment
                 by_fmt_cache['full'][value] = text_ang_alignment
@@ -1748,25 +1800,25 @@ class PPEnumFieldType(PPTableFieldType):
             val_len = max(self.max_val_len, len(str(value)))
 
         # 'val' format
-        val_text, align = super().make_desired_text(
-            value, None, palette)
-        by_fmt_cache['val'][value] = (val_text, align)
+        val_text_items, align = super().make_desired_text(
+            value, None, syntax_names)
+        by_fmt_cache['val'][value] = (val_text_items, align)
 
         # 'name' format
-        fmt = palette.get_color(syntax_name)
-        name_text = fmt(name)
-        by_fmt_cache['name'][value] = (name_text, align)
+        by_fmt_cache['name'][value] = ([SHText._Chunk(syntax_name, name)], align)
 
         # 'full' format
-        prefix_pad = ""
-        pad_len = val_len - len(val_text)
+        full_text_items = []
+        pad_len = val_len - SHText.calc_chunks_len(val_text_items)
         if pad_len > 0:
             # align 'value' portion of the text to right
-            prefix_pad = " " * pad_len
-        full_text = ColoredText(prefix_pad, val_text, " ", name_text)
-        by_fmt_cache['full'][value] = (full_text, ALIGN_LEFT)
+            full_text_items.append(SHText._Chunk("", " " * pad_len))
+        full_text_items.extend(val_text_items)
+        full_text_items.append(SHText._Chunk("", " "))
+        full_text_items.append(SHText._Chunk(syntax_name, name))
+        by_fmt_cache['full'][value] = (full_text_items, ALIGN_LEFT)
 
-    def get_cell_text_len(self, value, fmt_modifier):
+    def get_cell_text_len(self, value, fmt_modifier) -> int:
         """Calculate length of text representation of the value."""
 
         by_val_lenghs = self._cache_lengths.get(fmt_modifier, None)
@@ -1805,7 +1857,7 @@ class PPEnumFieldType(PPTableFieldType):
         # 'full' format
         self._cache_lengths['full'][value] = val_len + 1 + name_len
 
-    def is_fmt_modifier_ok(self, fmt_modifier):
+    def is_fmt_modifier_ok(self, fmt_modifier) -> (bool, str):
         """Chek if fmt_modifier is correct."""
         if fmt_modifier is None or fmt_modifier in self._FMT_MODIFIERS:
             return True, ""
