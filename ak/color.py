@@ -298,18 +298,18 @@ class _CTText:
 
     @classmethod
     def calc_chunks_len(cls, chunks) -> int:
-        """!!!"""
+        """[_Chunk, ] -> total len of the text in the chunks"""
         return sum(len(c.text) for c in chunks)
 
     @classmethod
     def resize_chunks_list(cls, chunks, new_len):  # -> [cls._Chunk]:
-        """!!!"""
+        """Truncates list of chunks or appends a chunk of empty text"""
         assert new_len >= 0
         existing_len = cls.calc_chunks_len(chunks)
         if existing_len == new_len:
             return chunks
         if existing_len < new_len:
-            return chunks + [cls._Chunk(""," "*(new_len - existing_len))]
+            return chunks + [cls._Chunk("", " "*(new_len - existing_len))]
         remaining_len = new_len
         result = []
         for item in chunks:

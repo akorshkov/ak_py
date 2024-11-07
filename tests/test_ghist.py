@@ -3,10 +3,12 @@
 ghist module fetches and reports history of commits and builds for specified bug(s).
 """
 import unittest
-import logging
+import io
 import json
+import logging
 
 from ak.ghist import ProjectRepo, ReposCollection, BuildNumData
+from ak.color import ColoredText
 from ak.logtools import logs_configure
 
 from .mock_git import MockedGitRepo
@@ -17,6 +19,21 @@ from .mock_git import MockedGitRepo
 
 class CommitsCheckerMixin:
     """Helper methods for testing report data based on MockedGitRepo."""
+
+    def check_printed_report_requirements(self, report):
+        """Verify that the report can be printed and make some checks of result."""
+
+        with io.StringIO() as output:
+            print(report, file=output)
+            print_result = output.getvalue()
+
+        # make sure there are no trailing spaces
+        plain_text = ColoredText.strip_colors(print_result)
+        for i, line in enumerate(plain_text.split("\n")):
+            self.assertFalse(
+                line.endswith(" "),
+                f"trailing spaces detected in line {i} of the report:\n"
+                f"|{line}|\nWhole report:\n{print_result}")
 
     def assert_branches_list(self, rgraph, expected_branches_names, message=None):
         """Verify that RGraph contains branches with specified names"""
@@ -165,21 +182,21 @@ class TestSingleRepoSingleBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_empty_report(self):
         """Test empty report: no report-related commits found."""
-        reports_data = self.repos.make_reports_data("BUG-xxx")
-        #self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-xxx")
+        self.check_printed_report_requirements(report)
 
-        self.assertEqual(1, len(reports_data))
-        cmpnt_name, rgraph = reports_data[0]
+        self.assertEqual(1, len(report.data))
+        cmpnt_name, rgraph = report.data[0]
         self.assertEqual("comp_1", cmpnt_name)
         # self.assertEqual(0, len(rgraph.branches), "empty report expected")
         self.assertEqual(0, len(rgraph.rcommits), "empty report expected")
 
     def test_single_commit_built_later(self):
         """Single commit matches, included in build based on different commit."""
-        reports_data = self.repos.make_reports_data("BUG-111")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-111")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(rgraph, ['master', ])
         rbranch = rgraph.branches[0]
         rbuilds = rbranch.get_rbuilds_list()
@@ -194,10 +211,10 @@ class TestSingleRepoSingleBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_single_commit_built_immediately(self):
         """Single commit matches, included in build based on same commit."""
-        reports_data = self.repos.make_reports_data("BUG-222")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-222")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(rgraph, ['master', ])
         rbranch = rgraph.branches[0]
         rbuilds = rbranch.get_rbuilds_list()
@@ -211,10 +228,10 @@ class TestSingleRepoSingleBranch(unittest.TestCase, CommitsCheckerMixin):
             ("BUG-444", 40),
             ("BUG-555", 50),
         ]:
-            reports_data = self.repos.make_reports_data(pattern)
-            # self.repos.print_prepared_reports(reports_data)
+            report = self.repos.make_report(pattern)
+            self.check_printed_report_requirements(report)
 
-            _, rgraph = reports_data[0]
+            _, rgraph = report.data[0]
             self.assert_branches_list(rgraph, ['master', ])
             rbranch = rgraph.branches[0]
             rbuilds = rbranch.get_rbuilds_list()
@@ -224,10 +241,10 @@ class TestSingleRepoSingleBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_multiple_commits(self):
         """Multiple commits in report; multiple builds."""
-        reports_data = self.repos.make_reports_data("BUG")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(rgraph, ['master', ])
         rbranch = rgraph.branches[0]
         rbuilds = rbranch.get_rbuilds_list()
@@ -276,10 +293,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_111(self):
         """Verify data for 'BUG-111' report."""
-        reports_data = self.repos.make_reports_data("BUG-111")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-111")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(rgraph, ["master", "release/10.260", "release/10.250"])
 
         # check branch release/10.250
@@ -302,10 +319,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_222(self):
         """Verify data for 'BUG-122' report."""
-        reports_data = self.repos.make_reports_data("BUG-122")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-122")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(rgraph, ["master", "release/10.260", "release/10.250"])
 
         # check branch release/10.250
@@ -328,10 +345,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_333(self):
         """Verify data for 'BUG-133' report."""
-        reports_data = self.repos.make_reports_data("BUG-133")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-133")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(
             rgraph, ["master", "release/10.260", "release/10.250"])
 
@@ -359,10 +376,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_444(self):
         """Verify data for 'BUG-144' report."""
-        reports_data = self.repos.make_reports_data("BUG-144")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-144")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(
             rgraph, ["master", "release/10.260", "release/10.250"])
 
@@ -386,10 +403,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_555(self):
         """Verify data for 'BUG-155' report."""
-        reports_data = self.repos.make_reports_data("BUG-155")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-155")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(
             rgraph, ["master", "release/10.260", "release/10.250"])
 
@@ -413,10 +430,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_666(self):
         """Verify data for 'BUG-166' report."""
-        reports_data = self.repos.make_reports_data("BUG-166")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-166")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(
             rgraph, ["master", "release/10.260"])
 
@@ -434,10 +451,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_777(self):
         """Verify data for 'BUG-177' report."""
-        reports_data = self.repos.make_reports_data("BUG-177")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG-177")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(rgraph, ["master", ])
 
         # check branch master
@@ -448,10 +465,10 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 
     def test_report_all_bugs(self):
         """Verify data for all bugs 'BUG' report."""
-        reports_data = self.repos.make_reports_data("BUG")
-        # self.repos.print_prepared_reports(reports_data)
+        report = self.repos.make_report("BUG")
+        self.check_printed_report_requirements(report)
 
-        _, rgraph = reports_data[0]
+        _, rgraph = report.data[0]
         self.assert_branches_list(
             rgraph, ["master", "release/10.260", "release/10.250"])
 
@@ -486,11 +503,11 @@ class TestSingleRepoMultyBranch(unittest.TestCase, CommitsCheckerMixin):
 class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
     """Case with two repositories: one is component of the other."""
 
-    def setUp(eslf):
+    def setUp(self):
         # processing of repos here logs warnings. Disable it.
         logging.disable(logging.CRITICAL)
 
-    def tearDown(eslf):
+    def tearDown(self):
         logging.disable(logging.NOTSET)
 
     def test_component_bumps_reporting(self):
@@ -573,10 +590,10 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         })
 
         # repos prepared
-        reports_data = repos.make_reports_data("BUG-211")
+        report = repos.make_report("BUG-211")
         rgraphs_by_name = {
-            repo_name: rgraph for repo_name, rgraph in reports_data}
-        # repos.print_prepared_reports(reports_data)
+            repo_name: rgraph for repo_name, rgraph in report.data}
+        self.check_printed_report_requirements(report)
 
         self.assertEqual({'c_master', 'proj_lib'}, rgraphs_by_name.keys())
 
@@ -743,10 +760,10 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         })
 
         # repos prepared
-        reports_data = repos.make_reports_data("BUG-212")
+        report = repos.make_report("BUG-212")
         rgraphs_by_name = {
-            repo_name: rgraph for repo_name, rgraph in reports_data}
-        # repos.print_prepared_reports(reports_data)
+            repo_name: rgraph for repo_name, rgraph in report.data}
+        self.check_printed_report_requirements(report)
 
         # proj_lib repo: verify 'included_at' info is populated correctly.
         #
@@ -848,10 +865,10 @@ class TestReposDependentComponent(unittest.TestCase, CommitsCheckerMixin):
         })
 
         # main part of test: next command should not fail
-        reports_data = repos.make_reports_data("BUG-42")
+        report = repos.make_report("BUG-42")
         rgraphs_by_name = {
-            repo_name: rgraph for repo_name, rgraph in reports_data}
-        # repos.print_prepared_reports(reports_data)
+            repo_name: rgraph for repo_name, rgraph in report.data}
+        self.check_printed_report_requirements(report)
 
         self.assertEqual({'c_master', 'proj_lib'}, rgraphs_by_name.keys())
 
