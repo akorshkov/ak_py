@@ -1156,7 +1156,8 @@ def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
         # do convert the argument to lines of colored text if possible
         sh_lines_attr = getattr(arg, 'gen_sh_lines', None)
         if sh_lines_attr is not None:
-            yield from sh_lines_attr()
+            for sh_text in sh_lines_attr():
+                yield palette(sh_text)
             return
         sh_text_attr = getattr(arg, 'sh_text', None)
         if sh_text_attr is not None:

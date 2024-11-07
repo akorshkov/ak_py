@@ -1,11 +1,12 @@
 """Test PrettyPrinter """
 
 import unittest
+import io
 from collections import namedtuple
 
-from ak.color import ColoredText, SHText
+from ak.color import ColoredText, SHText, sh_print
 from ak import ppobj
-from ak.ppobj import PrettyPrinter
+from ak.ppobj import PrettyPrinter, pp
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 
 
@@ -34,10 +35,9 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_simple_usage(self):
         """Test processing of good json-looking object"""
-        pp = PrettyPrinter().get_pptext
 
         # check that some text produced w/o errors
-        s = pp({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]})
+        s = str(pp({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]}))
 
         self._verify_format(s)
 
@@ -49,31 +49,29 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_printing_notjson(self):
         """Test that PrettyPrinter can handle not-json objects."""
-        pp = PrettyPrinter().get_pptext
 
-        s = pp(42)
+        s = str(pp(42))
         self.assertIn("42", s)
 
-        s = pp("some text")
+        s = str(pp("some text"))
         self.assertIn("some text", s)
 
-        s = pp(True)
+        s = str(pp(True))
         self.assertIn("True", s)
 
-        s = pp(None)
+        s = str(pp(None))
         self.assertIn("None", s)
 
     def test_complex_object(self):
         """Test printing 'complex' object where keys have different types."""
-        pp = PrettyPrinter().get_pptext
 
-        s = pp({
+        s = str(pp({
             "d": {1: 23, "a": 17, "c": [1, 20, 2]},
             "ddd": "aaa",
             "a": 2, "ccc": 80,
             "z": 7,
             3: None
-        })
+        }))
 
         self._verify_format(s)
 
@@ -82,8 +80,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_ppobj_long_list(self):
         """Test pretty-printing a very long list of items."""
-        pp = PrettyPrinter().get_pptext
-        s = pp({
+        s = str(pp({
             "items": [
                 {
                     "name": "x1",
@@ -102,7 +99,7 @@ class TestPrettyPrinter(unittest.TestCase):
                     "isActive": True,
                 }
             ],
-        })
+        }))
 
         self._verify_format(s)
 
@@ -118,24 +115,54 @@ class TestPrettyPrinter(unittest.TestCase):
         # be present together in the same line.
         self.assertIn('"aaaaaaa", "bbbbbbb",', plain_text)
 
-    def test_pprint_in_joson_fmt(self):
+    def test_pprint_in_json_fmt(self):
         """Test pprinter in json mode: result string should be colored valid json.
 
         (well, it will be a valid json after color sequences are removed)
         """
-        pp = PrettyPrinter(fmt_json=True).get_pptext
+        pp_custom = PrettyPrinter(fmt_json=True)
 
-        s = pp({
+        s = str(pp_custom({
             "n": None,
             "t": True,
             "f": False,
-        })
+        }))
 
         self._verify_format(s)
 
         self.assertIn("null", s)
         self.assertIn("true", s)
         self.assertIn("false", s)
+
+    def test_different_printing_methods(self):
+        """Test that different printing methods produce the same result."""
+
+        # it's important for the test that the object to print is quite big,
+        # so that it's string representation consists of several lines
+        obj_to_print = {
+            "d": {1: 23, "a": 17, "c": [1, 20, 2]},
+            "ddd": "aaa",
+            "a": 2, "ccc": 80,
+            "z": 7,
+            3: None
+        }
+
+        pp_obj = pp(obj_to_print)
+
+        # 1. converting pp(...) result to str.
+        # new-line symbol is appended because other methods append this symbol
+        converted_result = str(pp_obj) + "\n"
+
+        with io.StringIO() as output:
+            print(pp_obj, file=output)
+            print_result = output.getvalue()
+
+        with io.StringIO() as output:
+            sh_print(pp_obj, file=output)
+            sh_print_result = output.getvalue()
+
+        self.assertEqual(converted_result, print_result)
+        self.assertEqual(converted_result, sh_print_result)
 
 
 #########################

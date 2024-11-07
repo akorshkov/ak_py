@@ -64,6 +64,14 @@ class PrettyPrinter(SyntaxGroupsUser):
         self.number_syntax_id = syntax_names["NUMBER"]
         self.keyword_syntax_id = syntax_names["KEYWORD"]
 
+    def __call__(self, obj_to_print) -> 'PrettyPrintResult':
+        """obj_to_print -> Pretty-Printable object.
+
+        The result can be converted to string or printed using standard 'print'
+        or ak.color.sh_print methods.
+        """
+        return PrettyPrintResult(self, obj_to_print)
+
     def gen_pplines(self, obj_to_print) -> Iterator[str]:
         """Generate lines of colored text - pretty representation of the object."""
         for colored_text in sh_lines_fmt(self._gen_sh_lines(obj_to_print)):
@@ -309,6 +317,29 @@ class PPObjBase(SyntaxGroupsUser):
         # do not remove it! Without this method the str(obj) will call
         # __repr__ which prints text immediately
         return self.get_pptext()
+
+
+# ready to use PrettyPrinter with default configuration
+pp = PrettyPrinter()
+
+
+class PrettyPrintResult(PPObjBase):
+    """Pretty-Printable object produced by PrettyPrinter call.
+
+    This object can be converted to string and printed using either standard 'print'
+    method or ak.color.sh_print method. By default global color config is used
+    to convert names of the syntax items (produced by the PrettyPrinter) into
+    color sequences of the finally printed text.
+    """
+    __slots__ = 'pretty_printer', 'obj_to_print'
+
+    def __init__(self, pretty_printer, obj_to_print):
+        self.pretty_printer = pretty_printer
+        self.obj_to_print = obj_to_print
+
+    def gen_sh_lines(self) -> Iterator[SHText]:
+        """Generate SHText lines of PPObj representation."""
+        yield from self.pretty_printer._gen_sh_lines(self.obj_to_print)
 
 
 #########################
