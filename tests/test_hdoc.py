@@ -3,6 +3,7 @@
 import unittest
 from collections import namedtuple
 
+from ak.color import SHText
 from ak.hdoc import HCommand, HDocItemFunc, BoundMethodNotes, h_doc
 
 
@@ -304,7 +305,7 @@ class TestMethodNotes(unittest.TestCase):
                 """
                 return some_arg + 42
 
-            def _get_hdoc_method_notes(self, bound_method, palette):
+            def _get_hdoc_method_notes(self, bound_method, syntax_names):
                 """Method which produce 'notes' to be used by h-doc.
 
                 Method is predefined and should not be reported by h command.
@@ -313,13 +314,11 @@ class TestMethodNotes(unittest.TestCase):
                 """
                 assert self is bound_method.__self__
                 assert hasattr(bound_method, '_h_doc')
-                color = palette.get_color(
-                    'dflt' if self.allow_method else 'warning'
-                )
+                syntax = 'dflt' if self.allow_method else 'warning'
                 return BoundMethodNotes(
                     is_available=self.allow_method,
-                    note_short=color(self.note_short),
-                    note_line=color(self.note_line),
+                    note_short=SHText(syntax, self.note_short),
+                    note_line=SHText(syntax, self.note_line),
                 )
 
         # for tests prepare version of 'h' which does not print but return

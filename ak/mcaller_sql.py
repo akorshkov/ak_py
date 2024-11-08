@@ -249,4 +249,4 @@ class MCallerSql(MCaller):
         # decorated with 'method_sql')
         assert hasattr(bound_method, '_mcaller_meta')
 
-        return BoundMethodNotes(True, "", None)
+        return BoundMethodNotes(True, "", "")

@@ -18,7 +18,7 @@ import inspect
 import logging
 from functools import wraps
 from ak.ppobj import PPObjBase
-from ak.color import ColorFmt
+from ak.color import SHText
 from ak.hdoc import h_doc, BoundMethodNotes
 
 
@@ -187,9 +187,8 @@ class MCaller(metaclass=_Meta_MethodsCaller):
     implements functionality, which makes creation of http wrappers easier.
     Other such classes exist for wrappers of other types.
     """
-    _NA_COLOR = ColorFmt('RED')  # temporary. Color from palette will be used.
 
-    def _get_hdoc_method_notes(self, bound_method, palette) -> BoundMethodNotes:
+    def _get_hdoc_method_notes(self, bound_method, syntax_names) -> BoundMethodNotes:
         # generic implementation of the method wich returns BoundMethodNotes
         #
         # The result BoundMethodNotes depends on the type of the method.
@@ -211,11 +210,11 @@ class MCaller(metaclass=_Meta_MethodsCaller):
         notes_maker_method = getattr(self, notes_maker_method_name, None)
 
         if notes_maker_method is None:
-            return BoundMethodNotes(True, "", None)
+            return BoundMethodNotes(True, "", "")
 
-        return notes_maker_method(bound_method, palette)
+        return notes_maker_method(bound_method, syntax_names)
 
-    def _make_bm_notes_general(self, bound_method, palette) -> BoundMethodNotes:
+    def _make_bm_notes_general(self, bound_method, syntax_names) -> BoundMethodNotes:
         # create BoundMethodNotes for 'general' bound methods (methods
         # decorated with 'method_attrs' decorator)
         assert hasattr(bound_method, '_mcaller_meta')
@@ -228,7 +227,8 @@ class MCaller(metaclass=_Meta_MethodsCaller):
 
         if missing_components:
             return BoundMethodNotes(
-                False, self._NA_COLOR("<n/a>"),
+                False,
+                SHText(("WARN", "<n/a>")),
                 f"object has no access to components {missing_components}")
         else:
-            return BoundMethodNotes(True, "", None)
+            return BoundMethodNotes(True, "", "")

@@ -1,6 +1,7 @@
 """Tools for creation of "methods caller" objects for http calls."""
 
 from ak import conn_http
+from ak.color import SHText
 from ak.hdoc import BoundMethodNotes
 from ak.mcaller import MCaller
 
@@ -165,7 +166,7 @@ class MCallerHttp(MCaller):
 
         return conn
 
-    def _make_bm_notes_http(self, bound_method, palette) -> BoundMethodNotes:
+    def _make_bm_notes_http(self, bound_method, syntax_names) -> BoundMethodNotes:
         # create BoundMethodNotes for bound http method (method
         # decorated with 'method_http')
         assert hasattr(bound_method, '_mcaller_meta')
@@ -177,7 +178,9 @@ class MCallerHttp(MCaller):
 
         if not hasattr(self, 'http_conn'):
             return BoundMethodNotes(
-                False, self._NA_COLOR('<n/a>'), "object has no 'http_conn' attribute")
+                False,
+                SHText(("WARN", '<n/a>')),
+                "object has no 'http_conn' attribute")
 
         auth_ok = self.http_conn.auth_type in method_meta.auth_types
         auth_descr = (
@@ -201,9 +204,9 @@ class MCallerHttp(MCaller):
 
         method_available = auth_ok and component_ok
         note_short = ""
-        note_line = None
+        note_line = ""
         if not method_available:
-            note_short = self._NA_COLOR("<n/a>")
+            note_short = SHText(("WARN", '<n/a>'))  # TODO: use syntax_names
             note_line = "; ".join(
                 s for s in [auth_descr, component_problem_descr] if s)
 
