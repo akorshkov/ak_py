@@ -2006,7 +2006,7 @@ class GHistColorsConfig(ColorsConfig):
         }
     }
 
-    DFLT_CONFIG = {**ColorsConfig.DFLT_CONFIG, **OWN_DFLT_CONFIG}
+    BUILT_IN_CONFIG = {**ColorsConfig.BUILT_IN_CONFIG, **OWN_DFLT_CONFIG}
 
 
 class ReportFormatter(SyntaxGroupsUser):

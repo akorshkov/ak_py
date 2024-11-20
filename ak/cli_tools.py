@@ -320,7 +320,7 @@ def std_app_configure(
     if isinstance(syntax_amends, dict):
         syntax_amends = [syntax_amends, ]
 
-    global_colors_conf = conf_class(*syntax_amends, use_effects=args.color_stdout)
+    global_colors_conf = conf_class(*syntax_amends, no_color=not args.color_stdout)
     set_global_colors_config(global_colors_conf)
 
     # 3. configure logging

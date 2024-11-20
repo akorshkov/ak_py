@@ -5,7 +5,7 @@ import io
 from typing import Iterator
 
 from ak.color import (
-    ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser,
+    ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser_killme, LocalPalette,
     get_global_colors_config, set_global_colors_config,
     sh_fmt, sh_print,
 )
@@ -56,14 +56,14 @@ class TestColorFmt(unittest.TestCase):
 
         dummy_printer = ColorFmt(
             'YELLOW', bg_color='BLUE', bold=True, underline=True,
-            blink=True, crossed=True, use_effects=False)
+            blink=True, crossed=True, no_color=True)
 
         t = dummy_printer(raw_text)
 
         self.assertEqual(
             raw_text, t,
             "'t' should have no special effects as ColorFmt "
-            "was created with 'use_effects = False'")
+            "was created with 'no_color = True'")
 
     def test_wrong_color(self):
         with self.assertRaises(ValueError) as exc:
@@ -570,10 +570,11 @@ class TestSHText(unittest.TestCase):
 
 
 class TestColorsConfig(unittest.TestCase):
+    """Test ColorsConfig class"""
 
     class TstColorsConfig(ColorsConfig):
         # not a nice-loking colors config, but ok for test purposes
-        DFLT_CONFIG = {
+        BUILT_IN_CONFIG = {
             "TEXT": "",
             "NAME": "BLUE:bold",
             "VERY_COLORED": "YELLOW/BLUE:bold,faint,underline,blink,crossed",
@@ -588,7 +589,19 @@ class TestColorsConfig(unittest.TestCase):
             },
         }
 
-    def test_colors_config_use_defaults(self):
+    @classmethod
+    def _color_report_to_map(cls, report):
+        # returns {synt_id: report_line}
+        report = ColoredText.strip_colors(report)
+        lines_by_synt_id = {}
+        for line in report.split('\n'):
+            chunks = line.split(':')
+            if len(chunks) < 2:
+                continue
+            lines_by_synt_id[chunks[0].strip()] = line
+        return lines_by_synt_id
+
+    def test_colors_config_use_defaults_only(self):
         """Test initialization of ColorsConfig with all defaults."""
 
         raw_text = "test"
@@ -601,6 +614,8 @@ class TestColorsConfig(unittest.TestCase):
 
         # explicit initialization with using all the defaults
         colors_conf = self.TstColorsConfig()
+
+        # print(colors_conf.make_report())
 
         colored_texts = {
             syntax_name: colors_conf.get_color(syntax_name)(raw_text)
@@ -634,12 +649,12 @@ class TestColorsConfig(unittest.TestCase):
             colored_texts['NAME'], colored_texts['TABLE.ALT2_NAME'],
             "expected BLUE and GREEN colors respectively")
 
-    def test_no_colors_config(self):
+    def test_turned_off_syntax_coloring(self):
         """Test turning off all the syntax coloring."""
 
         raw_text = "test"
 
-        colors_conf = self.TstColorsConfig({}, use_effects=False)
+        colors_conf = self.TstColorsConfig(no_color=True)
 
         colored_texts = {
             syntax_name: colors_conf.get_color(syntax_name)(raw_text)
@@ -654,7 +669,7 @@ class TestColorsConfig(unittest.TestCase):
             self.assertEqual(
                 raw_text, text, "should be equal as all the coloring was turned off")
 
-    def test_config_not_default(self):
+    def test_not_default_simple_config(self):
         """Test modifications to default config."""
 
         raw_text = "test"
@@ -681,122 +696,259 @@ class TestColorsConfig(unittest.TestCase):
         self.assertEqual(
             colored_texts['VERY_COLORED'], colored_texts['TABLE.BORDER'])
 
-    def test_config_multiple_extras(self):
-        """Test ColorsConfig construction with multiple extra_rules."""
-        extra_rules_01 = {
+    def test_not_default_config(self):
+        """Test ColorsConfig construction with initial config."""
+
+        # syntax colors description is processed first and has higher precenence
+        # than defaults hardcoded in python code.
+        # These rules may still reference such hardcoded syntaxes.
+        config_rules = {
             'TABLE': {
-                'NAME': "CYAN",
-                'BORDER': "NAME",  # "BLUE:bold"
+                'NAME': "CYAN",  # hardcoded value is "GREEN"
+
+                # parent syntax "NAME" is not present in config
+                'BORDER': "NAME",  # hardcoded value is "BLUE:bold"
             },
-            'VERY_COLORED': "TABLE.NAME",
-        }
-        extra_rules_02 = {
-            'TABLE': {
-                'NAME': "YELLOW",
-            },
+            'VERY_COLORED': "TABLE.ALT2_NAME",
         }
 
-        colors_conf = self.TstColorsConfig(extra_rules_01, extra_rules_02)
+        colors_conf = self.TstColorsConfig(config_rules)
+
+        sample_text = "test"
+
+        self.assertEqual(
+            str(colors_conf.get_color('TABLE.NAME')(sample_text)),
+            str(ColorFmt("CYAN")(sample_text)),
+            "even though hardcoded default is 'GREEN', "
+            "'CYAN' is specified in config_rules.")
+
+        self.assertEqual(
+            str(colors_conf.get_color('TABLE.BORDER')(sample_text)),
+            str(ColorFmt("BLUE", bold=True)(sample_text)),
+            "'TABLE.NAME' -(config_rules)-> 'NAME' -(default)-> 'BLUE:bold'")
+
+        self.assertEqual(
+            str(colors_conf.get_color('VERY_COLORED')(sample_text)),
+            str(ColorFmt("CYAN")(sample_text)),
+            "'VERY_COLORED' -(config_rules)-> 'TABLE.ALT2_NAME' "
+            "-(default)-> 'TABLE.NAME' -(config_rules)-> 'CYAN'")
+
+    def test_misc_formats_of_colors_in_config(self):
+        """Test different formats of color identifier in the ColorsConfig."""
+
+        colors_conf = self.TstColorsConfig({
+            # this rule says: use same format as in "TABLE.BORDER", but
+            # make fg_color = color #155.
+            # As the "TABLE.BORDER" rule specifies only the fg_color and
+            # the fg_color is substituted it does not make much sence to
+            # mention this parent syntax id here. It's only for test.
+            #
+            # 155 - int color id, corresponds to (r,g,b) = (3,5,1)
+            "NAME": "TABLE.BORDER:155",
+            "TEXT": "(4,1,1):blink",
+            "SHADE": "TEXT:g4/g5:no_blink",
+        })
+        # print(colors_conf.make_report())
+
+        sample_text = "test"
+
+        self.assertEqual(
+            str(colors_conf.get_color("NAME")(sample_text)),
+            str(ColorFmt(155)(sample_text)))
+
+        self.assertEqual(
+            str(colors_conf.get_color("NAME")(sample_text)),
+            str(ColorFmt((3, 5, 1))(sample_text)))
+
+        self.assertEqual(
+            str(colors_conf.get_color("TEXT")(sample_text)),
+            str(ColorFmt((4, 1, 1), blink=True)(sample_text)))
+
+        self.assertEqual(
+            str(colors_conf.get_color("SHADE")(sample_text)),
+            str(ColorFmt("g4", bg_color="g5")(sample_text)))
+
+    def test_config_not_resilved_items(self):
+        """Test situation when some items in the config can't be resolved.
+
+        This usually means an error in configuration. But such situations
+        are not necessarily result of an error and should not break the program.
+        """
+
+        class MyMinorColorsConfig(ColorsConfig):
+            BUILT_IN_CONFIG = {
+                "SYNT_1": "SYNT_X_2",  # "SYNT_X_2" will not be defined ever
+                "SYNT_2": "YELLOW",
+                "SYNT_3": "BLUE",
+            }
+
+        colors_conf = MyMinorColorsConfig(
+            {
+                "SYNT_3": "SYNT_X_3",
+                "SYNT_4": "SYNT_1",
+            })
 
         raw_text = "test"
 
         self.assertEqual(
-            str(colors_conf.get_color('TABLE.NAME')(raw_text)),
+            str(colors_conf.get_color('SYNT_1')(raw_text)),
+            raw_text,
+            "'SYNT_1' -(default)-> 'SYNT_X_2' - not defined")
+
+        self.assertEqual(
+            str(colors_conf.get_color('SYNT_2')(raw_text)),
             str(ColorFmt("YELLOW")(raw_text)),
-            "'YELLOW' is apecified in extra_rules_02")
+            "'SYNT_2' -(default)-> 'YELLOW'")
+
+        # even though 'SYNT_3' has valid default value "BLUE", the
+        # config rule 'SYNT_3' -> 'SYNT_X_3' has higher precedence and
+        # results in not resolved rule
+        self.assertEqual(
+            str(colors_conf.get_color('SYNT_3')(raw_text)),
+            raw_text,
+            "'SYNT_3' -(config)-> 'SYNT_X_3' - not defined")
 
         self.assertEqual(
-            str(colors_conf.get_color('TABLE.BORDER')(raw_text)),
-            str(ColorFmt("BLUE", bold=True)(raw_text)),
-            "'BLUE:bold' is taken from TstColorsConfig.DFLT_CONFIG['NAME'] "
-            "as specified in extra_rules_01")
+            str(colors_conf.get_color('SYNT_4')(raw_text)),
+            raw_text,
+            "'SYNT_4' -(config)-> 'SYNT_1' -(default)-> 'SYNT_x_2' - not defined")
 
-        # first all specified rules are combined, after that rules resolved
-        self.assertEqual(
-            str(colors_conf.get_color('VERY_COLORED')(raw_text)),
-            str(ColorFmt("YELLOW")(raw_text)),
-            "'VERY_COLORED' -> extra_rules_01 -> 'TABLE.NAME' -> "
-            " extra_rules_02 -> 'YELLOW'")
-
-    def test_config_make_palette(self):
-        """Test Palette creation by ColorsConfig."""
-        extra_rules_01 = {
-            'TABLE': {
-                'NAME': "CYAN",
-                'BORDER': "NAME",  # "BLUE:bold"
-                'EXTRA': "YELLOW:bold",
-            },
-            'VERY_COLORED': "TABLE.NAME",
-        }
-        extra_rules_02 = {
-            'TABLE': {
-                'NAME': "YELLOW",
-            },
-        }
-        colors_conf = self.TstColorsConfig(extra_rules_01, extra_rules_02)
-
-        raw_text = "test"
-
-        # palette for printing tables
-        palette_table = colors_conf.make_palette('TABLE')
-        self.assertEqual(
-            # these colors are specified in TstColorsConfig and extra_rules_01
-            {'BORDER', 'NAME', 'ALT1_NAME', 'ALT2_NAME', 'EXTRA'},
-            palette_table.colors.keys()
-        )
+        # check how colors config report look
+        report = colors_conf.make_report()
+        # print(report)
+        lines_by_synt_id = self._color_report_to_map(report)
 
         self.assertEqual(
-            str(palette_table(('NAME', raw_text))),
-            str(ColorFmt('YELLOW')(raw_text)),
-            # 'YELLOW' is specified for 'TABLE.NAME' in extra_rules_02
+            lines_by_synt_id.keys(),
+            {'SYNT_1', 'SYNT_2', 'SYNT_3', 'SYNT_4'},
+            "rules for only these 4 synt_id's are present in config and default",
         )
+        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+        self.assertIn('<OK>', lines_by_synt_id['SYNT_2'])
+        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_3'])
+        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_4'])
+
+    def test_register_palette_user(self):
+        """Data from palette user makes it possible to resolve color rules"""
+        class MyMinorColorsConfig(ColorsConfig):
+            BUILT_IN_CONFIG = {
+                "SYNT_1": "SYNT_X_2",
+                "SYNT_2": "YELLOW",
+                "SYNT_3": "BLUE",
+            }
+
+        colors_conf = MyMinorColorsConfig(
+            {
+                "SYNT_3": "SYNT_X_3",
+                "SYNT_4": "SYNT_1",
+            })
+
+        # so far the configuration is the same as in previous test case.
+        # coloring rules for SYNT_1, SYNT_3 and SYNT_4 can't be resolved.
+        #
+        # When config was created it was expected that 'SYNT_X_3' syntax will
+        # be used. But the class which actually use it and provide info about
+        # it is registered in the Config only later. This is ok.
+
+        class MyLocalPalette(LocalPalette):
+            """Test LocalPalette which introduces rules for some syntaxes"""
+            SYNTAX_DEFAULTS = {
+                'SYNT_X_3': "RED",
+                'SYNT_X_2': "GREEN",
+                'SYNT_2': "RED",
+            }
+            LOCAL_SYNTAX = {
+                'S3': 'SYNT_X_3',
+                'S2': 'SYNT_X_2',
+                'S1': 'SYNT_2',
+            }
+
+        # 1. before MyLocalPalette is registered in the config some syntaxes
+        # are not resolved
+        report = colors_conf.make_report()
+        # print(report)
+        lines_by_synt_id = self._color_report_to_map(report)
+        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+
+        global_palette = colors_conf.get_palette()
+
+        test_text = "test"
+        self.assertEqual(
+            str(global_palette(SHText(('SYNT_1', test_text)))),
+            test_text,
+            "'SYNT_1' rule is not resolved, plain text is produced")
+
+        # 2. after MyLocalPalette is registered the config becomes updated.
+        # Rule for 'SYNT_1' can be resolved now.
+
+        # this affected the colors_conf
+        _ = MyLocalPalette.make(colors_conf=colors_conf)
+
+        report = colors_conf.make_report()
+        # print(report)
+        lines_by_synt_id = self._color_report_to_map(report)
+        self.assertNotIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+
+        # and the global palette created by colors_conf is different now
+        global_palette = colors_conf.get_palette()
 
         self.assertEqual(
-            str(palette_table(('ALT2_NAME', raw_text))),
-            str(ColorFmt('YELLOW')(raw_text)),
-            # 'ALT2_NAME' -> 'TABLE.NAME' -> 'YELLOW'
+            str(global_palette(SHText(('SYNT_1', test_text)))),
+            str(ColorFmt('GREEN')(test_text)),
         )
 
-    def test_make_palette_extra_colors(self):
-        """Test creation of Palette with extra colors"""
-        colors_conf = self.TstColorsConfig()
-        palette = colors_conf.make_palette(
-            'TABLE',
-            VERY_COLORED='VERY_COLORED',
-            BORDER='NAME',
-        )
+        # properties of the created MyLocalPalette object are not tested here
 
-        self.assertIn(
-            'VERY_COLORED', palette.colors,
-            "present in palette only because explicitely specified for make_palette"
-        )
-
-        sample = "sample"
-        self.assertEqual(
-            str(colors_conf.get_color('NAME')(sample)),
-            str(palette.get_color('BORDER')(sample)),
-        )
-        self.assertNotEqual(
-            str(colors_conf.get_color('TABLE.BORDER')(sample)),
-            str(palette.get_color('BORDER')(sample)),
-            "'BORDER' syntax is expected to be overridden"
-        )
-
-    def test_make_palette_all_colors(self):
+    def test_get_palette_all_colors(self):
         """Test ceation of Palette containing all colors from config"""
         colors_conf = self.TstColorsConfig()
 
-        palette_all = colors_conf.make_palette()
+        palette_all = colors_conf.get_palette()
         all_syntaxes = palette_all.colors.keys()
         self.assertIn('TEXT', all_syntaxes)
         self.assertIn('VERY_COLORED', all_syntaxes)
         self.assertIn('TABLE.BORDER', all_syntaxes)
 
+    def test_get_palette_multiple_calls(self):
+        """Test Palette creation by ColorsConfig."""
+
+        colors_conf = self.TstColorsConfig()
+
+        palette = colors_conf.get_palette()
+        palette_1 = colors_conf.get_palette()
+
+        self.assertIs(
+            palette, palette_1, "same cached object is expected")
+
+        orig_palette_report = palette.make_report()
+
+        # modify the config and get palette again
+
+        colors_conf.add_new_items({"SOME_SYNTAX": "RED"}, "extra syntax item")
+
+        new_palette = colors_conf.get_palette()
+        new_palette_1 = colors_conf.get_palette()
+
+        self.assertIs(
+            new_palette, new_palette_1, "same cached object is expected")
+
+        # but the new palette must be a different object!
+        self.assertIsNot(
+            new_palette, palette, "different object expected after config modified")
+
+        # previously generated palette object must not have changed
+        orig_palette_new_report = palette.make_report()
+
+        self.assertEqual(
+            orig_palette_report, orig_palette_new_report,
+            "previously generated palette object must not be affected by "
+            "subsequent changes of the config")
+
     def test_palette_user_class_init_palette(self):
         """Test behavior of a class which uses palette and global colors config."""
 
         # 0. make primitive PaletteUser class and object of this class
-        class CPrinter(PaletteUser):
+        class CPrinter(PaletteUser_killme):
             """Primitive class which produces colored text and reads colors config."""
 
             @classmethod
@@ -844,7 +996,7 @@ class TestColorsConfig(unittest.TestCase):
         CPrinter._PALETTE = None
 
         # test init config with all color effects turned off
-        set_global_colors_config(self.TstColorsConfig({}, use_effects=False))
+        set_global_colors_config(self.TstColorsConfig({}, no_color=True))
 
         cp = CPrinter(raw_text)
         colored_texts = cp.mk_colored_texts()
@@ -859,7 +1011,7 @@ class TestColorsConfig(unittest.TestCase):
         set_global_colors_config(None)
 
         # 0. make primitive PaletteUser class and object of this class
-        class CPrinter(PaletteUser):
+        class CPrinter(PaletteUser_killme):
             """Primitive class which uses Palette created from global config."""
             _SYNTAX_GROUP = 'TABLE'
 
@@ -889,7 +1041,7 @@ class TestColorsConfig(unittest.TestCase):
         colors_conf = self.TstColorsConfig({})
         _ = colors_conf.make_report()
 
-        colors_conf = self.TstColorsConfig({}, use_effects=False)
+        colors_conf = self.TstColorsConfig({}, no_color=True)
         _ = colors_conf.make_report()
 
 
@@ -898,7 +1050,7 @@ class TestGlobalColorsFormattingMethods(unittest.TestCase):
 
     class TstColorsConfig(ColorsConfig):
         # not a nice-loking colors config, but ok for test purposes
-        DFLT_CONFIG = {
+        BUILT_IN_CONFIG = {
             "TEXT": "",
             "NAME": "BLUE:bold",
             "DESCR": "YELLOW",
@@ -939,7 +1091,7 @@ class TestGlobalColorsFormattingMethods(unittest.TestCase):
             "the 'NAME' syntax group")
 
         # 2. palette is explicitley specified for sh_fmt
-        red_ct = sh_fmt(sample_sh_text, palette=red_colors_conf.make_palette())
+        red_ct = sh_fmt(sample_sh_text, palette=red_colors_conf.get_palette())
         self.assertIsInstance(red_ct, ColoredText)
         self.assertEqual(red_ct.plain_text(), sample_plain_text)
         self.assertNotEqual(

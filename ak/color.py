@@ -198,7 +198,7 @@ class _CTText:
     def join(self, iterable):
         """Similar to str.join method.
 
-        Elements of the iterable may be either strings or TypedChunkedText objects.
+        Elements of the iterable may be either strings or _CTText objects.
         """
         result = type(self)()  # construct empty object
         is_first = True
@@ -212,13 +212,13 @@ class _CTText:
         return result
 
     def __getitem__(self, index) -> '_CTText':
-        """Returns a slice of TypedChunkedText.
+        """Returns a slice of _CTText.
 
         Examples:
-        text[n]      - returns TypedChunkedText with a single visible character.
+        text[n]      - returns _CTText with a single visible character.
                        raises exception if the index is out or range
-        text[n:m]    - returns TypedChunkedText with m - n printable characters or
-                       an empty TypedChunkedText if n >= n
+        text[n:m]    - returns _CTText with m - n printable characters or
+                       an empty _CTText if n >= n
                        Both n and m may be negative - behavior is the same as
                        when slicing a string or list.
         text[::2]    - not supported, exception will be raised.
@@ -260,7 +260,7 @@ class _CTText:
         if remain_len <= 0:
             return type(self)()
 
-        # normal scenario: return actual TypedChunkedText 'substring'
+        # normal scenario: return actual _CTText 'substring'
         chunk_id, chunk_pos = self._get_chunk_pos(start_pos)
         if chunk_id is None:
             return type(self)()  # start_pos is out of range
@@ -285,7 +285,7 @@ class _CTText:
         return type(self)(*new_chunks)
 
     def fixed_len(self, desired_len):
-        """Return new TypedChunkedText which has specified length.
+        """Return new _CTText which has specified length.
 
         Result is either truncated or padded with spaces original.
         """
@@ -562,13 +562,13 @@ class _ColorSequences:
     @classmethod
     def make(cls, color, bg_color=None,
              bold=None, faint=None, underline=None, blink=None, crossed=None,
-             use_effects=True, make_bytes=False):
+             no_color=False, make_bytes=False):
         # Make prefix and suffix to decorate text with specified effects.
         #
         # Check ColorFmt doc for arguments description
 
         color_codes = []
-        if use_effects:
+        if not no_color:
             if color is not None:
                 color_codes.append(cls._make_seq_element(color, False))
 
@@ -664,7 +664,7 @@ class ColorFmt:
     def __init__(
             self, color, *, bg_color=None,
             bold=None, faint=None, underline=None, blink=None, crossed=None,
-            use_effects=True):
+            no_color=False):
         """Create an object which converts text to text with specified effects.
 
         Arguments:
@@ -677,12 +677,12 @@ class ColorFmt:
             integer color code 16 + r*36 + g*6 + b
           - string in form 'g0' - 'g23' - indicates shade of gray. Corresponds to
             integer color codes 231-255.
-        - use_effects: if False, all other arguments are ignored and
+        - no_color: if True, all other arguments are ignored and
             created object is 'dummy' - it does not add any effects to text.
         """
         self._color_prefix, self._color_suffix = _ColorSequences.make(
             color, bg_color, bold, faint, underline, blink, crossed,
-            use_effects)
+            no_color)
 
     @classmethod
     def get_plaintext_fmt(cls):
@@ -707,17 +707,17 @@ class ColorBytes:
     def __init__(
             self, color, *, bg_color=None,
             bold=None, faint=None, underline=None, blink=None, crossed=None,
-            use_effects=True):
+            no_color=False):
         """Create an object which decorates bytes color sequences.
 
         Arguments:
             most arguments are self-explained.
-            - use_effects: if False, all other arguments are ignored and
+            - no_color: if True, all other arguments are ignored and
                 created object is 'dummy' - it does not add any effects to text.
         """
         self._color_prefix, self._color_suffix = _ColorSequences.make(
             color, bg_color, bold, faint, underline, blink, crossed,
-            use_effects, make_bytes=True)
+            no_color, make_bytes=True)
 
     def __call__(self, bytes_text):
         return self._color_prefix + bytes_text + self._color_suffix
@@ -739,7 +739,7 @@ class Palette:
         self.use_colors = use_colors
 
     def make_report(self) -> str:
-        """Create report of colors in in th palette"""
+        """Create report of colors in the palette"""
         return "\n".join(
             str(line) for line in self.gen_report_lines())
 
@@ -747,7 +747,7 @@ class Palette:
         for syntax_name, color_fmt in sorted(self.colors.items()):
             yield f"{syntax_name:15}: {color_fmt('<SAMPLE>')}"
 
-    def get_color(self, syntax_name):
+    def get_color(self, syntax_name) -> ColorFmt:
         """syntax_name -> ColorFmt"""
         no_effects_fmt = ColorFmt.get_plaintext_fmt()
 
@@ -814,24 +814,334 @@ def set_global_colors_config(colors_config):
     if _COLORS_CONFIG is None:
         _GLOBAL_PALETTE = None
     else:
-        _GLOBAL_PALETTE = _COLORS_CONFIG.make_palette()
+        _GLOBAL_PALETTE = _COLORS_CONFIG.get_palette()
 
 
 def get_global_palette():
     """Get the Palette corresponding to the global colors config."""
     global _GLOBAL_PALETTE
     if _GLOBAL_PALETTE is None:
-        _GLOBAL_PALETTE = get_global_colors_config().make_palette()
+        _GLOBAL_PALETTE = get_global_colors_config().get_palette()
     return _GLOBAL_PALETTE
+
+
+class SyntaxColor:
+    """Coloring of some syntax type.
+
+    The initialization rules may be self-sufficient or may refer to another
+    SyntaxColor object. SyntaxColor object keeps info about the original
+    description (init_str) and the final ColorFmt object.
+    """
+    _MODIFIERS = {
+        'bold': ('bold', True),
+        'faint': ('faint', True),
+        'underline': ('underline', True),
+        'blink': ('blink', True),
+        'crossed': ('crossed', True),
+        'no_bold': ('bold', False),
+        'no_faint': ('faint', False),
+        'no_underline': ('underline', False),
+        'no_blink': ('blink', False),
+        'no_crossed': ('crossed', False),
+    }
+
+    _COLORS_NAMES = (
+        _ColorSequences._COLORS.keys() | {"", "-"} | {f"g{i}" for i in range(24)})
+
+    __slots__ = (
+        'synt_id',
+        'init_str',
+        'fg_color',
+        'bg_color',
+        'modifiers',
+        'parent_syntax_id',
+        'src_obj_name',
+        'color_fmt',
+    )
+
+    def __init__(self, synt_id, init_str, src_obj, no_color=False):
+        self.synt_id = synt_id
+        self.init_str = init_str
+        self.src_obj_name = src_obj
+
+        self.color_fmt = None
+
+        (
+            self.parent_syntax_id,
+            self.fg_color,
+            self.bg_color,
+            self.modifiers
+        ) = self._parse_init_str(init_str)
+        if self.fg_color is None:
+            self.fg_color = ""
+        if self.bg_color is None:
+            self.bg_color = ""
+
+        if self.parent_syntax_id is None:
+            # color doesn't depend on other ojects, can finish construction now
+            self.resolve(None, no_color)
+            assert self.color_fmt is not None
+
+    def resolve(self, parent, no_color):
+        """Finish initialization: create self.color_fmt obeject.
+
+        It may be not possible to perform this operation in costructor in case the
+        SyntaxColor depends on another SyntaxColor.
+
+        Arguments:
+        - parent: resolved SyntaxColor object referenced by self.parent_syntax_id.
+            (None if there is no parent_syntax_id)
+        - no_color: if True use dummy color_fmt which does not add any
+            coloring effects to text
+
+        (!) Note that some attributes of self may contain temporary values until
+        the object is resolved.
+        """
+        assert self.color_fmt is None
+
+        if self.parent_syntax_id is not None:
+            assert parent is not None
+            assert parent.color_fmt is not None  # indicates that parent is resolved
+
+            if self.fg_color == "":
+                self.fg_color = parent.fg_color
+            if self.bg_color == "":
+                self.bg_color = parent.bg_color
+            self.modifiers = {**parent.modifiers, **self.modifiers}
+        else:
+            assert parent is None
+            if self.fg_color in ["-", ""]:
+                self.fg_color = None
+            if self.bg_color in ["-", ""]:
+                self.bg_color = None
+
+        if no_color:
+            self.color_fmt = ColorsConfig._NO_EFFECTS_FMT
+        else:
+            self.color_fmt = ColorFmt(
+                self.fg_color, bg_color=self.bg_color, **self.modifiers)
+
+    @classmethod
+    def _parse_init_str(cls, init_str):
+        # parse string description of a color
+        # color_descr_srt -> (parent_syntax_id, fg_color, bg_color, modifiers)
+        #
+        # The init_str may contain up to 3 sections and may look like:
+        #
+        # "PARENT_SYNTAX:NEW_COLOR/NEW_BG_COLOR:bold,no_crossed"
+        #
+        # All the sections are optional, so the parsing process is somewhat
+        # complicated
+        fg_color = None
+        bg_color = None
+        parent_syntax_id = None
+        modifiers = {}
+
+        chunks = init_str.split(':')
+        if len(chunks) > 3:
+            raise ValueError(f"invalid color description: '{init_str}'")
+
+        # 1. the first section must be either "OTHER_SYNTAX" or "COLOR/BG_COLOR"
+        parent_syntax_id, fg_color, bg_color = cls._parse_colors_part(
+            chunks[0], init_str)
+        if parent_syntax_id is None:
+            # there is no reference to other syntax, so the first chunk must
+            # contain information about the colors
+            assert fg_color is not None
+            assert bg_color is not None
+
+        if len(chunks) == 1:
+            return parent_syntax_id, fg_color, bg_color, modifiers
+
+        # 2. analyze the second section
+        chunk = chunks[1]
+        chunk_is_modifiers = None
+        try:
+            parent_1, color_1, bg_color_1 = cls._parse_colors_part(chunk, init_str)
+        except ValueError:
+            # this chunk does not contain colors information. It must be modifiers
+            chunk_is_modifiers = True
+
+        if chunk_is_modifiers:
+            if len(chunks) > 2:
+                raise ValueError(
+                    f"invalid color description: '{init_str}'. "
+                    f"The modifiers section ('{chunk}') must be the last one"
+                )
+            modifiers = cls._parse_modifiers(chunk, init_str)
+            return parent_syntax_id, fg_color, bg_color, modifiers
+
+        # the second section indeed contains colors, not modifiers
+        if parent_1 is not None:
+            # the parent may be present in the first part only
+            raise ValueError(
+                f"invalid color '{parent_1}' in description: '{init_str}'")
+
+        assert color_1 is not None, f"{init_str=}"
+        assert bg_color_1 is not None, f"{init_str=}"
+        if fg_color is not None:
+            raise ValueError(
+                f"invalid color description: '{init_str}'. "
+                f"Color is specified both in the first and second sections"
+            )
+        if bg_color is not None:
+            raise ValueError(
+                f"invalid color description: '{init_str}'"
+                f"BgColor is specified both in the first and second sections"
+            )
+        fg_color = color_1
+        bg_color = bg_color_1
+
+        if len(chunks) == 2:
+            return parent_syntax_id, fg_color, bg_color, modifiers
+
+        # 3. analyze the third section. It must contain modifiers
+        chunk = chunks[2]
+        modifiers = cls._parse_modifiers(chunk, init_str)
+
+        return parent_syntax_id, fg_color, bg_color, modifiers
+
+    @classmethod
+    def _parse_colors_part(cls, colors_part, orig_init_str):
+        # part of _parse_init_str operation.
+        #
+        # Parses the 'color' section of init_str which may look like
+        # "OTHER_SYNTAX"
+        # "BLUE"
+        # "BLUE/YELLOW"
+        # "107"             <- int id of the color
+        # "(2,3,4)/108"     <- fg_color in rgb format, bg_color - int
+        # "g4"              <- shade of grey
+        # and returns (parent, fg_color, bg_color)
+        chunks = colors_part.split('/')
+        if len(chunks) > 2:
+            raise ValueError(
+                f"invalid colors description part '{colors_part}'. "
+                f"Full color description: '{orig_init_str}'")
+
+        if len(chunks) == 2:
+            # it must be "COLOR/BG_COLOR"
+            fg_color, bg_color = [cls._parse_color(c, orig_init_str) for c in chunks]
+            return None, fg_color, bg_color
+
+        # it may be either COLOR or OTHER_SYNTAX_NAME or modifiers
+        # 1. check if it is COLOR
+        try:
+            fg_color = cls._parse_color(colors_part, orig_init_str)
+            return None, fg_color, ""  # "" - means default color
+        except ValueError:
+            pass
+
+        # 2. check if if it modifiers
+        if "," in colors_part or colors_part in cls._MODIFIERS:
+            raise ValueError(
+                f"unexpected modifiers section '{colors_part}' "
+                f"in colors description '{orig_init_str}'")
+
+        # 3. have to interprete it as OTHER_SYNTAX_NAME
+        return colors_part, None, None
+
+    @classmethod
+    def _parse_color(cls, color, orig_init_str):
+        # part of _parse_init_str operation.
+        #
+        # Parses the string description of a single color and return corresponding
+        # object.
+        #
+        # Examples:
+        #   "BLUE" -> "BLUE"
+        #   "235" -> 235
+        #   "(3,4,5" -> (3,4,5)
+        #   "g4" -> "g4"
+        try:
+            return cls._parse_color_impl(color)
+        except ValueError as err:
+            problem_descr = str(err)
+            if problem_descr:
+                problem_descr = f" {problem_descr}"
+
+        raise ValueError(
+            f"color description '{orig_init_str}' contains incorrect "
+            f"color identifier '{color}'.{problem_descr}")
+
+    @classmethod
+    def _parse_color_impl(cls, color):
+        # part of _parse_init_str operation.
+        # do all the job for _parse_color method
+        color = color.strip()
+
+        if color in cls._COLORS_NAMES:
+            return color
+
+        if color.startswith('('):
+            # it must be an (r, g, b) tuple
+            if not color.endswith(')'):
+                raise ValueError("")
+            color = color[1:-1]
+            chunks = [c.strip() for c in color.split(",")]
+            if len(chunks) != 3:
+                raise ValueError("Color tuple must contain 3 elements")
+            r, g, b = [int(c) for c in chunks]
+            if any(x < 0 or x > 5 for x in (r, g, b)):
+                raise ValueError(
+                    "all values in (r, g, b) tuple must be in range [1-5]")
+            return (r, g, b)
+
+        # check if it is an integer color code
+        color_int_id = None
+        try:
+            color_int_id = int(color)
+        except ValueError:
+            pass
+
+        if color_int_id is not None:
+            if color_int_id < 0 or color_int_id > 255:
+                raise ValueError(
+                    f"int color value {color_int_id} should be in range [0-255]")
+            return color_int_id
+
+        # it's not a color. Probably it's the OTHER_SYNTAX_NAME
+        raise ValueError(f"'{color}' is not a valid color identifier")
+
+    @classmethod
+    def _parse_modifiers(cls, modifiers_str, init_str):
+        # part of _parse_init_str operation.
+        #
+        # "bold,no_blink" -> {"bold": True, "blink": False}
+
+        chunks = [s.strip() for s in modifiers_str.split(',')]
+        chunks = [s for s in chunks if s]
+        modifiers = {}
+        for modifier in chunks:
+            try:
+                mod_name, mod_value = cls._MODIFIERS[modifier]
+            except KeyError:
+                raise ValueError(
+                    f"invalid color description: '{init_str}': "
+                    f"invalid color modifier name '{modifier}'."
+                )
+            modifiers[mod_name] = mod_value
+
+        return modifiers
 
 
 class ColorsConfig:
     """Colors configuration. Usually a global object.
 
     ColorsConfig contains colors for miscelaneous syntax items such as
-    numbers in pretty-printed jsons or table borders. ColorsConfig creates
-    Palette objects to be used by misc pretty-printers for producing
-    colored text.
+    numbers in pretty-printed jsons or table borders.
+
+    This configuration may be read from the config file and then be used by
+    miscellaneous application components. In case the application config
+    does not contain information about some syntax items the application components
+    register the syntax items they are using in the ColorsConfig.
+
+    It is possible to get a report of what colors are used for different syntax
+    groups and then use this report as a starting point for colors configuration
+    in the application config file.
+
+    ColorsConfig creates Palette objects to be used by misc pretty-printers
+    for producing colored text.
 
     Global ColorsConfig object is ak.color._COLORS_CONFIG. Use
     ak.color.get_global_colors_config() and ak.color.set_global_colors_config()
@@ -840,7 +1150,7 @@ class ColorsConfig:
 
     _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
 
-    DFLT_CONFIG = {
+    BUILT_IN_CONFIG = {
         "TEXT": "",  # default text settings
         "NAME": "GREEN:bold",
         "ATTR": "YELLOW",
@@ -860,30 +1170,23 @@ class ColorsConfig:
         },
     }
 
-    _MODIFIERS = {
-        'bold': ('bold', True),
-        'faint': ('faint', True),
-        'underline': ('underline', True),
-        'blink': ('blink', True),
-        'crossed': ('crossed', True),
-        'no_bold': ('bold', False),
-        'no_faint': ('faint', False),
-        'no_underline': ('underline', False),
-        'no_blink': ('blink', False),
-        'no_crossed': ('crossed', False),
-    }
+    __slots__ = (
+        'syntax_map',
+        'registered_sources',
+        'no_color',
+        '_cached_palette',
+    )
 
-    _COLORS_NAMES = _ColorSequences._COLORS.keys() | {""}
-
-    def __init__(self, *extra_rules, use_effects=True):
+    def __init__(self, init_config=None, *, no_color=False):
         """Constructor.
 
         Arguments:
-        - extra_rules: dictionaries of amendments to default config (*)
-        - use_effects: if False - ignores all other config settings and creates
+        - init_config: colors config (*)
+        - no_color: if True - ignores all other config settings and creates
           'no-color' config
 
-        (*) example of extra_rules:
+        (*) data for the colors config is expected to be read from the config file.
+        Example of colors config:
         {
             "NAME": "BLUE:bold",
             "TABLE": {
@@ -895,10 +1198,21 @@ class ColorsConfig:
 
         Color description format:
             "COLOR/BG_COLOR:modifiers"
-        or
             "OTHER_SYNTAX:modifiers"
+            "OTHER_SYNTAX:COLOR/BG_COLOR:modifiers"
 
-        where modifiers is a list of individual modifiers with optional 'no_' prefix.
+        here:
+        - modifiers is a list of individual modifiers with optional 'no_' prefix
+        - COLOR and BG_COLOR:
+            - color identifiers as described in ColorFmt constructor:
+                - name of the color
+                - a number
+                - r,g,b tuple
+                - string in form 'g0' - 'g23'
+            - "-" - indicator that the system color should be used
+            - "" (empty string) - indicator that the "default" color should be used.
+                The default color is the color of the "OTHER_SYNTAX" in case it
+                is used in the description, or the system color otherwise
 
         Examples:
             "YELLOW/BLUE:bold,faint,underline,blink,crossed"
@@ -906,146 +1220,131 @@ class ColorsConfig:
             "RED:bold"
             "OTHER_SYNTAX_NAME:no_bold"
 
-        Check ColorsConfig.DFLT_CONFIG for names of syntaxes.
+        Use colors_config.make_report() method to get more information about
+        names of syntax items currently used in the application and
+        corresponding colors.
         """
-        self.flat_init_conf = self._flatten_dict(self.DFLT_CONFIG)
-        for additional_syntax in extra_rules:
-            self.flat_init_conf.update(self._flatten_dict(additional_syntax))
+        if init_config is None:
+            init_config = {}
+        self.no_color = no_color
+        self._cached_palette = None
 
-        if not use_effects:
-            # no colors formatting will be used - and do not even try to parse
-            # config data
-            self.all_formats = {}
-            return
+        self.registered_sources = set()
+        self.syntax_map = {}
 
-        # {syntax_name: (color_name, other_syntax_name, modifiers)}
-        flat_init_data = {
-            syntax_name: self._parse_color_descr(color_descr)
-            for syntax_name, color_descr in self.flat_init_conf.items()
-        }
+        new_init_items = self._flatten_dict(init_config)
+        self.add_new_items(new_init_items, "config")
 
-        # now flat_init_data contains init params for colors. These rules may
-        # refer to other rules. Resolve these dependencies.
-        syntax_attrs = {}  # {syntax_name: (color_name, modifiers)}
-        for syntax_name, value in flat_init_data.items():
-            color_name, src_syntax_name, modifiers = value
-            assert color_name is None or src_syntax_name is None
-            if syntax_name in syntax_attrs:
-                # rules for this syntax_name processed already
+        new_init_items = self._flatten_dict(self.BUILT_IN_CONFIG)
+        self.add_new_items(new_init_items, "built in")
+
+    def add_new_items(self, new_items, src_obj_descr):
+        """Register information about new syntaxes.
+
+        When some component wants to use the ColorsConfig but the config
+        does not contain information about the syntaxes this component requires
+        the component registeres desired syntaxes in the config.
+
+        Arguments:
+        - new_items: {synt_id: init_str}, where init_str contains description
+            of the color, corresponding to the syntax
+        - src_obj_descr: description of the object which adds these items to config.
+            Will be used for reporting purposes.
+        """
+        assert isinstance(src_obj_descr, str)
+
+        self._cached_palette = None
+
+        for synt_id, init_str in new_items.items():
+            if synt_id in self.syntax_map:
+                # properties of this syntax are defined already. Probably in
+                # config file.
                 continue
-            path = []
-            while True:
-                if src_syntax_name is None:
-                    # source syntax can be processed immediately
-                    syntax_attrs[syntax_name] = (color_name, modifiers)
-                    break
-                path.append((syntax_name, src_syntax_name, modifiers))
-                if src_syntax_name in syntax_attrs:
-                    # source syntax is ready
-                    break
-                if src_syntax_name not in flat_init_data:
-                    raise Exception(
-                        f"Invalid colors config: rule for syntax '{syntax_name}' "
-                        f"referenses syntax '{src_syntax_name}' which does not exist")
-                # need to go deeper
-                color_name, next_src_syntax_name, modifiers = (
-                    flat_init_data[src_syntax_name])
+            self.syntax_map[synt_id] = SyntaxColor(
+                synt_id, init_str, src_obj_descr, self.no_color)
 
-                syntax_name, src_syntax_name = src_syntax_name, next_src_syntax_name
-                assert color_name is None or src_syntax_name is None
-                if any(syntax_name == x[0] for x in path):
-                    # circular dependency detected
-                    names_path = [x[0] for x in path]
-                    names_path.append(syntax_name)
-                    raise Exception(
-                        f"circular syntax rules dependencies: {names_path}")
+        # Information about new syntax items has been registered
+        # But construction of some syntax items may be not finished yet (items
+        # may depend on other items, implementing rules such as 'TABLE.BORDER is
+        # same as NUMBER, but bold and blinking')
+        # Both new items and previously registered items may be not fully
+        # constructed yet. For example, the above-mentioned rule could be
+        # present in the initial config, but it can't be resolved util information
+        # about NUMBER syntax is available.
+        #
+        # Finish construction (resolve) those items we have enough information for.
 
-            # process all the rules accumulated in path
-            for syntax_name, src_syntax_name, modifiers in path[::-1]:
-                assert src_syntax_name in syntax_attrs
-                src_color, src_modifiers = syntax_attrs[src_syntax_name]
-                results_modifiers = src_modifiers.copy()
-                results_modifiers.update(modifiers)
-                syntax_attrs[syntax_name] = (src_color, results_modifiers)
-
-        # syntax_attrs contains color="" in 'plaintext' case, but ColorFmt
-        # expects None. Fix this:
-        fix_empty_color = lambda color: None if color == "" else color
-
-        self.all_formats = {
-            syntax_name: ColorFmt(fix_empty_color(color), **modifiers)
-            for syntax_name, (color, modifiers) in syntax_attrs.items()
+        to_resolve = {
+            synt_id: syntax_color
+            for synt_id, syntax_color in self.syntax_map.items()
+            if syntax_color.color_fmt is None
         }
 
-    @classmethod
-    def _parse_color_descr(cls, color_descr):
-        # parse string description of a color
-        # color_descr_srt -> (color_name, other_syntax_name, modifiers)
-        color_name = None
-        bk_color_name = None
-        other_item_name = None
-        modifiers = {}
+        # id's of SyntaxColor items which definitely can't be resolved for now
+        cant_resolve = set()
 
-        chunks = color_descr.split(':')
-        assert len(chunks) < 3, f"invalid color description: '{color_descr}'"
-        if len(chunks) == 1:
-            chunks.append("")
-
-        color_part, modifiers_part = chunks
-
-        # process color_part
-        chunks = color_part.split('/')
-        assert len(chunks) < 3, f"invalid color name '{color_part}'"
-        if len(chunks) == 2:
-            # "COLOR/BK_COLOR"
-            color_name, bk_color_name = chunks
-            assert color_name in cls._COLORS_NAMES, (
-                f"invalid color name '{color_name}'")
-            assert bk_color_name in cls._COLORS_NAMES, (
-                f"invalid color name '{bk_color_name}'")
-        else:
-            if chunks[0] in cls._COLORS_NAMES:
-                color_name = chunks[0]
-            else:
-                # this is not a color name, but other syntax name
-                other_item_name = chunks[0]
-
-        # process modiiers part
-        chunks = [s.strip() for s in modifiers_part.split(',')]
-        chunks = [s for s in chunks if s]
-        for modifier in chunks:
-            try:
-                mod_name, mod_value = cls._MODIFIERS[modifier]
-            except KeyError:
-                raise Exception(f"invalid color modifier name '{modifier}'")
-            modifiers[mod_name] = mod_value
-
-        if bk_color_name is not None:
-            modifiers['bg_color'] = bk_color_name
-
-        return color_name, other_item_name, modifiers
+        while to_resolve:
+            new_resolved = set()
+            for synt_id, syntax_color in sorted(to_resolve.items()):
+                if syntax_color.color_fmt is not None:
+                    continue
+                path = []
+                while True:
+                    if syntax_color.synt_id in path:
+                        assert False, f"circular dependency detected. Fix me. !!!"
+                    if syntax_color.color_fmt is not None:
+                        # all the syntaxes accumulated in path may be resolved now
+                        parent_syntax_color = syntax_color
+                        for synt_id in reversed(path):
+                            syntax_color = self.syntax_map[synt_id]
+                            syntax_color.resolve(
+                                parent_syntax_color, self.no_color)
+                            new_resolved.add(syntax_color.synt_id)
+                            parent_syntax_color = syntax_color
+                        break
+                    if (
+                        syntax_color.synt_id in cant_resolve
+                        or syntax_color.parent_syntax_id not in self.syntax_map
+                    ):
+                        # all the syntaxes accumulated in path can't be resolved now
+                        cant_resolve.update(path)
+                        break
+                    path.append(syntax_color.synt_id)
+                    syntax_color = self.syntax_map[syntax_color.parent_syntax_id]
+            if not new_resolved:
+                # no more items can be resolved
+                break
 
     @classmethod
-    def _flatten_dict(cls, src):
+    def _flatten_dict(cls, syntax_map):
         # transform structure of nested dictionaries into a flat dictionary.
         # keys of items corresponding to elements of nested disctionaris are
         # composed of names of items in path:
         # {'TABLE': {'BORDER': value}}  ->  {'TABLE.BORDER': value}
         result = {}
-        for key, value in src.items():
+        for key, value in syntax_map.items():
             if isinstance(value, str):
                 result[key] = value
             elif isinstance(value, dict):
                 flatten_subdict = cls._flatten_dict(value)
-                for skey, sval in flatten_subdict.items():
-                    result[f"{key}.{skey}"] = sval
+                for skey, val_and_src in flatten_subdict.items():
+                    result[f"{key}.{skey}"] = val_and_src
         return result
 
-    def get_color(self, syntax_name) -> ColorFmt:
-        """syntax_name -> ColorFmt"""
-        return self.all_formats.get(syntax_name, self._NO_EFFECTS_FMT)
+    def get_color(self, synt_id) -> ColorFmt:
+        """syntax name -> ColorFmt"""
+        syntax_color = self.syntax_map.get(synt_id)
+        if syntax_color is None or syntax_color.color_fmt is None:
+            return self._NO_EFFECTS_FMT
+        return syntax_color.color_fmt
 
-    def make_palette(self, group_name=None, **kwargs) -> Palette:
+    def get_palette(self) -> Palette:
+        """Get Palette which contains all the syntaxes in this ColorsConfig."""
+        if self._cached_palette is None:
+            self._cached_palette = self._make_palette()
+        return self._cached_palette
+
+    def _make_palette(self, group_name=None, **kwargs) -> Palette:
         """Creates Palette object for a specified syntax group.
 
         For example, for syntax group 'TABLE' the default ColorsConfig will produce
@@ -1059,7 +1358,11 @@ class ColorsConfig:
         prefix = "" if group_name is None else group_name + "."
         prefix_len = len(prefix)
         palette_colors = {}
-        for full_syntax_name, color_fmt in self.all_formats.items():
+        for full_syntax_name, syntax_color in self.syntax_map.items():
+            color_fmt = syntax_color.color_fmt
+            if color_fmt is None:
+                color_fmt = self._NO_EFFECTS_FMT
+
             if not full_syntax_name.startswith(prefix):
                 continue
             syntax_name = full_syntax_name[prefix_len:]
@@ -1070,6 +1373,17 @@ class ColorsConfig:
 
         return Palette(palette_colors)
 
+    def color_conf_component_is_registered(self, src_obj) -> bool:
+        """Check if LocalPalette object is registered in the ColorsConfig"""
+        return src_obj in self.registered_sources
+
+    def register_color_conf_component(self, syntax_map, src_obj):
+        """Register LocalPalette object in the ColorsConfig"""
+        assert src_obj not in self.registered_sources, f"{src_obj=}"
+        self.registered_sources.add(src_obj)
+        new_items_flat_init_conf = self._flatten_dict(syntax_map)
+        self.add_new_items(new_items_flat_init_conf, str(src_obj))
+
     def make_report(self) -> str:
         """Create colored report of self."""
         return "\n".join(self.gen_report_lines())
@@ -1077,8 +1391,10 @@ class ColorsConfig:
     def gen_report_lines(self) -> Iterator[str]:
         """Generate lines for self-report"""
         offset_step = "  "
+        rep_lines = []  # ["name and init_str", "status", "source"]
         common_path = []  # path to a current syntax element
-        for syntax_name, syntax_descr in sorted(self.flat_init_conf.items()):
+        for syntax_name, syntax_color in sorted(self.syntax_map.items()):
+            syntax_descr = syntax_color.init_str
             if not syntax_descr:
                 syntax_descr = "<SAMPLE>"
             syntax_chunks = syntax_name.split('.')
@@ -1098,14 +1414,45 @@ class ColorsConfig:
                 depth = len(common_path)
                 group_name = cur_path[depth]
                 common_path.append(group_name)
-                yield f"{offset_step*depth}{group_name} ->"
+                rep_lines.append((f"{offset_step*depth}{group_name} ->", None, None))
 
             assert len(cur_path) == len(common_path)
             # report the syntax description
             depth = len(common_path)
             prefix = self._NO_EFFECTS_FMT(offset_step*depth)
-            color_fmt = self.get_color(syntax_name)
-            yield str(prefix + f"{cur_name}: " + color_fmt(syntax_descr))
+            color_fmt = syntax_color.color_fmt
+            status = None
+            if color_fmt is None:
+                # this syntax color is not resolved.
+                color_fmt = self._NO_EFFECTS_FMT
+                status = "<NOT RESOLVED>"
+            rep_lines.append(
+                (
+                    prefix + f"{cur_name}: " + color_fmt(syntax_descr),
+                    status,
+                    syntax_color.src_obj_name,
+                ))
+        # raw information is ready, yield the report lines
+        show_status = any(l[1] is not None for l in rep_lines)
+        max_main_part_width = max(len(l[0]) for l in rep_lines)
+        main_part_width = min(150, max(40, max_main_part_width))
+        for line in rep_lines:
+            if line[2] is None:
+                # this is a technical line, showes group name
+                yield line[0]
+                continue
+            # this line contains info about some syntax color
+            colored_text = line[0].fixed_len(main_part_width)
+
+            # add info about the status
+            if show_status:
+                status = line[1] if line[1] is not None else "<OK>"
+                colored_text += f" !{status:15}"
+
+            # add info about the source
+            colored_text += f" <- {line[2]}"
+
+            yield str(colored_text)
 
 
 def sh_fmt(arg, *, palette=None) -> ColoredText:
@@ -1181,7 +1528,7 @@ def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
         print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
 
 
-class PaletteUser:
+class PaletteUser_killme:
     """Base class for classes which construct Palette from global config.
 
     The global config is ColorsConfig object stored in ak.color._COLORS_CONFIG.
@@ -1222,7 +1569,7 @@ class PaletteUser:
         if isinstance(init_data, Palette):
             return init_data
         assert isinstance(init_data, str)
-        return global_colors_config.make_palette(init_data)
+        return global_colors_config._make_palette(init_data)
 
     @classmethod
     def get_palette(cls) -> Palette:
@@ -1236,3 +1583,125 @@ class PaletteUser:
     def c_fmt(cls) -> Palette:
         """shorter synonim for get_palette()"""
         return cls.get_palette()
+
+
+class LocalPalette:
+    """Colors to be used by some subsystem.
+
+    For example we have a 'table' object which can be printed out using different
+    colors for different items of the table.
+
+    The color used to print table border may be configured in the application
+    config file, corresponding syntax id could be 'T.BORDER'.
+    The code which produces text representation of the 'table' object should not
+    use 'T.BORDER' constant to find the actual color as we may want to print the
+    same table in different colors.
+
+    LocalPalette is the object which is created when it's necessary to generate
+    colored text and contains {"internal syntax id" -> color} information.
+
+    Class attributes describe default rules of fetching info from global colors
+    config and default colors to be used if the info was not found in the config.
+    """
+    PARENT_PALETTES = None
+
+    # init rules of the new global syntaxes introduced by this class
+    SYNTAX_DEFAULTS = None  # {synt_id: default_color}
+
+    # map of the internal syntax identifiers to syntax ids used in the global config
+    LOCAL_SYNTAX = None  # {local_synt_id: synt_id}
+
+    # ready to use palette objects
+    _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
+    _PALETTE = None  # {local_synt_id: (synt_id, ColorFmt)}
+    _BASED_ON_GLOBAL_CONF = -1
+
+    def __init__(self, local_colors):
+        """Constructor of LocalPalette.
+
+        Argument:
+        - local_colors: {local_synt_id: (synt_id, color_fmt)}
+        """
+        assert self.LOCAL_SYNTAX is not None, f"declare it in {str(type(self))}"
+        assert self.LOCAL_SYNTAX.keys() == local_colors.keys()
+        self._local_colors = local_colors
+
+    @classmethod
+    def make(
+        cls, *, colors_conf=None, no_color=False, alt_local_syntax=None,
+    ):
+        """Register cls in colors config and prepare the local palette.
+
+        Arguments:
+        - colors_conf: ColorsConfig object, by default the global one is used
+        - no_color: if True prepares a local palette which does not add any
+            coloring effects to any text
+        - alt_local_syntax: {local_synt_id: alt_global_synt_id}. Contains
+            alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
+        """
+        assert cls.LOCAL_SYNTAX is not None, (
+            f"'LOCAL_SYNTAX' is not specified in LocalPalette class {cls}")
+
+        is_custom = alt_local_syntax or colors_conf
+
+        if colors_conf is None:
+            colors_conf = get_global_colors_config()
+
+        cls._register_in_colors_conf(colors_conf)
+
+        if not is_custom:
+            # try to use cached result
+            if cls._BASED_ON_GLOBAL_CONF is not colors_conf:
+                # global colors conf has changed. Invalidate cached result
+                cls._PALETTE = None
+                cls._PALETTE_NO_COLOR = None
+            cached = cls._PALETTE_NO_COLOR if no_color else cls._PALETTE
+            if cached is not None:
+                return cached
+
+        # need to actually prepare the new LocalPalette object
+        local_syntax = cls.LOCAL_SYNTAX
+        if alt_local_syntax is not None:
+            unexpected_ids = alt_local_syntax.keys() - cls.LOCAL_SYNTAX.keys()
+            assert not unexpected_ids, (
+                f"{alt_local_syntax=} contains unexpected local syntax ids: "
+                f"{sorted(unexpected_ids)}. These ids are not present in "
+                f"{str(cls)}.LOCAL_SYNTAX")
+            local_syntax = {**cls.LOCAL_SYNTAX, **alt_local_syntax}
+
+        _mk_colors_fmt = lambda synt_id: (
+            ColorsConfig._NO_EFFECTS_FMT if no_color
+            else colors_conf.get_color(synt_id))
+
+        local_palette = cls({
+            local_synt_id: (synt_id, _mk_colors_fmt(synt_id))
+            for local_synt_id, synt_id in local_syntax.items()
+        })
+
+        # store result in the cache if possible
+        if not is_custom:
+            if no_color:
+                cls._PALETTE_NO_COLOR = local_palette
+            else:
+                cls._PALETTE = local_palette
+
+        return local_palette
+
+    @classmethod
+    def _register_in_colors_conf(cls, colors_conf):
+        # Register cls in the colors_conf as color config component
+        if colors_conf.color_conf_component_is_registered(cls):
+            return
+        if cls.PARENT_PALETTES is not None:
+            for p_cls in cls.PARENT_PALETTES:
+                p_cls._register_in_colors_conf(colors_conf)
+
+        colors_conf.register_color_conf_component(cls.SYNTAX_DEFAULTS, cls)
+
+    def make_report(self) -> str:
+        """Create colored report of self."""
+        return "\n".join(
+            f"{local_synt_id}: {color_fmt(synt_id)}"
+            for local_synt_id, (synt_id, color_fmt)
+            in sorted(self._local_colors.items())
+        )
