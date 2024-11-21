@@ -1174,6 +1174,7 @@ class ColorsConfig:
         'syntax_map',
         'registered_sources',
         'no_color',
+        'version',
         '_cached_palette',
     )
 
@@ -1229,6 +1230,7 @@ class ColorsConfig:
         self.no_color = no_color
         self._cached_palette = None
 
+        self.version = 0
         self.registered_sources = set()
         self.syntax_map = {}
 
@@ -1252,6 +1254,9 @@ class ColorsConfig:
             Will be used for reporting purposes.
         """
         assert isinstance(src_obj_descr, str)
+
+        if not new_items:
+            return
 
         self._cached_palette = None
 
@@ -1314,6 +1319,8 @@ class ColorsConfig:
             if not new_resolved:
                 # no more items can be resolved
                 break
+
+        self.version += 1
 
     @classmethod
     def _flatten_dict(cls, syntax_map):
@@ -1528,63 +1535,6 @@ def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
         print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
 
 
-class PaletteUser_killme:
-    """Base class for classes which construct Palette from global config.
-
-    The global config is ColorsConfig object stored in ak.color._COLORS_CONFIG.
-
-    PaletteUser-defived class T provide class method cls.get_palette() (and
-    shorter synonim 'c_fmt()') which is supposed to be used by objects of T to get
-    properly configured palette.
-
-    Palette object returned by cls.get_palette() is created only once when
-    this method is called first time. Make sure that the global colors
-    config is initialized by that time. (That means that if application
-    does not use default colors configuration, ColorsConfig should be configured
-    as soon as possible, before get_palette() method of any PaletteUser-derived
-    class is called).
-    """
-
-    _PALETTE = None  # Palette of a class will be stored here
-
-    # _SYNTAX_GROUP may be specify in derived class.
-    # syntaxes from this group will be used to create Palette for this class
-    _SYNTAX_GROUP = None
-
-    @classmethod
-    def _init_palette(cls, _colors_config):
-        # configure Palette for this class
-        #
-        # can be overridden in derived class
-        #
-        # method may return syntax group name or ready Palette object
-        return "" if cls._SYNTAX_GROUP is None else cls._SYNTAX_GROUP
-
-    @classmethod
-    def _init_palette_impl(cls) -> Palette:
-        # create Palette object based on _init_palette (which may be
-        # re-implemented in derived class)
-        global_colors_config = get_global_colors_config()
-        init_data = cls._init_palette(global_colors_config)
-        if isinstance(init_data, Palette):
-            return init_data
-        assert isinstance(init_data, str)
-        return global_colors_config._make_palette(init_data)
-
-    @classmethod
-    def get_palette(cls) -> Palette:
-        """Get Palette object to be used by an object of cls class."""
-        if cls._PALETTE is None:
-            cls._PALETTE = cls._init_palette_impl()
-        assert cls._PALETTE is not None
-        return cls._PALETTE
-
-    @classmethod
-    def c_fmt(cls) -> Palette:
-        """shorter synonim for get_palette()"""
-        return cls.get_palette()
-
-
 class LocalPalette:
     """Colors to be used by some subsystem.
 
@@ -1614,7 +1564,8 @@ class LocalPalette:
     # ready to use palette objects
     _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
     _PALETTE = None  # {local_synt_id: (synt_id, ColorFmt)}
-    _BASED_ON_GLOBAL_CONF = -1
+    _BASED_ON_GLOBAL_CONF = None
+    _BASED_ON_GLOBAL_CONF_VERSION = None
 
     def __init__(self, local_colors):
         """Constructor of LocalPalette.
@@ -1651,13 +1602,18 @@ class LocalPalette:
 
         if not is_custom:
             # try to use cached result
-            if cls._BASED_ON_GLOBAL_CONF is not colors_conf:
+            if (
+                cls._BASED_ON_GLOBAL_CONF is colors_conf
+                and cls._BASED_ON_GLOBAL_CONF_VERSION == colors_conf.version
+            ):
+                # can use cached value
+                cached = cls._PALETTE_NO_COLOR if no_color else cls._PALETTE
+                if cached is not None:
+                    return cached
+            else:
                 # global colors conf has changed. Invalidate cached result
                 cls._PALETTE = None
                 cls._PALETTE_NO_COLOR = None
-            cached = cls._PALETTE_NO_COLOR if no_color else cls._PALETTE
-            if cached is not None:
-                return cached
 
         # need to actually prepare the new LocalPalette object
         local_syntax = cls.LOCAL_SYNTAX
@@ -1680,6 +1636,9 @@ class LocalPalette:
 
         # store result in the cache if possible
         if not is_custom:
+            cls._BASED_ON_GLOBAL_CONF = colors_conf
+            cls._BASED_ON_GLOBAL_CONF_VERSION = colors_conf.version
+
             if no_color:
                 cls._PALETTE_NO_COLOR = local_palette
             else:

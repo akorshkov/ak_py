@@ -5,7 +5,7 @@ import io
 from typing import Iterator
 
 from ak.color import (
-    ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, PaletteUser_killme, LocalPalette,
+    ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, LocalPalette,
     get_global_colors_config, set_global_colors_config,
     sh_fmt, sh_print,
 )
@@ -669,6 +669,15 @@ class TestColorsConfig(unittest.TestCase):
             self.assertEqual(
                 raw_text, text, "should be equal as all the coloring was turned off")
 
+    def test_config_report(self):
+        """Smoke test that make_report doesn't fail."""
+
+        colors_conf = self.TstColorsConfig({})
+        _ = colors_conf.make_report()
+
+        colors_conf = self.TstColorsConfig({}, no_color=True)
+        _ = colors_conf.make_report()
+
     def test_not_default_simple_config(self):
         """Test modifications to default config."""
 
@@ -944,105 +953,126 @@ class TestColorsConfig(unittest.TestCase):
             "previously generated palette object must not be affected by "
             "subsequent changes of the config")
 
-    def test_palette_user_class_init_palette(self):
-        """Test behavior of a class which uses palette and global colors config."""
 
-        # 0. make primitive PaletteUser class and object of this class
-        class CPrinter(PaletteUser_killme):
-            """Primitive class which produces colored text and reads colors config."""
+class TestLocalPalete(unittest.TestCase):
+    """Test LocalPalette functionality.
 
-            @classmethod
-            def _init_palette(cls, color_config):
-                # create palette to be used by objects of this class
-                # colors config is taken form ak.color.ColorsConfig
-                return Palette({
-                    'SYNTAX1': color_config.get_color('TABLE.COL_TITLE'),
-                    'BAD_SYNTAX': color_config.get_color('UNKNOWN_SYNTAX'),
-                })
+    LocalPalette is used by misc components of application. LocalPalette
+    contains the part of colors configuration which is required for the
+    component.
+    """
 
-            def __init__(self, raw_text):
-                self.raw_text = raw_text
-                self.palette = self.get_palette()
+    class TstColorsConfig(ColorsConfig):
+        """Minimal colors config."""
+        BUILT_IN_CONFIG = {
+            "TEXT": "",
+            "NUMBER": "YELLOW",
+            "KEYWORD": "BLUE:bold",
+        }
 
-            def mk_colored_texts(self):
-                return {
-                    'SYNTAX1': self.palette['SYNTAX1'](self.raw_text),
-                    'BAD_SYNTAX': self.palette['BAD_SYNTAX'](self.raw_text),
-                }
+    class MyLocalPalette(LocalPalette):
+        SYNTAX_DEFAULTS = {
+            "TBL.TEXT": "NUMBER",
+            "TBL.BORDER": "GREEN",
+        }
 
-        # it is supposed that global color config is initialized only once.
-        # manually clean-up config to reset the init
-        set_global_colors_config(None)
-        CPrinter._PALETTE = None
+        LOCAL_SYNTAX = {
+            "TEXT": "TBL.TEXT",
+            "BRDR": "TBL.BORDER",
+        }
 
-        raw_text = "test"
+        def __init__(self, local_colors):
+            assert local_colors.keys() == self.LOCAL_SYNTAX.keys()
+            self.ctxt = local_colors["TEXT"][1]
+            self.border = local_colors["BRDR"][1]
 
-        cp = CPrinter(raw_text)
-        colored_texts = cp.mk_colored_texts()
+    def test_local_palette_creation_from_global_config(self):
+        """Test construction of LocalPalette object from global config."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
 
-        self.assertGreater(
-            len(str(colored_texts['SYNTAX1'])), len(raw_text),
-            "expected to be colored: color taken from 'TABLE.COL_TITLE' of config",
-        )
+        # 1. create the local_palette object from the global colors config
+        # and check it works
+        local_palette = self.MyLocalPalette.make()
+
+        sample_text = "sample text"
+        color_text_0 = local_palette.ctxt(sample_text)
+
         self.assertEqual(
-            raw_text,
-            ColoredText.strip_colors(str(colored_texts['SYNTAX1'])))
+            str(local_palette.ctxt(sample_text)),
+            str(ColorFmt("YELLOW")(sample_text)),
+            "local syntax id 'TEXT' corresponds to 'NUMBER' syntax in "
+            "the global config => YELLOW")
 
-        self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
+        # 2. create local_palette which uses different syntaxes from global conf
+        alt_palette = self.MyLocalPalette.make(alt_local_syntax={"TEXT": "KEYWORD"})
 
-        # it is supposed that global color config is initialized only once.
-        # manually clean-up config to reset the init
+        self.assertEqual(
+            str(alt_palette.ctxt(sample_text)),
+            str(ColorFmt("BLUE", bold=True)(sample_text)),
+            "in the alt palette local syntax id 'TEXT' corresponds to 'KEYWORD' "
+            "syntax in the global config => BLUE, bold")
+
+        # 3. creation of the alt_palette should not have changed previously
+        # created palette
+        self.assertEqual(
+            str(local_palette.ctxt(sample_text)),
+            str(color_text_0))
+
+        # 4. create another palette from the global config
+        # Creation of the alternative palette on step 2. should not have
+        # invalidated the cache.
+        local_palette_1 = self.MyLocalPalette.make()
+
+        self.assertIs(
+            local_palette, local_palette_1,
+            "same cached object is expected")
+
+        # 5. after global conf modification a different local_palette object
+        # should be created
+        global_conf.add_new_items(
+            {"SOME_NEW_SYNTAX": "RED"}, "some dummy syntax rule")
+        local_palette_2 = self.MyLocalPalette.make()
+
+        self.assertIsNot(
+            local_palette, local_palette_2,
+            "new object is expected because the config has been modified")
+
+        # cleanup global config
         set_global_colors_config(None)
-        CPrinter._PALETTE = None
 
-        # test init config with all color effects turned off
-        set_global_colors_config(self.TstColorsConfig({}, no_color=True))
+    def test_no_color_local_palette(self):
+        """Test construction of no-color LocalPalette."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
 
-        cp = CPrinter(raw_text)
-        colored_texts = cp.mk_colored_texts()
+        local_palette = self.MyLocalPalette.make()
+        no_color_palette = self.MyLocalPalette.make(no_color=True)
 
-        self.assertEqual(raw_text, str(colored_texts['SYNTAX1']))
-        self.assertEqual(raw_text, str(colored_texts['BAD_SYNTAX']))
+        # check local_palette produces colored text and no_color_palette - plain text
+        sample_text = "sample text"
 
-    def test_palette_user_class_with_specified_syntax_group(self):
-        """Test behavior of a class which creates palette based on syntax group."""
+        self.assertEqual(
+            str(local_palette.ctxt(sample_text)),
+            str(ColorFmt("YELLOW")(sample_text)),
+        )
 
-        # reset possible previous initialization
+        self.assertEqual(
+            str(no_color_palette.ctxt(sample_text)),
+            sample_text,
+        )
+
+        # cached objects expected on subsequent creations as there were no
+        # modifications to the config
+
+        local_palette_1 = self.MyLocalPalette.make()
+        no_color_palette_1 = self.MyLocalPalette.make(no_color=True)
+
+        self.assertIs(local_palette, local_palette_1)
+        self.assertIs(no_color_palette, no_color_palette_1)
+
+        # cleanup global config
         set_global_colors_config(None)
-
-        # 0. make primitive PaletteUser class and object of this class
-        class CPrinter(PaletteUser_killme):
-            """Primitive class which uses Palette created from global config."""
-            _SYNTAX_GROUP = 'TABLE'
-
-            def get_my_palette(self):
-                """just return own Palette for further experiments"""
-                return self.c_fmt()
-
-        cp = CPrinter()
-        palette = cp.get_my_palette()
-
-        # created palette is created from global ColorsConfig
-        # default ColorsConfig may be changed in future, so this test
-        # checks only very basic properties of the created palette.
-        self.assertIsInstance(palette, Palette)
-
-        syntax_names = palette.colors.keys()
-
-        self.assertIn('BORDER', syntax_names)
-        self.assertIn('COL_TITLE', syntax_names)
-
-        self.assertNotIn('TABLE.BORDER', syntax_names)
-        self.assertNotIn('FUNC_NAME', syntax_names)
-
-    def test_config_report(self):
-        """Smoke test that make_report doesn't fail."""
-
-        colors_conf = self.TstColorsConfig({})
-        _ = colors_conf.make_report()
-
-        colors_conf = self.TstColorsConfig({}, no_color=True)
-        _ = colors_conf.make_report()
 
 
 class TestGlobalColorsFormattingMethods(unittest.TestCase):
