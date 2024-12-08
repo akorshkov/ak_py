@@ -10,6 +10,9 @@ from ak.ppobj import PrettyPrinter, pp
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 
 
+CHText = ColoredText
+
+
 #########################
 # Test json-like objects PrettyPrinter
 
@@ -38,6 +41,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
         # check that some text produced w/o errors
         s = str(pp({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]}))
+        # print(s)
 
         self._verify_format(s)
 
@@ -72,6 +76,7 @@ class TestPrettyPrinter(unittest.TestCase):
             "z": 7,
             3: None
         }))
+        # print(s)
 
         self._verify_format(s)
 
@@ -100,6 +105,7 @@ class TestPrettyPrinter(unittest.TestCase):
                 }
             ],
         }))
+        # print(s)
 
         self._verify_format(s)
 
@@ -127,6 +133,7 @@ class TestPrettyPrinter(unittest.TestCase):
             "t": True,
             "f": False,
         }))
+        # print(s)
 
         self._verify_format(s)
 
@@ -152,6 +159,7 @@ class TestPrettyPrinter(unittest.TestCase):
         # 1. converting pp(...) result to str.
         # new-line symbol is appended because other methods append this symbol
         converted_result = str(pp_obj) + "\n"
+        # print(converted_result)
 
         with io.StringIO() as output:
             print(pp_obj, file=output)
@@ -641,21 +649,21 @@ class TestPPTable(unittest.TestCase):
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
             def make_desired_text(
-                self, value, fmt_modifier, syntax_names,
-            ) -> ([SHText._Chunk], int):
+                self, value, fmt_modifier, _c,
+            ) -> ([CHText._Chunk], int):
                 """Custom format value for a table column.
 
                 This one appends some text to a value.
 
-                By default 'custom descr" string is appended to teh value.
+                By default "custom descr" string is appended to the value.
                 But if format modifier was specified for a table column
                 this modifier wil be appended.
                 """
-                syntax_name = syntax_names.get("TABLE.NUMBER")
                 if not fmt_modifier:
-                    text_items = [SHText._Chunk(syntax_name, str(value) + " custom descr")]
+                    str_val = str(value) + " custom descr"
                 else:
-                    text_items = [SHText._Chunk(syntax_name, str(value) + " " + fmt_modifier)]
+                    str_val = str(value) + " " + fmt_modifier
+                text_items = [_c.number(str_val)]
 
                 return text_items, ppobj.ALIGN_LEFT
 
@@ -748,7 +756,7 @@ class TestPPTable(unittest.TestCase):
         # 0. prepare enum field type
         statuses_enum = PPEnumFieldType({
             10: "Ok status",
-            999: ("Error status", "WARN"),
+            999: ("Error status", "ENUM.NAME_WARN"),
         })
 
         # 0.1 prepare the table

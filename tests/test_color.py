@@ -891,7 +891,7 @@ class TestColorsConfig(unittest.TestCase):
         # Rule for 'SYNT_1' can be resolved now.
 
         # this affected the colors_conf
-        _ = MyLocalPalette.make(colors_conf=colors_conf)
+        _ = MyLocalPalette.make(colors_conf)
 
         report = colors_conf.make_report()
         # print(report)
@@ -982,6 +982,7 @@ class TestLocalPalete(unittest.TestCase):
         }
 
         def __init__(self, local_colors):
+            super().__init__(local_colors)
             assert local_colors.keys() == self.LOCAL_SYNTAX.keys()
             self.ctxt = local_colors["TEXT"][1]
             self.border = local_colors["BRDR"][1]
@@ -996,10 +997,10 @@ class TestLocalPalete(unittest.TestCase):
         local_palette = self.MyLocalPalette.make()
 
         sample_text = "sample text"
-        color_text_0 = local_palette.ctxt(sample_text)
+        color_text_0 = ColoredText(local_palette.ctxt(sample_text))
 
         self.assertEqual(
-            str(local_palette.ctxt(sample_text)),
+            str(ColoredText(local_palette.ctxt(sample_text))),
             str(ColorFmt("YELLOW")(sample_text)),
             "local syntax id 'TEXT' corresponds to 'NUMBER' syntax in "
             "the global config => YELLOW")
@@ -1008,7 +1009,7 @@ class TestLocalPalete(unittest.TestCase):
         alt_palette = self.MyLocalPalette.make(alt_local_syntax={"TEXT": "KEYWORD"})
 
         self.assertEqual(
-            str(alt_palette.ctxt(sample_text)),
+            str(ColoredText(alt_palette.ctxt(sample_text))),
             str(ColorFmt("BLUE", bold=True)(sample_text)),
             "in the alt palette local syntax id 'TEXT' corresponds to 'KEYWORD' "
             "syntax in the global config => BLUE, bold")
@@ -1016,7 +1017,7 @@ class TestLocalPalete(unittest.TestCase):
         # 3. creation of the alt_palette should not have changed previously
         # created palette
         self.assertEqual(
-            str(local_palette.ctxt(sample_text)),
+            str(ColoredText(local_palette.ctxt(sample_text))),
             str(color_text_0))
 
         # 4. create another palette from the global config
@@ -1053,12 +1054,12 @@ class TestLocalPalete(unittest.TestCase):
         sample_text = "sample text"
 
         self.assertEqual(
-            str(local_palette.ctxt(sample_text)),
+            str(ColoredText(local_palette.ctxt(sample_text))),
             str(ColorFmt("YELLOW")(sample_text)),
         )
 
         self.assertEqual(
-            str(no_color_palette.ctxt(sample_text)),
+            str(ColoredText(no_color_palette.ctxt(sample_text))),
             sample_text,
         )
 
@@ -1133,6 +1134,8 @@ class TestGlobalColorsFormattingMethods(unittest.TestCase):
         # 3. set different gobal colors
         set_global_colors_config(red_colors_conf)
         new_red_ct = sh_fmt(sample_sh_text)
+
+
         self.assertEqual(
             str(new_red_ct), str(red_ct),
             "according to the global config the sample_sh_text now should be red")

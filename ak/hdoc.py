@@ -16,7 +16,6 @@ import inspect
 from typing import Iterator
 
 from ak.color import SyntaxGroupsUser, SHText, sh_lines_fmt
-from ak.ppobj import PPObjBase
 
 
 #########################
