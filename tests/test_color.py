@@ -1,13 +1,13 @@
 """Test ColorFmt and ColorTest"""
 
 import unittest
-import io
-from typing import Iterator
 
+import ak.color
 from ak.color import (
-    ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, LocalPalette,
+    CHText, ColorFmt, ColorBytes, ColorsConfig, Palette,
+    global_palette as gp,
     get_global_colors_config, set_global_colors_config,
-    sh_fmt, sh_print,
+    ConfColor,
 )
 
 
@@ -149,12 +149,19 @@ class TestColorFmt(unittest.TestCase):
             self.assertIn(expected_msg, err_msg)
 
 
-class TestColoredTextProperties(unittest.TestCase):
+class TestCHTextProperties(unittest.TestCase):
+    """Test CHText objects."""
+
+    @staticmethod
+    def _mk_chtext(color_name, raw_text) -> CHText:
+        # ColorFmt produces not CHText, but CHText.Chunk objects
+        # These classes have similar behavior, but here we test CHText.
+        return CHText(ColorFmt(color_name)(raw_text))
 
     def test_nocolor_text(self):
-        """Test ColoredText which does not have any effect."""
+        """Test CHText which does not have any effect."""
         raw_text = 'text'
-        nocolor_text = ColorFmt(None)(raw_text)
+        nocolor_text = self._mk_chtext(None, raw_text)
 
         self.assertEqual(len(raw_text), len(nocolor_text))
         self.assertEqual(raw_text, nocolor_text.plain_text())
@@ -162,7 +169,7 @@ class TestColoredTextProperties(unittest.TestCase):
 
     def test_empty_constructor(self):
         """Test behavior of empty constructor."""
-        t = ColoredText()
+        t = CHText()
 
         self.assertEqual(0, len(t))
         self.assertEqual("", str(t))
@@ -172,36 +179,49 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual("aaa", str(t))
 
     def test_making_copies(self):
-        """Make sure operations with the copy no not affect original."""
+        """Make sure operations with the copy does not affect the original."""
         raw_text = "some_text"
-        orig = ColorFmt('GREEN')(raw_text)
+        orig = self._mk_chtext('GREEN', raw_text)
 
-        t = ColoredText(orig)
+        t = CHText(orig)
         self.assertEqual(raw_text, orig.plain_text())
 
-        t = ColoredText(orig, "some more")
+        t = CHText(orig, "some more")
         self.assertEqual(raw_text, orig.plain_text())
 
-        other_t = ColorFmt('GREEN')("other text")
-        t = ColoredText(other_t, orig)
+        other_t = self._mk_chtext('GREEN', "other text")
+        t = CHText(other_t, orig)
         self.assertEqual(raw_text, orig.plain_text())
-        t = ColoredText(orig, other_t)
+        t = CHText(orig, other_t)
         self.assertEqual(raw_text, orig.plain_text())
 
-        t = ColoredText(orig)
+        t = CHText(orig)
         t += other_t
         self.assertEqual(raw_text, orig.plain_text())
 
-    def test_equality_check(self):
-        """ColoredText objects are equal if have same text and same color.
+    def test_in_place_modifications(self):
+        """Make sure '+=' modifies existing object."""
+        raw_text = "some_text"
+        orig = self._mk_chtext('GREEN', raw_text)
 
-        ColoredText with no color considered equal to raw string.
+        orig_ref = orig
+
+        orig += "some additional text"
+        self.assertIs(orig, orig_ref)
+
+        orig = orig + " and more text"
+        self.assertIsNot(orig, orig_ref)
+
+    def test_equality_check(self):
+        """CHText objects are equal if have same text and same color.
+
+        CHText with no color considered equal to raw string.
         """
         raw_text = "text"
-        green_text = ColorFmt('GREEN')(raw_text)
-        green_text1 = ColorFmt('GREEN')(raw_text)
-        red_text = ColorFmt('RED')(raw_text)
-        nocolor_text = ColorFmt(None)(raw_text)
+        green_text = self._mk_chtext('GREEN', raw_text)
+        green_text1 = self._mk_chtext('GREEN', raw_text)
+        red_text = self._mk_chtext('RED', raw_text)
+        nocolor_text = self._mk_chtext(None, raw_text)
 
         self.assertTrue(green_text == green_text)
         self.assertTrue(green_text == green_text1)
@@ -218,40 +238,53 @@ class TestColoredTextProperties(unittest.TestCase):
 
         self.assertTrue(green_text != nocolor_text)
 
-        # special case: ColoredText with no color considered equal to raw string
+        # special case: CHText with no color considered equal to raw string
         self.assertTrue(raw_text == nocolor_text)
         self.assertTrue(nocolor_text == raw_text)
 
     def test_concatenation(self):
-        """Text different ways to concatenate ColoredText."""
+        """Text different ways to concatenate CHText."""
 
-        part_1 = ColorFmt('GREEN')("p1")
-        part_2 = ColorFmt('GREEN')("p2")
+        part_1 = self._mk_chtext('GREEN', "p1")
+        part_2 = self._mk_chtext('GREEN', "p2")
 
         t = part_1 + part_2
-        expected = ColorFmt('GREEN')("p1p2")
+        expected = self._mk_chtext('GREEN', "p1p2")
 
         self.assertTrue(t == expected)
         self.assertEqual("p1", part_1.plain_text())
         self.assertEqual("p2", part_2.plain_text())
 
-        t = ColoredText(part_1, part_2)
+        t = CHText(part_1, part_2)
         self.assertTrue(t == expected)
 
-        t = ColoredText(part_1)
+        t = CHText(part_1)
         t += part_2
         self.assertTrue(t == expected)
 
-    def test_join(self):
-        """Test ColoredText.join method."""
+    def test_concatenation_with_strings(self):
+        """Test concatenation of str and CText."""
+        part_1 = self._mk_chtext('GREEN', "p1")
+        part_2 = self._mk_chtext(None, "plain")
 
-        sep = ColorFmt('GREEN')('=')
+        t = "plain" + part_1
+        self.assertIsInstance(t, CHText)
+
+        t1 = part_2 + part_1
+        self.assertIsInstance(t1, CHText)
+
+        self.assertEqual(t, t1)
+
+    def test_join(self):
+        """Test CHText.join method."""
+
+        sep = self._mk_chtext('GREEN', '=')
 
         empty = sep.join([])
         self.assertEqual("", empty.plain_text())
 
         parts = [
-            ColorFmt('RED')('red'),
+            self._mk_chtext('RED', 'red'),
             "white",
         ]
 
@@ -259,9 +292,9 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual("red=white", joined.plain_text())
 
     def test_formatting(self):
-        """Test string formatting of ColoredText objects"""
+        """Test string formatting of CHText objects"""
 
-        t = ColorFmt('GREEN')("text")
+        t = self._mk_chtext('GREEN', "text")
 
         # just check formatting produce no errors
         _ = f"{t}"        # printed as "text"
@@ -284,16 +317,16 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertIn("invalid width '1a0'", err_msg)
 
     def test_slicing(self):
-        """Test slising of ColoredText."""
+        """Test slising of CHText."""
 
-        # ColoredText to be used in tests
-        text = ColorFmt('GREEN')('green') + ColorFmt('RED')('red')
+        # CHText to be used in tests
+        text = self._mk_chtext('GREEN', 'green') + self._mk_chtext('RED', 'red')
         self.assertEqual(8, len(text))
         self.assertEqual("greenred", text.plain_text())
 
         # 1. test simple indexing (1 character)
-        green_fmt = ColorFmt('GREEN')
-        red_fmt = ColorFmt('RED')
+        green_fmt = lambda text: CHText(ColorFmt('GREEN')(text))
+        red_fmt = lambda text: CHText(ColorFmt('RED')(text))
 
         # 1.1. positive indexes
         self.assertEqual(green_fmt('g'), text[0])
@@ -353,8 +386,8 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual(green_fmt("reen") + red_fmt("r"), text[1:6])
 
         # 2.2. empty substrings, positive indexes
-        empty_text = ColorFmt(None)("")
-        empty_text = ColoredText()
+        empty_text = self._mk_chtext(None, "")
+        empty_text = CHText()
         self.assertEqual(empty_text, text[0:0])
         self.assertEqual(empty_text, text[1:1])
         self.assertEqual(empty_text, text[5:5])
@@ -390,8 +423,8 @@ class TestColoredTextProperties(unittest.TestCase):
 
     def test_slising_empty_text(self):
         """make sure slicing does not fail with empty text."""
-        empty_text = ColoredText()
-        also_empty_text = ColorFmt(None)("")
+        empty_text = CHText()
+        also_empty_text = self._mk_chtext(None, "")
 
         self.assertEqual(empty_text, also_empty_text)
 
@@ -402,8 +435,8 @@ class TestColoredTextProperties(unittest.TestCase):
         self.assertEqual(empty_text, empty_text[1:-1])
 
     def test_fixed_len_method(self):
-        """Test ColoredText.fixed_len method"""
-        t = ColorFmt('RED')("123") + ColorFmt('BLUE')("456")
+        """Test CHText.fixed_len method"""
+        t = self._mk_chtext('RED', "123") + self._mk_chtext('BLUE', "456")
 
         # get longer result
         result = t.fixed_len(10)
@@ -422,7 +455,7 @@ class TestColoredTextProperties(unittest.TestCase):
     def test_strip_colors(self):
         """test method which removes color sequences from string."""
 
-        color_text = ColorFmt('GREEN')('Green') + ColorFmt('RED')('Red')
+        color_text = self._mk_chtext('GREEN', 'Green') + self._mk_chtext('RED', 'Red')
 
         plain_str = 'GreenRed'
         colored_str = str(color_text)
@@ -433,8 +466,187 @@ class TestColoredTextProperties(unittest.TestCase):
             f"of color sequences")
         self.assertTrue(len(colored_str) > len(plain_str))
 
-        stripped_colored_str = ColoredText.strip_colors(colored_str)
+        stripped_colored_str = CHText.strip_colors(colored_str)
         self.assertEqual(plain_str, stripped_colored_str)
+
+
+class TestCHTextChunkProperties(unittest.TestCase):
+    """Test CHText.Chunk.
+
+    CHText.Chunk is a type of colored text parts of the CHText (CHText
+    object is a list of CHText.Chunk objects corresponding to parts of text
+    having different colors).
+    For performance reasons in some cases not CHText, but CHText.Chunk objects
+    are used in the application code.
+
+    Behavior of the CHText.Chunk is very similar to the behavior of CHText,
+    and here we test it.
+    """
+
+    def test_chtext_chunk_construction(self):
+        """Test construction of CHText.Chunk."""
+        raw_text = "some text"
+        ch_chunk = ColorFmt("GREEN")(raw_text)
+
+        self.assertNotIsInstance(ch_chunk, CHText)
+        self.assertIsInstance(ch_chunk, CHText.Chunk)
+
+        self.assertEqual(raw_text, ch_chunk.plain_text())
+
+    def test_chtext_chunk_to_str(self):
+        """Test conversion to string."""
+        raw_text = "some text"
+        ch_chunk = ColorFmt("GREEN")(raw_text)
+        green_text = str(ch_chunk)
+
+        self.assertGreater(len(green_text), len(raw_text))
+        self.assertIn(raw_text, green_text)
+
+    def test_equality_check(self):
+        """Test comparison of CHText.Chunk with CHText, CHText.Chunk and string."""
+
+        raw_text = "some text"
+
+        green_fmt = ColorFmt("GREEN")
+        green_chunk = green_fmt(raw_text)
+        green_chunk1 = green_fmt(raw_text)
+        green_text = CHText(ColorFmt("GREEN")(raw_text))
+
+        # positive cases
+        self.assertEqual(green_chunk, green_chunk)
+        self.assertEqual(green_chunk, green_chunk1)
+        self.assertEqual(green_chunk, green_text)
+        self.assertEqual(green_text, green_chunk)
+
+        # negative cases
+        red_chunk = ColorFmt("RED")(raw_text)
+
+        self.assertNotEqual(green_chunk, red_chunk)
+        self.assertNotEqual(green_text, red_chunk)
+        self.assertNotEqual(red_chunk, green_text)
+
+        self.assertNotEqual(red_chunk, raw_text)
+        self.assertNotEqual(raw_text, red_chunk)
+
+        # comparing with strings
+        no_color_chunk = ColorFmt(None)(raw_text)
+
+        self.assertEqual(no_color_chunk, raw_text)
+        self.assertEqual(raw_text, no_color_chunk)
+
+    def test_concatenation(self):
+        """Test different ways to concatenate CHText and Chunk and str."""
+
+        part_1 = ColorFmt("GREEN")("p1")
+        part_2 = ColorFmt("GREEN")("p2")
+
+        t = part_1 + part_2
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text(), "p1p2")
+
+        t = t + part_1
+        self.assertEqual(t.plain_text(), "p1p2p1")
+
+        t = part_2 + t
+        self.assertEqual(t.plain_text(), "p2p1p2p1")
+
+        t = part_1 + "plain"
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text(), "p1plain")
+
+        t = "plain" + part_1
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text(), "plainp1")
+
+    def test_join(self):
+        """Test CHText.Chunk.join method"""
+
+        sep = ColorFmt('GREEN')('=')
+
+        empty = sep.join([])
+        self.assertIsInstance(empty, CHText)
+        self.assertEqual("", empty.plain_text())
+
+        parts = [
+            ColorFmt('BLUE')('blue'),
+            CHText(ColorFmt('RED')('red')),
+            "white"
+        ]
+
+        joined = sep.join(parts)
+        self.assertEqual("blue=red=white", joined.plain_text())
+
+    def test_formatting(self):
+        """Test string formatting of CHText.Chunk objects"""
+
+        t = ColorFmt("GREEN")("text")
+
+        for colored_text, expected_plaintext in [
+            (f"{t}", "text"),
+            (f"{t:s}", "text"),  # same, 's' format specifier is optional
+            (f"{t:10}", "text      "),
+            (f"{t:>10}", "      text"),
+            (f"{t:>>10}", ">>>>>>text"),
+        ]:
+            self.assertGreater(len(colored_text), len(expected_plaintext))
+            self.assertEqual(CHText.strip_colors(colored_text), expected_plaintext)
+
+    def test_slicing(self):
+        """Test slising of CHText.Chunk"""
+
+        green_fmt = ColorFmt("GREEN")
+        t = green_fmt("green")
+
+        self.assertIs(type(t[0]), CHText.Chunk)
+        self.assertEqual(green_fmt('g'), t[0])
+        self.assertEqual('g', t[0].plain_text())
+
+        self.assertEqual(green_fmt('e'), t[2])
+        self.assertEqual(green_fmt('r'), t[-4])
+
+        for index in [5, 10, -10]:
+            with self.assertRaises(IndexError) as exc:
+                t[index]
+            err_msg = str(exc.exception)
+            self.assertIn("out of range", err_msg)
+
+        # normal substrings, positive indexes
+        self.assertEqual(green_fmt("ree"), t[1:4])
+        self.assertEqual(green_fmt("green"), t[:5])
+        self.assertEqual(green_fmt("green"), t[:15], "index too big, but this is ok")
+
+    def test_fixed_len_method(self):
+        """Test CHText.Chunk.fixed_len method"""
+
+        green_fmt = ColorFmt("GREEN")
+        orig_ch_chunk = green_fmt("green")
+
+        t = orig_ch_chunk.fixed_len(3)
+        self.assertIsInstance(t, (CHText, CHText.Chunk))
+        self.assertEqual(t, green_fmt("gre"))
+
+        t = orig_ch_chunk.fixed_len(5)
+        self.assertIsInstance(t, (CHText, CHText.Chunk))
+        self.assertEqual(t, green_fmt("green"))
+
+        t = orig_ch_chunk.fixed_len(6)
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t, CHText(green_fmt("green"), " "))
+
+    def test_strip_colors(self):
+        """test method which removes color sequences from string."""
+        # It is a classmethod, the same as in CHText.
+        # Just test it is present
+
+        color_text = str(CHText(ColorFmt("RED")("Red"), ColorFmt("GREEN")("Green")))
+
+        dummy_ch_chunk = ColorFmt("RED")("anything")
+        self.assertIsInstance(dummy_ch_chunk, CHText.Chunk)
+
+        plain_text = dummy_ch_chunk.strip_colors(color_text)
+
+        self.assertGreater(len(color_text), len(plain_text))
+        self.assertEqual(plain_text, "RedGreen")
 
 
 class TestColorFmtBytes(unittest.TestCase):
@@ -459,121 +671,12 @@ class TestColorFmtBytes(unittest.TestCase):
 #########################
 # Test Palette and ColorsConfig functionality
 
-class TestPalette(unittest.TestCase):
-    """Test Palette functionality."""
-
-    def test_palette(self):
-        palette = Palette({
-            'style_1': ColorFmt('GREEN'),
-            'style_2': ColorFmt('BLUE'),
-        })
-
-        t0 = palette.get_color('style_1')("test text")
-        t1 = palette['style_1']("test text")
-
-        self.assertEqual(t0, t1)
-
-        # unknown style does not raise error
-        t2 = palette['unknown_style']("test text")
-        self.assertEqual("test text", str(t2))
-
-    def test_color_text_creation(self):
-        """Test palette producing ColoredText"""
-        palette = Palette({
-            'style_1': ColorFmt('GREEN'),
-            'style_2': ColorFmt('BLUE'),
-        })
-
-        # single arguments of different types
-        self.assertEqual(
-            palette(('unknown', 'text0')), ColorFmt.get_plaintext_fmt()('text0'))
-
-        self.assertEqual(
-            palette(('style_1', 'text1')), ColorFmt('GREEN')('text1'))
-
-        self.assertEqual(
-            palette(['style_2', 'text2']), ColorFmt('BLUE')('text2'))
-
-        self.assertEqual(
-            palette('plain'), ColorFmt.get_plaintext_fmt()('plain'))
-
-        self.assertEqual(
-            palette(ColorFmt('RED')('red')), ColorFmt('RED')('red'))
-
-        self.assertEqual(
-            palette(), ColorFmt.get_plaintext_fmt()(''))
-
-        # and combination of several arguments of different types
-        t0 = palette(
-            'plain ',
-            ('style_1', 'text1'),
-            ' ',
-            ['style_1', 'text2'],
-            ' ',
-            ColorFmt('RED')('red'))
-
-        self.assertEqual('plain text1 text2 red', t0.plain_text())
-
-    def test_palette_self_report(self):
-        """Palette can print itself."""
-        palette = Palette({
-            'style_1': ColorFmt('GREEN'),
-            'style_2': ColorFmt('BLUE'),
-        })
-
-        report = palette.make_report()
-        lines = report.split('\n')
-        self.assertEqual(2, len(lines))
-        self.assertIn('style_1', report)
-
-
-class TestSHText(unittest.TestCase):
-    """Test SHText"""
-
-    def test_basic_sh_text_functionality(self):
-        """Test basic functionality of SHText"""
-
-        sh_descr = SHText("Some ", ("SYNTAX", "text"), " to test")
-
-        # SHText does not know actual colors corresponding to
-        # syntax regions, so conversion to str produces plain text
-        self.assertEqual("Some text to test", str(sh_descr))
-        self.assertEqual("Some text to test", sh_descr.plain_text())
-
-        # use palette to create ColoredText
-        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
-        ct = palette(sh_descr)
-        ct_expected = ColoredText(
-            "Some ",
-            ColorFmt('GREEN')("text"),
-            " to test")
-        self.assertEqual(
-            ct_expected, ct,
-            f"{ct_expected} != {ct}",
-        )
-
-        # unknown syntax name should not raise error
-        palette = Palette({})
-        ct = palette(sh_descr)
-        self.assertEqual("Some text to test", str(ct))
-
-    def test_sh_text_basic_propertirs(self):
-        """SHText corner cases."""
-
-        # empty constructior => empty result
-        sh_descr = SHText()
-
-        self.assertEqual("", str(sh_descr))
-
-        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
-        self.assertEqual("", palette(sh_descr))
-
-
-class TestColorsConfig(unittest.TestCase):
-    """Test ColorsConfig class"""
+class TestColorsConfigAndGlobalPalette(unittest.TestCase):
+    """Test ColorsConfig class and global_palette."""
 
     class TstColorsConfig(ColorsConfig):
-        # not a nice-loking colors config, but ok for test purposes
+        # not a nice-loking colors config, but ok to be used in most test cases
+        # note, that BUILT_IN_CONFIG settings are not inherited from the base class,
         BUILT_IN_CONFIG = {
             "TEXT": "",
             "NAME": "BLUE:bold",
@@ -591,8 +694,9 @@ class TestColorsConfig(unittest.TestCase):
 
     @classmethod
     def _color_report_to_map(cls, report):
+        # parse the report produced by ColorsConfig.make_report()
         # returns {synt_id: report_line}
-        report = ColoredText.strip_colors(report)
+        report = CHText.strip_colors(report)
         lines_by_synt_id = {}
         for line in report.split('\n'):
             chunks = line.split(':')
@@ -600,6 +704,84 @@ class TestColorsConfig(unittest.TestCase):
                 continue
             lines_by_synt_id[chunks[0].strip()] = line
         return lines_by_synt_id
+
+    def test_global_palette_without_configuration(self):
+        """ak.color.global_palette object should be available always."""
+
+        orig_global_palette = ak.color.global_palette
+        self.assertIsNotNone(orig_global_palette)
+
+        self.assertIs(
+            orig_global_palette, gp,
+            "gp is global_palette imported from ak.color. "
+            "ak.color.global_palette must always remain the same object")
+
+        # reset global config to the default state
+        set_global_colors_config(None)
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        # test the global_palette when color configuration is in the default state
+        raw_text = "test"
+        self.assertEqual(gp.text(raw_text), ColorFmt(None)(raw_text))
+        self.assertEqual(
+            gp.keyword(raw_text), ColorFmt("BLUE", bold=True)(raw_text),
+            "these are the defaults specified in ColorsConfig.BUILT_IN_CONFIG"
+        )
+
+    def test_global_palette_after_new_global_config_is_set(self):
+        """Test global_palette after new global_config is set."""
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        raw_text = "test"
+
+        # reset global config to the default state
+        set_global_colors_config(None)
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        self.assertEqual(gp.keyword(raw_text), ColorFmt("BLUE", bold=True)(raw_text))
+        self.assertEqual(gp.name(raw_text), ColorFmt("GREEN", bold=True)(raw_text))
+
+        # set new config
+        set_global_colors_config(self.TstColorsConfig())
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        # now all the colors should be taken from self.TstColorsConfig.BUILT_IN_CONFIG
+        self.assertEqual(gp.keyword(raw_text), ColorFmt(None)(raw_text))
+        self.assertEqual(gp.name(raw_text), ColorFmt("BLUE", bold=True)(raw_text))
+        self.assertEqual(gp["TABLE.BORDER"](raw_text), ColorFmt("RED")(raw_text))
+
+        # self.TstColorsConfig.BUILT_IN_CONFIG has no syntax "KEYWORD".
+        # let's register a Palette which has this syntax and will add info about
+        # it to the config
+        class MicroPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                'KEYWORD': "MAGENTA",
+            }
+            keyword = ConfColor('KEYWORD')
+
+        p = MicroPalette()
+        self.assertEqual(
+            p.keyword(raw_text), ColorFmt("MAGENTA")(raw_text),
+            "Before creation of the MicroPalette there was no 'KEYWORD' syntax "
+            "in the config. MicroPalette class specifies 'MAGENTA' default for "
+            "this syntax, so it is used"
+        )
+
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        self.assertEqual(
+            gp.keyword(raw_text), ColorFmt("MAGENTA")(raw_text),
+            "after global config modification the global palette uses the "
+            "configuraion")
+
+        # set new config
+        set_global_colors_config(self.TstColorsConfig())
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+        self.assertEqual(
+            gp.keyword(raw_text), ColorFmt(None)(raw_text),
+            "the new config has no data for 'KEYWORD' syntax; "
+            "check self.TstColorsConfig.BUILT_IN_CONFIG"
+        )
 
     def test_colors_config_use_defaults_only(self):
         """Test initialization of ColorsConfig with all defaults."""
@@ -632,9 +814,6 @@ class TestColorsConfig(unittest.TestCase):
             raw_text, colored_texts['UNEXPECTED'],
             "missing syntax means no formatting")
 
-        #print(colored_texts['VERY_COLORED'])
-        #print(colored_texts['VERY_UNCOLORED'])
-
         # all these items expected to be colored
         self.assertGreater(len(str(colored_texts['NAME'])), len(raw_text))
         self.assertGreater(len(str(colored_texts['TABLE.NAME'])), len(raw_text))
@@ -648,6 +827,35 @@ class TestColorsConfig(unittest.TestCase):
         self.assertNotEqual(
             colored_texts['NAME'], colored_texts['TABLE.ALT2_NAME'],
             "expected BLUE and GREEN colors respectively")
+
+    def test_default_syntax(self):
+        """Make sure that default syntax is used instead of unknown one."""
+
+        # "TEXT" syntax should be used as default syntax.
+        # Usually the default format means 'no colors' format.
+        # In order to verify that it is the format of "TEXT" syntax is used as
+        # default, not the dummy 'no colors' format, let's configure the "TEXT"
+        # to have some color
+        colors_conf = self.TstColorsConfig({
+            "TEXT": "RED:bold",
+        })
+
+        # make sure default format is used when unknown syntax is encountered
+        default_fmt = colors_conf.get_color("TEXT")
+        self.assertIs(default_fmt, colors_conf.get_color("UNEXPECTED_SYNTAX_ID"))
+
+        # make sure settings from base class are not inherited by colors_conf
+        keyword_fmt = colors_conf.get_color("KEYWORD")
+        self.assertIs(
+            keyword_fmt, default_fmt,
+            "even though in colors_conf base class ColorsConfig.BUILT_IN_CONFIG "
+            "there is 'KEYWORD' syntax element, there is no such element in "
+            "TstColorsConfig.BUILT_IN_CONFIG. So colors_conf should not know "
+            "about this syntax and the default syntax should be returned instead")
+
+        self.assertEqual(
+            str(keyword_fmt("default text")),
+            str(ColorFmt("RED", bold=True)("default text")))
 
     def test_turned_off_syntax_coloring(self):
         """Test turning off all the syntax coloring."""
@@ -706,7 +914,7 @@ class TestColorsConfig(unittest.TestCase):
             colored_texts['VERY_COLORED'], colored_texts['TABLE.BORDER'])
 
     def test_not_default_config(self):
-        """Test ColorsConfig construction with initial config."""
+        """Simulate test ColorsConfig construction with initial config."""
 
         # syntax colors description is processed first and has higher precenence
         # than defaults hardcoded in python code.
@@ -777,7 +985,7 @@ class TestColorsConfig(unittest.TestCase):
             str(colors_conf.get_color("SHADE")(sample_text)),
             str(ColorFmt("g4", bg_color="g5")(sample_text)))
 
-    def test_config_not_resilved_items(self):
+    def test_config_not_resolved_items(self):
         """Test situation when some items in the config can't be resolved.
 
         This usually means an error in configuration. But such situations
@@ -859,20 +1067,15 @@ class TestColorsConfig(unittest.TestCase):
         # be used. But the class which actually use it and provide info about
         # it is registered in the Config only later. This is ok.
 
-        class MyLocalPalette(LocalPalette):
-            """Test LocalPalette which introduces rules for some syntaxes"""
+        class MyPalette(Palette):
+            """Test Palette which introduces rules for some syntaxes"""
             SYNTAX_DEFAULTS = {
                 'SYNT_X_3': "RED",
                 'SYNT_X_2': "GREEN",
                 'SYNT_2': "RED",
             }
-            LOCAL_SYNTAX = {
-                'S3': 'SYNT_X_3',
-                'S2': 'SYNT_X_2',
-                'S1': 'SYNT_2',
-            }
 
-        # 1. before MyLocalPalette is registered in the config some syntaxes
+        # 1. before MyPalette is registered in the config some syntaxes
         # are not resolved
         report = colors_conf.make_report()
         # print(report)
@@ -883,15 +1086,15 @@ class TestColorsConfig(unittest.TestCase):
 
         test_text = "test"
         self.assertEqual(
-            str(global_palette(SHText(('SYNT_1', test_text)))),
+            str(global_palette.get_color('SYNT_1')(test_text)),
             test_text,
             "'SYNT_1' rule is not resolved, plain text is produced")
 
-        # 2. after MyLocalPalette is registered the config becomes updated.
+        # 2. after MyPalette is registered the config becomes updated.
         # Rule for 'SYNT_1' can be resolved now.
 
         # this affected the colors_conf
-        _ = MyLocalPalette.make(colors_conf=colors_conf)
+        _ = MyPalette(colors_conf)
 
         report = colors_conf.make_report()
         # print(report)
@@ -902,21 +1105,49 @@ class TestColorsConfig(unittest.TestCase):
         global_palette = colors_conf.get_palette()
 
         self.assertEqual(
-            str(global_palette(SHText(('SYNT_1', test_text)))),
+            str(global_palette.get_color('SYNT_1')(test_text)),
             str(ColorFmt('GREEN')(test_text)),
         )
 
-        # properties of the created MyLocalPalette object are not tested here
+        # properties of the created MyPalette object are not tested here
 
-    def test_get_palette_all_colors(self):
+    def test_global_palette(self):
         """Test ceation of Palette containing all colors from config"""
         colors_conf = self.TstColorsConfig()
 
-        palette_all = colors_conf.get_palette()
-        all_syntaxes = palette_all.colors.keys()
-        self.assertIn('TEXT', all_syntaxes)
-        self.assertIn('VERY_COLORED', all_syntaxes)
-        self.assertIn('TABLE.BORDER', all_syntaxes)
+        global_palette = colors_conf.get_palette()
+
+        # global palette has some standard syntaxes:
+        # text, name, keyword, ok, warn, error
+        # Fields corresponding to these syntaxes are always present in the
+        # global palette (even if the global config does not know about
+        # these syntaxes)
+
+        # "NAME" syntax is present in our config, global_palette.name uses it
+        self.assertIs(
+            global_palette.name, global_palette["NAME"],
+            "must produce the same result for built-in syntaxes")
+        self.assertIs(global_palette.name, colors_conf.get_color("NAME"))
+        self.assertEqual(
+            str(global_palette.name("some text")),
+            str(ColorFmt("BLUE", bold=True)("some text")))
+
+        # "KEYWORD" syntax is present in our config, but
+        # global_palette.keyword should be present. Default syntax is used instead.
+        self.assertIs(global_palette.keyword, global_palette["KEYWORD"])
+        self.assertIs(global_palette.keyword, colors_conf.get_color("TEXT"))
+
+        # the global palette should have access to all the colors in the config
+        fmt_table_border = global_palette["TABLE.BORDER"]
+        self.assertIs(fmt_table_border, colors_conf.get_color("TABLE.BORDER"))
+        self.assertEqual(
+            str(fmt_table_border("some text")),
+            str(ColorFmt("RED")("some text")))
+
+        fmt_very_colored = global_palette["VERY_COLORED"]
+        self.assertIs(fmt_very_colored, colors_conf.get_color("VERY_COLORED"))
+
+        self.assertIsNot(fmt_very_colored, fmt_table_border)
 
     def test_get_palette_multiple_calls(self):
         """Test Palette creation by ColorsConfig."""
@@ -954,10 +1185,10 @@ class TestColorsConfig(unittest.TestCase):
             "subsequent changes of the config")
 
 
-class TestLocalPalete(unittest.TestCase):
-    """Test LocalPalette functionality.
+class TestPalete(unittest.TestCase):
+    """Test Palette functionality.
 
-    LocalPalette is used by misc components of application. LocalPalette
+    Palette is used by misc components of application. Palette
     contains the part of colors configuration which is required for the
     component.
     """
@@ -968,105 +1199,227 @@ class TestLocalPalete(unittest.TestCase):
             "TEXT": "",
             "NUMBER": "YELLOW",
             "KEYWORD": "BLUE:bold",
+            "WARN": "RED",
         }
 
-    class MyLocalPalette(LocalPalette):
+    class MyPalette(Palette):
         SYNTAX_DEFAULTS = {
             "TBL.TEXT": "NUMBER",
             "TBL.BORDER": "GREEN",
+            "TBL.WARN": "WARN",
         }
 
-        LOCAL_SYNTAX = {
-            "TEXT": "TBL.TEXT",
-            "BRDR": "TBL.BORDER",
-        }
+        ctxt = ConfColor("TBL.TEXT")
+        border = ConfColor("TBL.BORDER")
+        warn = ConfColor("TBL.WARN")
 
-        def __init__(self, local_colors):
-            assert local_colors.keys() == self.LOCAL_SYNTAX.keys()
-            self.ctxt = local_colors["TEXT"][1]
-            self.border = local_colors["BRDR"][1]
+    @classmethod
+    def _color_report_to_map(cls, report):
+        # parse the report produced by Palette.make_report()
+        # returns {synt_id: report_line}
+        report = CHText.strip_colors(report)
+        lines_by_synt_id = {}
+        for line in report.split('\n'):
+            chunks = line.split(':')
+            if len(chunks) < 2:
+                continue
+            lines_by_synt_id[chunks[0].strip()] = line
+        return lines_by_synt_id
 
     def test_local_palette_creation_from_global_config(self):
-        """Test construction of LocalPalette object from global config."""
+        """Test construction of Palette object from global config."""
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
         # 1. create the local_palette object from the global colors config
         # and check it works
-        local_palette = self.MyLocalPalette.make()
+        local_palette = self.MyPalette()
 
         sample_text = "sample text"
-        color_text_0 = local_palette.ctxt(sample_text)
+        color_text_0 = CHText(local_palette.ctxt(sample_text))
 
         self.assertEqual(
-            str(local_palette.ctxt(sample_text)),
+            str(CHText(local_palette.ctxt(sample_text))),
             str(ColorFmt("YELLOW")(sample_text)),
             "local syntax id 'TEXT' corresponds to 'NUMBER' syntax in "
             "the global config => YELLOW")
 
-        # 2. create local_palette which uses different syntaxes from global conf
-        alt_palette = self.MyLocalPalette.make(alt_local_syntax={"TEXT": "KEYWORD"})
+        # 1.1. subsequent creations of the palette from the same class should
+        # return the same object
+        same_palette = self.MyPalette()
+        self.assertIs(local_palette, same_palette)
 
-        self.assertEqual(
-            str(alt_palette.ctxt(sample_text)),
-            str(ColorFmt("BLUE", bold=True)(sample_text)),
-            "in the alt palette local syntax id 'TEXT' corresponds to 'KEYWORD' "
-            "syntax in the global config => BLUE, bold")
+        # 2. but after update of the global config new palette object should
+        # be created
+        class DummyPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                "SOME_NEW_SYNTAX": "",
+            }
 
-        # 3. creation of the alt_palette should not have changed previously
-        # created palette
-        self.assertEqual(
-            str(local_palette.ctxt(sample_text)),
-            str(color_text_0))
-
-        # 4. create another palette from the global config
-        # Creation of the alternative palette on step 2. should not have
-        # invalidated the cache.
-        local_palette_1 = self.MyLocalPalette.make()
+        # new component may be registered in two ways:
+        # - by creation of a palette of new class
+        # - by direct regigistration of a Palette class
+        # 2.1. after the first registration of DummyPalette new MyPalette
+        # should be created
+        _ = DummyPalette()
+        new_local_palette = self.MyPalette()
+        self.assertIsNot(
+            local_palette, new_local_palette,
+            "creation of a palette of DummyPalette class has updated global config. "
+            "It is not possible to reuse previously created palettes afther that. ")
+        local_palette = new_local_palette
 
         self.assertIs(
-            local_palette, local_palette_1,
-            "same cached object is expected")
+            self.MyPalette(), local_palette,
+            "new new palette classes registered in the config, "
+            "same palette object is expected")
 
-        # 5. after global conf modification a different local_palette object
-        # should be created
-        global_conf.add_new_items(
-            {"SOME_NEW_SYNTAX": "RED"}, "some dummy syntax rule")
-        local_palette_2 = self.MyLocalPalette.make()
+        # 2.2. registration of previously registered DummyPalette should not affect
+        # cached palettes
+        DummyPalette.register_in_colors_conf(get_global_colors_config())
+        self.assertIs(
+            self.MyPalette(), local_palette,
+            "new new palette classes registered in the config, "
+            "same palette object is expected")
 
-        self.assertIsNot(
-            local_palette, local_palette_2,
-            "new object is expected because the config has been modified")
+        # 3. similar to 2., but trying different methods of palette class registration
+        set_global_colors_config(None)
+        palette_0 = self.MyPalette()
+
+        DummyPalette.register_in_colors_conf(get_global_colors_config())
+        palette_1 = self.MyPalette()
+
+        _ = DummyPalette()
+        palette_2 = self.MyPalette()
+
+        self.assertIsNot(palette_0, palette_1)
+        self.assertIs(palette_1, palette_2)
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_local_palettes_inheritance_trivial(self):
+        """Trivial case of palettes inheritance - no changes in derived class."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
+
+        class DerivedPalette(self.MyPalette):
+            pass
+
+        parent_palette = self.MyPalette()
+        derived_palette = DerivedPalette()
+
+        sample_text = "sample text"
+
+        self.assertEqual(
+            str(CHText(parent_palette.ctxt(sample_text))),
+            str(CHText(derived_palette.ctxt(sample_text))),
+            "result should be the same as derived palette is expected "
+            "to be identical to the parent palette")
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_local_palettes_inheritance(self):
+        """Test usual case of palette inheritance."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
+
+        class DerivedPalette(self.MyPalette):
+            SYNTAX_DEFAULTS = {
+                "TBL.WARN": "YELLOW",  # should have no effect
+                "TBL.ALT_TEXT": "KEYWORD",
+            }
+            ctxt = ConfColor("TBL.ALT_TEXT")
+            new_synt = ConfColor("TBL.WARN")
+
+        parent_palette = self.MyPalette()
+        derived_palette = DerivedPalette()
+        # print(global_conf.make_report())
+
+        sample_text = "sample text"
+
+        # 1. check behavior of 'ctxt' color
+        # It is explicitely overidden in DerivedPalette
+        self.assertEqual(
+            str(CHText(parent_palette.ctxt(sample_text))),
+            str(CHText(ColorFmt("YELLOW")(sample_text))),
+            "ctxt -> TBL.TEXT -> NUMBER -> YELLOW. "
+            "Presence of the derived class must not affect base class palette")
+
+        self.assertEqual(
+            str(CHText(derived_palette.ctxt(sample_text))),
+            str(ColorFmt("BLUE", bold=True)(sample_text)),
+            "ctxt -> TBL.ALT_TEXT -> KEYWORD -> BLUE:bold. ")
+
+        # 2. check behavior of 'border' color.
+        # It is not modified in any way in DerivedPalette
+        self.assertEqual(
+            str(CHText(parent_palette.border(sample_text))),
+            str(CHText(derived_palette.border(sample_text))),
+        )
+
+        # 3. check hehavior of 'warn' color.
+        # It uses color of "TBL.WARN" syntax in config.
+        # Even though DerivedPalette provides own default for this
+        # syntax id, it does not affect anything. The base class
+        # is registered in the config first and initializes the color for
+        # this syntax.
+        self.assertEqual(
+            str(CHText(parent_palette.warn(sample_text))),
+            str(ColorFmt("RED")(sample_text)),
+            "warn -> TBL.WARN -> WARN -> RED. ")
+
+        self.assertEqual(
+            str(CHText(parent_palette.warn(sample_text))),
+            str(CHText(derived_palette.warn(sample_text))),
+        )
+
+        # 4. check behavior of 'new_synt' color.
+        with self.assertRaises(AttributeError) as exc:
+            parent_palette.new_synt(sample_text)
+
+        err_msg = str(exc.exception)
+        self.assertIn("MyPalette", err_msg)
+        self.assertIn("object has no attribute", err_msg)
+        self.assertIn("new_synt", err_msg)
+
+        self.assertEqual(
+            str(CHText(derived_palette.new_synt(sample_text))),
+            str(ColorFmt("RED")(sample_text)),
+            "warn -> TBL.WARN -> WARN -> RED. "
+            "Even though default for TBL.WARN is YELLOW, it has no effect "
+            "because the default for this syntax is defined in parent class")
 
         # cleanup global config
         set_global_colors_config(None)
 
     def test_no_color_local_palette(self):
-        """Test construction of no-color LocalPalette."""
+        """Test construction of no-color Palette."""
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        local_palette = self.MyLocalPalette.make()
-        no_color_palette = self.MyLocalPalette.make(no_color=True)
+        local_palette = self.MyPalette()
+        no_color_palette = self.MyPalette(no_color=True)
 
         # check local_palette produces colored text and no_color_palette - plain text
         sample_text = "sample text"
 
         self.assertEqual(
-            str(local_palette.ctxt(sample_text)),
+            str(CHText(local_palette.ctxt(sample_text))),
             str(ColorFmt("YELLOW")(sample_text)),
         )
 
         self.assertEqual(
-            str(no_color_palette.ctxt(sample_text)),
+            str(CHText(no_color_palette.ctxt(sample_text))),
             sample_text,
         )
 
         # cached objects expected on subsequent creations as there were no
         # modifications to the config
 
-        local_palette_1 = self.MyLocalPalette.make()
-        no_color_palette_1 = self.MyLocalPalette.make(no_color=True)
+        local_palette_1 = self.MyPalette()
+        no_color_palette_1 = self.MyPalette(no_color=True)
 
         self.assertIs(local_palette, local_palette_1)
         self.assertIs(no_color_palette, no_color_palette_1)
@@ -1074,189 +1427,42 @@ class TestLocalPalete(unittest.TestCase):
         # cleanup global config
         set_global_colors_config(None)
 
+    def test_palette_report(self):
+        """Test creation of palettes report."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
 
-class TestGlobalColorsFormattingMethods(unittest.TestCase):
-    """Test global methods for processing syntax-highlighted text"""
+        class DerivedPalette(self.MyPalette):
+            SYNTAX_DEFAULTS = {
+                "TBL.WARN": "YELLOW",  # should have no effect
+                "TBL.ALT_TEXT": "KEYWORD",
+            }
+            ctxt = ConfColor("TBL.ALT_TEXT")
+            new_synt = ConfColor("TBL.WARN")
 
-    class TstColorsConfig(ColorsConfig):
-        # not a nice-loking colors config, but ok for test purposes
-        BUILT_IN_CONFIG = {
-            "TEXT": "",
-            "NAME": "BLUE:bold",
-            "DESCR": "YELLOW",
-        }
+        parent_palette = self.MyPalette()
+        derived_palette = DerivedPalette()
 
-    class _DummySHTextGenerator:
-        def __init__(self, *sh_lines):
-            self._sh_lines = sh_lines
+        # print(parent_palette.make_report())
+        # print(derived_palette.make_report())
 
-        def gen_sh_lines(self) -> Iterator[SHText]:
-            yield from self._sh_lines
+        parent_rep_lines = self._color_report_to_map(parent_palette.make_report())
+        derived_rep_lines = self._color_report_to_map(derived_palette.make_report())
 
-        def sh_text(self) -> SHText:
-            return SHText("\n").join(self._sh_lines)
-
-    def test_global_color_conf_usage(self):
-        """Test setting of global color config.
-
-        sh_fmt global function uses it, so we will use this function for test.
-        """
-
-        blue_colors_conf = self.TstColorsConfig()
-        red_colors_conf = self.TstColorsConfig({'NAME': "RED"})
-
-        sample_plain_text = "sample text"
-        sample_sh_text = SHText(("NAME", sample_plain_text))
-
-        # 1. global config contains colors
-        set_global_colors_config(blue_colors_conf)
-
-        blue_ct = sh_fmt(sample_sh_text)
-        self.assertIsInstance(blue_ct, ColoredText)
-        self.assertEqual(blue_ct.plain_text(), sample_plain_text)
-        self.assertNotEqual(
-            str(blue_ct), sample_plain_text,
-            "blue_ct object is expected to contain color sequences because "
-            "the global config contains some color configuration for "
-            "the 'NAME' syntax group")
-
-        # 2. palette is explicitley specified for sh_fmt
-        red_ct = sh_fmt(sample_sh_text, palette=red_colors_conf.get_palette())
-        self.assertIsInstance(red_ct, ColoredText)
-        self.assertEqual(red_ct.plain_text(), sample_plain_text)
-        self.assertNotEqual(
-            str(blue_ct), str(red_ct),
-            "even though the global color config is still the same, "
-            "different palette was used to prepare the red_ct, so "
-            "different color sequences are expected")
-
-        # 3. set different gobal colors
-        set_global_colors_config(red_colors_conf)
-        new_red_ct = sh_fmt(sample_sh_text)
         self.assertEqual(
-            str(new_red_ct), str(red_ct),
-            "according to the global config the sample_sh_text now should be red")
+            {'text', 'ctxt', 'border', 'warn'},
+            set(parent_rep_lines.keys()),
+            "\n'ctxt', 'border', 'warn' - defined in MyPalette class; "
+            "'text' is the default present in all palettes"
+        )
 
-        # reset global golors config
+        self.assertEqual(
+            {'text', 'ctxt', 'border', 'warn', 'new_synt'},
+            set(derived_rep_lines.keys()),
+            "\n'ctxt', 'border', 'warn' are defined in the parent class; "
+            "'new_synt' is defined in DerivedPalette; "
+            "'text' is the default present in all palettes"
+        )
+
+        # cleanup global config
         set_global_colors_config(None)
-
-    def test_sh_fmt_method(self):
-        """sh_fmt - converts single argument into ColoredText."""
-
-        # test misc types of arguments the sh_fmt accepts
-        # 1. SHText
-        sample_text = "sample text"
-        ct = sh_fmt(SHText(("NAME", sample_text)))
-        self.assertEqual(ct.plain_text(), sample_text)
-        self.assertNotEqual(str(ct), sample_text)
-
-        # 2. simple string
-        ct = sh_fmt(sample_text)
-        self.assertEqual(ct.plain_text(), sample_text)
-        self.assertEqual(str(ct), sample_text)
-
-        # 3. SHText generator
-        obj_with_shtext_descr = self._DummySHTextGenerator(
-            SHText(("NAME", "usual")),
-            SHText(("CATEGORY", "description")),
-        )
-        ct = sh_fmt(obj_with_shtext_descr)
-        self.assertEqual(ct.plain_text(), "usual\ndescription")
-
-        # 4. other types should be treated as strings
-        x = ("NAME", "name")
-        ct = sh_fmt(x)
-        self.assertIsInstance(ct, ColoredText)
-        # even though the argument looks like a colored chunk argument of SHText,
-        # it should not be interpreted as colored text. It's just a tuple.
-        # So, the result should be '("NAME", "name")' or "('NAME', 'name')"
-        self.assertEqual(ct.plain_text(), str(x))
-
-    def test_sh_print_method(self):
-        """Test sh_print function."""
-
-        # 1. print simple string
-        with io.StringIO() as output:
-            sh_print("sample", file=output)
-            result = output.getvalue()
-        self.assertEqual(result, "sample\n")
-
-        # 2. print SHText object
-        with io.StringIO() as output:
-            sh_print(SHText(("NAME", "test name text")), file=output)
-            result = output.getvalue()
-        self.assertIn("test name text", result)
-        self.assertNotEqual(result, "test name text\n")  # color sequences expected
-
-        # 3. print SHText generator
-        obj_with_shtext_descr = self._DummySHTextGenerator(
-            SHText(("NAME", "usual")),
-            SHText(("CATEGORY", "description")),
-        )
-        with io.StringIO() as output:
-            sh_print(obj_with_shtext_descr, file=output)
-            result = output.getvalue()
-        # obj description consists of 2 lines.
-        # each line ends with '\n'
-        lines = result.split('\n')
-        self.assertEqual(len(lines), 3)
-        self.assertIn("usual", lines[0])
-        self.assertIn("description", lines[1])
-        self.assertEqual(lines[2], "")
-
-        # 4. print several items
-        with io.StringIO() as output:
-            sh_print(
-                "item1",
-                "item2",
-                SHText(("NAME", "name")),
-                obj_with_shtext_descr,
-                SHText(("NUMBER", "25")),
-                file=output)
-            result = output.getvalue()
-
-        plain_text_result = ColoredText.strip_colors(result)
-        # all printed items are separated by ' ', obj_with_shtext_descr
-        # consists of two lines, so the result also consists of two lines
-        expected_text = (
-            "item1 item2 name usual\n"
-            "description 25\n")
-        self.assertEqual(plain_text_result, expected_text)
-
-        # 5. make sure other objects are can be printed
-        # (the same way standard 'print' prints them)
-
-        # 5.1. this item looks like a syntax group of SHText.
-        # But it must not be interpreted as colored text, it should be printed
-        # as a simple tuple.
-        x = ("NAME", "name")
-
-        with io.StringIO() as output:
-            sh_print(x, file=output)
-            result = output.getvalue()
-
-        self.assertEqual(result, f"{x}\n")
-
-        # 5.2. test printing miscellaneous other objects
-
-        items_to_print = [
-            [],
-            {},
-            "text",
-            "",
-            ("NAME", "name"),
-            ("NAME", "name", 5),
-            None,
-            True,
-            False,
-        ]
-
-        with io.StringIO() as output:
-            sh_print(*items_to_print, file=output)
-            result = output.getvalue()
-
-        with io.StringIO() as output:
-            print(*items_to_print, file=output)
-            expected_result = output.getvalue()
-
-        self.assertEqual(result, expected_result)

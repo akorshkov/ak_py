@@ -2,8 +2,8 @@
 
 import unittest
 
-from ak.mcaller import method_attrs, MCaller, PPMehod
-from ak.ppobj import PPObj
+from ak.mcaller import method_attrs, MCaller, PPMethod
+from ak.ppobj import PPWrap
 
 
 class TestMCallerClass(unittest.TestCase):
@@ -21,19 +21,19 @@ class TestMCallerClass(unittest.TestCase):
                 To check that it is properly decorated.
                 """
                 mtd_meta = self.get_mcaller_meta()
-                return PPObj({
+                return PPWrap({
                     "arg": arg, "val": self.val,
                     "auth": mtd_meta.properties['auth']})
 
             @method_attrs(auth="x3x")
             def method_3(self, arg):
-                """Anothe test method.
+                """Another test method.
 
                 To check custom pretty-printing result.
                 """
                 mtd_meta = self.indirect_get_meta()
                 _ = 42
-                return PPMehod({
+                return PPMethod({
                     "arg": arg, "val": self.val,
                     "auth": mtd_meta.properties['auth']
                 }, self._method_3_pprint)
@@ -48,8 +48,8 @@ class TestMCallerClass(unittest.TestCase):
 
             @method_attrs(auth="x6x")
             def method_6(self, arg):
-                """Method with custome _pprint, which is a generator."""
-                return PPMehod(None, self._method_6_pprint)
+                """Method with custom _pprint, which is a generator."""
+                return PPMethod(None, self._method_6_pprint)
 
             def _method_6_pprint(self, result_obj):
                 """should provide custom pretty-printing for 'method_6'"""
@@ -104,7 +104,7 @@ class TestMCallerClass(unittest.TestCase):
         self.assertEqual(raw_result['auth'], "x3x")
 
         # make sure custom pprinter is used
-        repr_str = result.get_pptext()
+        repr_str = str(result)
         self.assertEqual(repr_str, "self repr string")
 
         # 4. check get_mcaller_meta direct call
@@ -122,5 +122,5 @@ class TestMCallerClass(unittest.TestCase):
         # 6. method with generator pprint
         result = tst_obj.method_6(17)
 
-        repr_str = result.get_pptext()
+        repr_str = str(result)
         self.assertEqual("line1\nline2", repr_str)

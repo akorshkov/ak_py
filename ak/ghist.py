@@ -8,9 +8,10 @@ import re
 import threading
 from typing import Iterator
 
-from ak.color import ColorsConfig, SyntaxGroupsUser, SHText
-from ak.ppobj import PPObjBase
+from ak.color import CHText, Palette, ConfColor
+from ak.ppobj import PPObj
 from ak.utils import Timer, Comparable, compare_dictionaries
+
 
 try:
     from git import Repo, SymbolicReference
@@ -1967,75 +1968,56 @@ class ReposCollection:
         return results
 
 
-class GHistReport(PPObjBase):
+class GHistReport(PPObj):
     """Contains the git history report data (for a bug) and formatter.
 
     To print the report simply print this object.
     """
 
+    class GHistPalette(Palette):
+        SYNTAX_DEFAULTS = {
+            # synt_id: default_color
+            'GHIST.REPO': "CYAN:bold",
+            'GHIST.BRANCH': "GREEN:bold",
+            'GHIST.HASH': "YELLOW",
+            'GHIST.HASH_NOT_MERGED': "",
+            'GHIST.COMMIT_TIME': "BLUE",
+            'GHIST.COMMIT_NAME': "GREEN",
+            'GHIST.VERSION': "CYAN",
+            'GHIST.VER_NOT_BUILT': "RED",
+            'GHIST.VER_NOT_MERGED': "RED",
+        }
+        repo = ConfColor('GHIST.REPO')
+        branch = ConfColor('GHIST.BRANCH')
+        hash = ConfColor('GHIST.HASH')
+        hash_not_merged = ConfColor('GHIST.HASH_NOT_MERGED')
+        commit_time = ConfColor('GHIST.COMMIT_TIME')
+        commit_name = ConfColor('GHIST.COMMIT_NAME')
+        version = ConfColor('GHIST.VERSION')
+        ver_not_built = ConfColor('GHIST.VER_NOT_BUILT')
+        ver_not_merged = ConfColor('GHIST.VER_NOT_MERGED')
+
+    PALETTE_CLASS = GHistPalette
+
     def __init__(self, report_data, report_formatter):
         self.data = report_data
         self.report_formatter = report_formatter
 
-    def gen_sh_lines(self) -> Iterator[SHText]:
-        yield from self.report_formatter._gen_sh_lines(self.data)
+    def gen_ch_lines(self, _c) -> Iterator[CHText]:
+        yield from self.report_formatter._gen_ch_lines(self.data, _c)
 
 
-# !!!! combine with SyntaxGroupsUser
-class GHistColorsConfig(ColorsConfig):
-    """Global config of colors used by ghist.
-
-    Syntax names used by ghist reports are very different from standard syntax names,
-    that's why different ColorsConfig class is used.
-
-    Application should call ak.color.set_global_colors_config(c) to register object
-    of this class as global color config.
-    """
-
-    OWN_DFLT_CONFIG = {
-        'GHIST': {
-            'REPO': "CYAN:bold",
-            'BRANCH': "GREEN:bold",
-            'HASH': "YELLOW",
-            'HASH_NOT_MERGED': "",
-            'COMMIT_TIME': "BLUE",
-            'COMMIT_NAME': "GREEN",
-            'VERSION': "CYAN",
-            'VER_NOT_BUILT': "RED",
-            'VER_NOT_MERGED': "RED",
-        }
-    }
-
-    BUILT_IN_CONFIG = {**ColorsConfig.BUILT_IN_CONFIG, **OWN_DFLT_CONFIG}
-
-
-class ReportFormatter(SyntaxGroupsUser):
+class ReportFormatter:
     """Convert report data into syntax-highlited text.
 
     (expects data in the format as produced by ReposCollection.make_reports_data)
     """
 
-    _SYNTAX_GROUPS_NAMES = {
-        'REPO': 'GHIST.REPO',
-        'BRANCH': 'GHIST.BRANCH',
-        'HASH': 'GHIST.HASH',
-        'HASH_NOT_MERGED': 'GHIST.HASH_NOT_MERGED',
-        'COMMIT_TIME': 'GHIST.COMMIT_TIME',
-        'COMMIT_NAME': 'GHIST.COMMIT_NAME',
-        'VERSION': 'GHIST.VERSION',
-        'VER_NOT_BUILT': 'GHIST.VER_NOT_BUILT',
-        'VER_NOT_MERGED': 'GHIST.VER_NOT_MERGED',
-    }
+    def __init__(self):
+        pass
 
-    _CHUNK_SPACE = SHText._Chunk("", " ")
-    _CHUNK_COMMA_SPACE = SHText._Chunk("", ", ")
-
-    def __init__(self, syntax_names=None, syntax_names_prefix=None):
-        self.syntax_names = self.make_syntax_groups_names(
-            syntax_names, syntax_names_prefix)
-
-    def _gen_sh_lines(self, report_data) -> Iterator[SHText]:
-        """Generate report SHText lines for collected report data.
+    def _gen_ch_lines(self, report_data, _c) -> Iterator[CHText]:
+        """Generate report CHText lines for collected report data.
 
         Arguments:
         - report_data: [('component_name', RGraph), ] - properly ordered
@@ -2043,39 +2025,39 @@ class ReportFormatter(SyntaxGroupsUser):
         """
         for repo_id, rgraph in report_data:
             branches = rgraph.branches
-            yield SHText("")
-            yield SHText(
-                ("", "==== repo "),
-                (self.syntax_names['REPO'], repo_id),
-                ("", " ===="),
+            yield CHText(_c.text(""))
+            yield CHText(
+                _c.text("==== repo "),
+                _c.repo(repo_id),
+                _c.text(" ===="),
             )
             for rbranch in branches:
-                yield from self._gen_branch_report(repo_id, rbranch, 0)
+                yield from self._gen_branch_report(repo_id, rbranch, 0, _c)
 
-    def _gen_branch_report(self, repo_id, rbranch, offset) -> Iterator[SHText]:
-        yield SHText.make([
-            self._mk_offset_sh_chunk(offset),
-            SHText._Chunk(self.syntax_names['REPO'], repo_id),
-            SHText._Chunk("", " "),
-            SHText._Chunk(self.syntax_names['BRANCH'], rbranch.branch_name),
-            SHText._Chunk("", ":")])
+    def _gen_branch_report(self, repo_id, rbranch, offset, _c) -> Iterator[CHText]:
+        yield CHText.make([
+            self._mk_offset_sh_chunk(offset, _c),
+            _c.repo(repo_id),
+            _c.text(" "),
+            _c.branch(rbranch.branch_name),
+            _c.text(":")])
         for rbuild in rbranch.get_rbuilds_list():
-            yield from self._gen_rbuild_descr(rbuild, offset+1)
+            yield from self._gen_rbuild_descr(rbuild, offset+1, _c)
 
-    def _gen_rbuild_descr(self, rbuild, offset) -> Iterator[SHText]:
-        # generate ColoredText lines of description of RBuild (including
+    def _gen_rbuild_descr(self, rbuild, offset, _c) -> Iterator[CHText]:
+        # generate CHText lines of description of RBuild (including
         # commits in this build)
 
         # prepare build title line
-        build_title = [self._mk_offset_sh_chunk(offset)]
-        build_title.extend(self._mk_buildnum_descr(rbuild.build_num))
+        build_title = [self._mk_offset_sh_chunk(offset, _c)]
+        build_title.extend(self._mk_buildnum_descr(rbuild.build_num, _c))
 
         commits_merged = not rbuild.build_num.is_fake_not_merged()
 
         if rbuild.rcommit is not None:
             commit = rbuild.rcommit.commit
             t_time = datetime.fromtimestamp(commit.committed_date).isoformat(sep=' ')
-            build_title.append(SHText._Chunk("", f" ({t_time})"))
+            build_title.append(_c.text(f" ({t_time})"))
 
         # build_title now looks like:
         #   10.260.2714 (2022-08-31 17:36:46)
@@ -2085,76 +2067,75 @@ class ReportFormatter(SyntaxGroupsUser):
         incl_at_offset_str = []
         if rbuild.included_at:
             incl_at_offset_str.append(
-                self._mk_offset_sh_chunk(SHText.calc_chunks_len(build_title), 1))
-            incl_at_offset_str.append(SHText._Chunk("", " / "))
-            build_title.append(SHText._Chunk("", " / "))
-            build_title.extend(self._mk_included_at_descr(rbuild.included_at[0]))
-        yield SHText.make(build_title)
+                self._mk_offset_sh_chunk(CHText.calc_chunks_len(build_title), _c, 1))
+            incl_at_offset_str.append(_c.text(" / "))
+            build_title.append(_c.text(" / "))
+            build_title.extend(self._mk_included_at_descr(rbuild.included_at[0], _c))
+        yield CHText.make(build_title)
 
         # yiled remaining lines of 'included_at' section
         for incl_at in rbuild.included_at[1:]:
-            yield SHText.make(
-                incl_at_offset_str + list(self._mk_included_at_descr(incl_at)))
+            yield CHText.make(
+                incl_at_offset_str + list(self._mk_included_at_descr(incl_at, _c)))
 
         for comp_name, bump in rbuild.bumps.items():
-            yield from self._gen_bump_descr(comp_name, bump, offset + 1)
+            yield from self._gen_bump_descr(comp_name, bump, offset + 1, _c)
         for rc in rbuild.get_printable_rcommits():
-            yield from self.gen_commit_descr(rc.commit, commits_merged, offset + 1)
+            yield from self.gen_commit_descr(
+                rc.commit, commits_merged, offset + 1, _c)
 
-    def _mk_buildnum_descr(self, build_num) -> Iterator[SHText._Chunk]:
-        # BuildNumData -> Iterator[SHText._Chunk]
+    def _mk_buildnum_descr(self, build_num, _c) -> Iterator[CHText.Chunk]:
+        # BuildNumData -> Iterator[CHText.Chunk]
         if build_num.is_fake_not_built():
             return [
-                SHText._Chunk(self.syntax_names['VER_NOT_BUILT'], "- not built -")]
+                _c.ver_not_built("- not built -")]
         elif build_num.is_fake_not_merged():
             return [
-                SHText._Chunk(self.syntax_names['VER_NOT_MERGED'], "- not merged -")]
+                _c.ver_not_merged("- not merged -")]
 
-        return [SHText._Chunk(self.syntax_names['VERSION'], str(build_num))]
+        return [_c.version(str(build_num))]
 
-    def _mk_included_at_descr(self, incl_at) -> Iterator[SHText._Chunk]:
+    def _mk_included_at_descr(self, incl_at, _c) -> Iterator[CHText.Chunk]:
         # prepare description of the parent component's build:
         # "parent_repo relese/3.4 10.15.35"
         result = [
-            SHText._Chunk(self.syntax_names['REPO'], incl_at[0]),
-            SHText._Chunk("", " "),
-            SHText._Chunk(self.syntax_names['BRANCH'], incl_at[1]),
-            SHText._Chunk("", " "),
+            _c.repo(incl_at[0]),
+            _c.text(" "),
+            _c.branch(incl_at[1]),
+            _c.text(" "),
         ]
-        result.extend(self._mk_buildnum_descr(incl_at[2]))
+        result.extend(self._mk_buildnum_descr(incl_at[2], _c))
         return result
 
-    def _gen_bump_descr(self, comp_name, bump, offset) -> Iterator[SHText]:
+    def _gen_bump_descr(self, comp_name, bump, offset, _c) -> Iterator[CHText]:
         # generate lines of bump description for a parent component:
         # Example:
         # "      proj_lib=10.20.9<-10.20.7"
         # "      proj_lib1=3.4.5"
-        bump_versions_descr = [
-            SHText._Chunk(self.syntax_names['VERSION'], str(bump.to_buildnum))]
+        bump_versions_descr = [_c.version(str(bump.to_buildnum))]
         if bump.from_build_nums:
-            bump_versions_descr.append(SHText._Chunk("", "<-"))
+            bump_versions_descr.append(_c.text("<-"))
             if len(bump.from_build_nums) == 1:
                 bump_versions_descr.append(
-                    SHText._Chunk(
-                        self.syntax_names['VERSION'], str(bump.from_build_nums[0])))
+                    _c.version(str(bump.from_build_nums[0])))
             else:
-                bump_versions_descr.append(SHText._Chunk("", "["))
+                bump_versions_descr.append(_c.text("["))
                 is_first = True
                 for bn in bump.from_build_nums:
                     if is_first:
                         is_first = False
                     else:
-                        bump_versions_descr.append(self._CHUNK_COMMA_SPACE)
-                    bump_versions_descr.append(SHText._Chunk("", str(bn)))
-                bump_versions_descr.append(SHText._Chunk("", "]"))
-        result = [self._mk_offset_sh_chunk(offset + 1)]
-        result.append(SHText._Chunk(self.syntax_names['REPO'], comp_name))
-        result.append(SHText._Chunk("", "="))
+                        bump_versions_descr.append(_c.text(", "))
+                    bump_versions_descr.append(_c.text(str(bn)))
+                bump_versions_descr.append(_c.text("]"))
+        result = [self._mk_offset_sh_chunk(offset + 1, _c)]
+        result.append(_c.repo(comp_name))
+        result.append(_c.text("="))
         result.extend(bump_versions_descr)
-        yield SHText.make(result)
+        yield CHText.make(result)
 
-    def gen_commit_descr(self, commit, merged, offset) -> Iterator[SHText]:
-        """Generate ColoredText lines of a single commit descripiton."""
+    def gen_commit_descr(self, commit, merged, offset, _c) -> Iterator[CHText]:
+        """Generate CHText lines of a single commit descripiton."""
         author_name = str(commit.author.name)
         if len(author_name) > 18:
             author_name = author_name[:18]
@@ -2162,21 +2143,19 @@ class ReportFormatter(SyntaxGroupsUser):
             author_name = f"{author_name:18}"
         t_message = commit.message.split('\n')[0].strip()
 
-        yield SHText.make([
-            SHText._Chunk(
-                self.syntax_names['HASH' if merged else 'HASH_NOT_MERGED'],
-                commit.hexsha[:11]),
-            self._CHUNK_SPACE,
-            SHText._Chunk(
-                self.syntax_names['COMMIT_TIME'],
+        hash_color = _c.hash if merged else _c.hash_not_merged
+        yield CHText.make([
+            hash_color(commit.hexsha[:11]),
+            _c.text(" "),
+            _c.commit_time(
                 datetime.fromtimestamp(commit.committed_date).isoformat(sep=' ')),
-            self._CHUNK_SPACE,
-            SHText._Chunk(self.syntax_names['COMMIT_NAME'], author_name),
-            SHText._Chunk("", t_message),
+            _c.text(" "),
+            _c.commit_name(author_name),
+            _c.text(t_message),
         ])
 
-    def _mk_offset_sh_chunk(self, offset, _step=2) -> SHText._Chunk:
-        return SHText._Chunk("", " " * (offset * _step))
+    def _mk_offset_sh_chunk(self, offset, _c, _step=2) -> CHText.Chunk:
+        return _c.text(" " * (offset * _step))
 
 
 def find_commit_chain(from_commit, to_commit, except_commit=None):

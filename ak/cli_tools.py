@@ -23,9 +23,6 @@ Minimal usage example:
             'TABLE': {'BORDER': 'CYAN:bold'},
         }
     )  # configures colors and logging
-
-    # use it to create Palette objects:
-    colors_conf = ak.color.get_global_colors_config()
 """
 
 import sys
