@@ -1,22 +1,22 @@
 """Methods for printing colored text.
 
-ColoredText - objects of this class are string-like objects, which can be
+CHText - objects of this class are string-like objects, which can be
     converted to usual strings, containing color escape sequences.
     One of the problems with raw strings with escape sequences is that
     the length of the string is different from the number of printed
     characters. As a result it's not possible to use 'width' format
     specifier when formatting such strings.
-    ColoredText objects can be printed using format specifiers.
+    CHText objects can be printed using format specifiers.
 
-SHText - source data for ColoredText construction, it doesn't know
+SHText - source data for CHText construction, it doesn't know
     actual color of parts of text, but only names of syntaxes.
-    Preferred way to create ColoredText is to create SHText and
-    convert it to ColoredText using Palette.
+    Preferred way to create CHText is to create SHText and
+    convert it to CHText using Palette.
 
-ColorFmt - produces simple (mono-colored) ColoredText objects.  !!!!
+ColorFmt - produces simple (mono-colored) CHText objects.  !!!!
 
 Palette - contains mapping {'syntax_type': ColorFmt} and produces
-    ColoredText objects from SHText.
+    CHText objects from SHText.
 
 ColorsConfig - supposed to contain global colors configuration for the whole
     application (so that it would be possible to configure all coloring in
@@ -32,7 +32,7 @@ PaletteUser - may be used as a base for classes which create own Palette
 
 ColorBytes - analog of ColorFmt, but for bytes.
     Both ColorFmt and ColorBytes produce a single mono-colored chunk, but
-    - ColorFmt produces ColoredText - object which supports formatting and
+    - ColorFmt produces CHText - object which supports formatting and
       can be converted to str
     - ColorBytes produces simple bytes.
 
@@ -358,7 +358,7 @@ class _CTText:
 class SHText(_CTText):
     """Syntax-Highlighted text.
 
-    Direct creation of ColoredText in application code may be inconvenient
+    Direct creation of CHText in application code may be inconvenient
     bacause actual colors to be used depend on configuration and not
     not be easily available.
 
@@ -399,7 +399,7 @@ class SHText(_CTText):
         return part
 
 
-class ColoredText(_CTText):
+class CHText(_CTText):
     """Colored text. Consists of several mono-colored parts."""
 
     __slots__ = tuple()
@@ -437,7 +437,7 @@ class ColoredText(_CTText):
 
     @classmethod
     def _make_chunk(cls, color_prefix, text, color_suffix):
-        # Construct 'single-chunk' ColoredText with explicit escape sequences.
+        # Construct 'single-chunk' CHText with explicit escape sequences.
         return cls._Chunk(color_prefix, text, color_suffix)
 
     def __str__(self):
@@ -469,7 +469,7 @@ class ColoredText(_CTText):
                 # last character is format type. Only 's' is supported.
                 if last_ch != 's':
                     raise ValueError(
-                        f"Can't format ColoredText object: "
+                        f"Can't format CHText object: "
                         f"invalid format type '{last_ch}' specified")
                 format_spec = format_spec[:-1]
 
@@ -493,7 +493,7 @@ class ColoredText(_CTText):
                 width = int(width_part)
             except ValueError as err:
                 raise ValueError(
-                    f"Can't format ColoredText object: "
+                    f"Can't format CHText object: "
                     f"invalid width '{width_part}' specified"
                 ) from err
 
@@ -660,13 +660,13 @@ class ColorFmt:
             cls._NO_COLOR = cls(None)
         return cls._NO_COLOR
 
-    def __call__(self, text) -> ColoredText:
-        """text -> colored text (ColoredText object)."""
-        return ColoredText(self.ch_chunk(text))
+    def __call__(self, text) -> CHText:
+        """text -> colored text (CHText object)."""
+        return CHText(self.ch_chunk(text))
 
-    def ch_chunk(self, text) -> ColoredText._Chunk:
+    def ch_chunk(self, text) -> CHText._Chunk:
         """ !!! """
-        return ColoredText._make_chunk(self._color_prefix, text, self._color_suffix)
+        return CHText._make_chunk(self._color_prefix, text, self._color_suffix)
 
 class ColorBytes:
     """Objects of this class produce bytes with color sequences."""
@@ -729,15 +729,15 @@ class Palette:
         """same behavior as get_color method"""
         return self.get_color(index)
 
-    def __call__(self, *items) -> ColoredText:
-        """Produce multi-colored ColoredText.
+    def __call__(self, *items) -> CHText:
+        """Produce multi-colored CHText.
 
         Arguments:
         - items: each item me be
           - plain text
           - SHText
           - ('syntax_name', 'text')
-          - ColoredText
+          - CHText
         """
         result = ColorFmt.get_plaintext_fmt()('')
         for item in items:
@@ -746,8 +746,8 @@ class Palette:
 
     def _item_to_colored_text(self, item):
         # process single item of __call__
-        # produce item, which can be used to construct ColoredText
-        if isinstance(item, ColoredText):
+        # produce item, which can be used to construct CHText
+        if isinstance(item, CHText):
             return item
         if isinstance(item, SHText):
             return [
@@ -766,10 +766,8 @@ class Palette:
 
 _COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
 _GLOBAL_PALETTE = None
-# _GLOBAL_COLORS_CONTEXT = None
 
 
-# !!! remove it. Use get context instead !!!
 def get_global_colors_config():
     """Get global ColorsConfig"""
     global _COLORS_CONFIG
@@ -783,10 +781,6 @@ def set_global_colors_config(colors_config, no_color=False):
     global _COLORS_CONFIG, _GLOBAL_COLORS_CONTEXT, _GLOBAL_PALETTE
     _COLORS_CONFIG = colors_config
     _GLOBAL_PALETTE = None
-#    if colors_config is None:
-#        _GLOBAL_COLORS_CONTEXT = None
-#    else:
-#        _GLOBAL_COLORS_CONTEXT = ColorsContext(None, colors_config, no_color)
 
 
 # !!!! looks like it's not required. Or is it?
@@ -796,17 +790,6 @@ def get_global_palette():
     if _GLOBAL_PALETTE is None:
         _GLOBAL_PALETTE = get_global_colors_config().get_palette()
     return _GLOBAL_PALETTE
-
-
-#def get_global_colors_context():
-#    global _GLOBAL_COLORS_CONTEXT
-#    if _GLOBAL_COLORS_CONTEXT is None:
-#        _GLOBAL_COLORS_CONTEXT = ColorsContext(
-#            None,
-#            get_global_colors_config(),
-#            False)
-#    return _GLOBAL_COLORS_CONTEXT
-
 
 
 class SyntaxColor:
@@ -1137,22 +1120,11 @@ class ColorsConfig:
     BUILT_IN_CONFIG = {
         "TEXT": "",  # default text settings
         "NAME": "GREEN:bold",
-#        "ATTR": "YELLOW",  # !!!!
-#        "FUNC_NAME": "BLUE",  # !!!!
-#        "TAG": "GREEN",  # !!!!
-#        "CATEGORY": "MAGENTA",  # !!!!
         "KEYWORD": "BLUE:bold",
         "NUMBER": "YELLOW",
         "OK": "GREEN:bold",
         "WARN": "RED",
         "ERROR": "RED:bold",
-#        "TABLE": {   !!!!!
-#            "BORDER": "GREEN",
-#            "COL_TITLE": "GREEN:bold",
-#            "NUMBER": "NUMBER",
-#            "KEYWORD": "KEYWORD",
-#            "WARN": "WARN",
-#        },
     }
 
     __slots__ = (
@@ -1457,94 +1429,6 @@ class ColorsConfig:
             yield str(colored_text)
 
 
-#class ColorsContext:
-#    """!!! """
-#
-#    def __init__(
-#        self, parent_context=None, colors_conf=None, no_color=None,
-#        alt_syntaxes_map=None,
-#    ):
-#        assert parent_context is None or colors_conf is None, (
-#            f"both 'parent_context' and 'colors_conf' args specified")
-#        assert parent_context is not None or colors_conf is not None, (
-#            f"neither 'parent_context' nor 'colors_conf' arg specified")
-#
-#        if parent_context is not None:
-#            self.parent_context = parent_context
-#            self.colors_conf = parent_context.colors_conf
-#        else:
-#            self.parent_context = None
-#            self.colors_conf = colors_conf
-#
-#        self.no_color = no_color
-#        self.local_pallettes_map = {}
-#        self.alt_syntaxes_map = alt_syntaxes_map or {}
-#
-#        for local_palette_class, alt_syntax in self.alt_syntaxes_map.items():
-#            assert alt_syntax is None or isinstance(alt_syntax, (dict, LocalPalette))
-#
-#    @classmethod
-#    def make(cls, parent_context, no_color, alt_syntaxes_map):
-#
-#        if parent_context is None:
-#            parent_context = get_global_colors_context()
-#
-#        if no_color is None or parent_context.no_color:
-#            # can't use colors if the parent is no_color
-#            no_color = parent_context.no_color
-#
-#        if no_color == parent_context.no_color and not alt_syntaxes_map:
-#            # there is no differences in the new context. Can use the old one
-#            return parent_context
-#
-#        return cls(parent_context, no_color, alt_syntaxes_map)
-#
-#    def get_local_palette(self, local_palette_class):
-#        """ !!!! """
-#        assert isinstance(local_palette_class, type), (
-#            f"LocalPalette-derived class is expected, got "
-#            f"{type(local_palette_class)} {local_palette_class}")
-#        result = self.local_pallettes_map.get(local_palette_class)
-#        if result is not None:
-#            return result
-#
-#        alt_syntax = self.alt_syntaxes_map.get(local_palette_class)
-#        if (
-#            alt_syntax is None
-#            and self.parent_context is not None
-#            and self.no_color == self.parent_context.no_color
-#        ):
-#            # There is no alt_syntax for our palette class in this context
-#            # Get the local_palette from the parent
-#            result = self.parent_context.get_local_palette(local_palette_class)
-#        elif isinstance(alt_syntax, LocalPalette):
-#            result = alt_syntax.make(self.colors_conf, self.no_color, None)
-#        else:
-#            assert alt_syntax is None or isinstance(alt_syntax, dict)
-#            result = local_palette_class.make(
-#                self.colors_conf, self.no_color, alt_syntax)
-#
-#        self.local_pallettes_map[local_palette_class] = result
-#        return result
-#
-##    def get_onetime_local_palette(
-##        self, local_palette_class, no_color, alt_local_syntax,
-##    ):
-##        """!!!!  this is one-time, probably no caching """
-##        if self.no_color or no_color is None:
-##            no_color = self.no_color
-##        if no_color == self.no_color and not alt_local_syntax:
-##            return self.get_local_palette(local_palette_class)
-##
-##        if isinstance(alt_local_syntax, LocalPalette):
-##            result = alt_local_syntax.make(self.colors_conf, self.no_color, None)
-##        else:
-##            assert alt_local_syntax is None or isinstance(alt_local_syntax, dict)
-##            result = local_palette_class.make(
-##                self.colors_conf, self.no_color, alt_syntas)
-##        return result
-
-
 class LocalPaletteUser:
     """Class which use LocalPalette to produce colored text.
 
@@ -1564,27 +1448,9 @@ class LocalPaletteUser:
 
         return cls.LOCAL_PALETTE_CLASS.make(colors_conf, no_color, alt_local_palette)
 
-#        return colors_context.get_onetime_local_palette(
-#            cls.LOCAL_PALETTE_CLASS, no_color, alt_local_palette)
 
-#    @classmethod
-#    def _mk_context_and_local_palette(
-#        cls, colors_context, no_color, alt_local_palette,
-#    ):
-#        # !!!!
-#        assert cls.LOCAL_PALETTE_CLASS is not None, (
-#            f"'LOCAL_PALETTE_CLASS' is not implemented in {srt(cls)}")
-#        my_colors_context = ColorsContext.make(
-#            colors_context, no_color, alt_local_palette)
-#        return (
-#            my_colors_context,
-#            my_colors_context.get_local_palette(cls.LOCAL_PALETTE_CLASS)
-#        )
-
-
-
-def sh_fmt(arg, *, palette=None) -> ColoredText:
-    """Convert an argument to ColoredText using global colors config.
+def sh_fmt(arg, *, palette=None) -> CHText:
+    """Convert an argument to CHText using global colors config.
 
     Arguments:
     - arg: can be either
@@ -1605,8 +1471,8 @@ def sh_fmt(arg, *, palette=None) -> ColoredText:
     return palette(str(arg))
 
 
-def sh_lines_fmt(sh_lines, palette=None) -> Iterator[ColoredText]:
-    """Convert multiple SHText into ColoredText objects using global colors config."""
+def sh_lines_fmt(sh_lines, palette=None) -> Iterator[CHText]:
+    """Convert multiple SHText into CHText objects using global colors config."""
     if palette is None:
         palette = get_global_palette()
     for sh_text in sh_lines:
@@ -1661,7 +1527,7 @@ class ConfColor:
     def __init__(self, synt_id):
         self.synt_id = synt_id
 
-    def __call__(self, text) -> ColoredText._Chunk:
+    def __call__(self, text) -> CHText._Chunk:
         assert False
 
 
@@ -1725,9 +1591,6 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
     # init rules of the new global syntaxes introduced by this class
     SYNTAX_DEFAULTS = None  # {synt_id: default_color}
 
-#    # map of the internal syntax identifiers to syntax ids used in the global config
-#    LOCAL_SYNTAX = None  # {local_synt_id: synt_id}
-
     # ready to use palette objects
     _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
 
@@ -1741,7 +1604,6 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
         Argument:
         - local_colors: {local_synt_id: (synt_id, color_fmt)}
         """
-        # assert self.LOCAL_SYNTAX is not None, f"declare it in {str(type(self))}"
         assert self._LOCAL_SYNTAX.keys() == local_colors.keys()
 
         # !!!!!!
@@ -1800,52 +1662,6 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
 
         return local_palette
 
-
-
-
-
-        # !!!! rewrite everyting else. No caching here !!!!
-
-#        # the local palette may be already in cache
-#        if alt_local_syntax is not None:
-#            assert all(
-#                isinstance(local_synt_id, str)
-#                for local_synt_id in alt_local_syntax.keys()
-#            ), f"all keys of alt_local_syntax must be strings: \n{alt_local_syntax}"
-#            assert all(
-#                isinstance(local_synt_id, str)
-#                for local_synt_id in alt_local_syntax.values()
-#            ), f"all calues of alt_local_syntax must be strings: \n{alt_local_syntax}"
-#            unexpected_ids = alt_local_syntax.keys() - cls.LOCAL_SYNTAX.keys()
-#            assert not unexpected_ids, (
-#                f"{alt_local_syntax=} contains unexpected local syntax ids: "
-#                f"{sorted(unexpected_ids)}. These ids are not present in "
-#                f"{str(cls)}.LOCAL_SYNTAX")
-#            cache_key = (
-#                cls,
-#                tuple(sorted(alt_local_syntax.items()))
-#            )
-#        else:
-#            cache_key = (cls, None)
-#
-#        cached_palette = colors_conf.get_cached_obj(cache_key)
-#        if cached_palette is not None:
-#            return cached_palette
-#
-#        if alt_local_syntax is not None:
-#            local_syntax = {**cls.LOCAL_SYNTAX, **alt_local_syntax}
-#        else:
-#            local_syntax = cls.LOCAL_SYNTAX
-#
-#        local_palette = cls({
-#            local_synt_id: (synt_id, colors_conf.get_color(synt_id).ch_chunk)
-#            for local_synt_id, synt_id in local_syntax.items()
-#        })
-#
-#        colors_conf.put_into_cache(cache_key, local_palette)
-#
-#        return local_palette
-
     @classmethod
     def get_no_color_palette(cls):
         """!!!"""
@@ -1866,7 +1682,7 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
     def make_report(self) -> str:
         """Create colored report of self."""
         return "\n".join(
-            f"{local_synt_id}: {ColoredText(color_fmt(synt_id))}"
+            f"{local_synt_id}: {CHText(color_fmt(synt_id))}"
             for local_synt_id, (synt_id, color_fmt)
             in sorted(self.local_colors.items())
         )

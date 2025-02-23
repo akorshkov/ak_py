@@ -8,7 +8,7 @@ import json
 import logging
 
 from ak.ghist import ProjectRepo, ReposCollection, BuildNumData
-from ak.color import ColoredText
+from ak.color import CHText
 from ak.logtools import logs_configure
 
 from .mock_git import MockedGitRepo
@@ -28,7 +28,7 @@ class CommitsCheckerMixin:
             print_result = output.getvalue()
 
         # make sure there are no trailing spaces
-        plain_text = ColoredText.strip_colors(print_result)
+        plain_text = CHText.strip_colors(print_result)
         for i, line in enumerate(plain_text.split("\n")):
             self.assertFalse(
                 line.endswith(" "),

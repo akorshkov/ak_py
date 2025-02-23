@@ -8,7 +8,6 @@ from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
 from ak import ppobj
 from ak.ppobj import PPTableFieldType, PPTable
-from ak.color import SHText
 
 from .test_ppobj import verify_table_format
 

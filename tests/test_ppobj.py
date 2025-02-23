@@ -4,13 +4,10 @@ import unittest
 import io
 from collections import namedtuple
 
-from ak.color import ColoredText, SHText, sh_print
+from ak.color import CHText, sh_print
 from ak import ppobj
 from ak.ppobj import PrettyPrinter, pp
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
-
-
-CHText = ColoredText
 
 
 #########################
@@ -21,7 +18,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def _verify_format(self, text):
         # perform some common checks of the json-looing obj printing result
-        plain_text = ColoredText.strip_colors(text)
+        plain_text = CHText.strip_colors(text)
         lines = [s.lstrip() for s in plain_text.split("\n")]
         for i, line in enumerate(lines):
             self.assertNotIn(
@@ -48,7 +45,7 @@ class TestPrettyPrinter(unittest.TestCase):
         self.assertIn("some_name", s)
         self.assertIn("42", s)
 
-        plain_text = ColoredText.strip_colors(s)
+        plain_text = CHText.strip_colors(s)
         self.assertIn('"a": 1', plain_text)
 
     def test_printing_notjson(self):
@@ -80,7 +77,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
         self._verify_format(s)
 
-        plain_text = ColoredText.strip_colors(s)
+        plain_text = CHText.strip_colors(s)
         self.assertIn('"ccc": 80', plain_text)
 
     def test_ppobj_long_list(self):
@@ -113,7 +110,7 @@ class TestPrettyPrinter(unittest.TestCase):
         self.assertIn("101", s)
         self.assertIn("301", s)
 
-        plain_text = ColoredText.strip_colors(s)
+        plain_text = CHText.strip_colors(s)
         # test formatting of the long list values.
         # The values in the "oitems" list will be printed on several lines.
         # This test does not care how exactly all the items are splitte into lines.
@@ -205,7 +202,7 @@ def verify_table_format(
     Total 4 records  <- including trailing spaces here
     """
     orig_ttext = table if isinstance(table, str) else str(table)
-    ttext = ColoredText.strip_colors(orig_ttext)
+    ttext = CHText.strip_colors(orig_ttext)
 
     if is_colored is not None:
         table_is_colored = ttext != orig_ttext

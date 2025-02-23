@@ -15,9 +15,7 @@ python's concole scope.
 import inspect
 from typing import Iterator
 
-from ak.color import LocalPalette, LocalPaletteUser, ColoredText, sh_lines_fmt, ConfColor
-
-CHText = ColoredText
+from ak.color import LocalPalette, LocalPaletteUser, CHText, sh_lines_fmt, ConfColor
 
 
 #########################
@@ -51,12 +49,11 @@ class LLImpl(LocalPaletteUser):
         - locals_dict: dictionary of console's locals
         """
         self.locals_dict = locals_dict
-        #self.syntax_names = self.make_syntax_groups_names(None, None)
         self._c = self._mk_local_palette(None, None, None)
 
     # !!! rename
     def gen_sh_lines(self) -> Iterator[CHText]:
-        # generate lines (SHText values) which make a summary of
+        # generate lines (CHText values) which make a summary of
         # variables in self.locals_dict
 
         # each category has list of items with description and list of
@@ -168,7 +165,6 @@ class HCommand(LocalPaletteUser):
     LOCAL_PALETTE_CLASS = HCmdLocalPalette
 
     def __init__(self, dets_level=_LEVEL_H):
-        #self.syntax_names = self.make_syntax_groups_names(None, None)  !!!!
         self.dets_level = dets_level
         self._c = self._mk_local_palette(None, None, None)
 
@@ -216,7 +212,6 @@ class HDocItem:
             that self is obj._h_doc
         - filt: some object which can be specified to modify generated help text.
             Processing of this object may be implemented in derived classes.
-        - syntax_names: syntax names to be used !!!!!
         - dets_level: details level.
         - fmt_oneline: henerate one-line help.
         """
@@ -386,8 +381,6 @@ class HDocItemFunc(HDocItem):
         'main_tag',  # the first tag (or 'misc' if no tags present)
         'tags',  # list of all tags
     )
-
-    # _CHUNK_SPACE_HASHSYMBOL = SHText._Chunk("",) !!!!!
 
     def __init__(self, func, func_name, doc_string, hidden=False):
         """HDocItemFunc - 'h' metadata about a single function/method.

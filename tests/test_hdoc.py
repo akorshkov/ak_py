@@ -3,10 +3,8 @@
 import unittest
 from collections import namedtuple
 
-from ak.color import ColoredText
+from ak.color import CHText
 from ak.hdoc import HCommand, HDocItemFunc, BoundMethodNotes, h_doc
-
-CHText = ColoredText
 
 
 class TestHDocItemFunc(unittest.TestCase):

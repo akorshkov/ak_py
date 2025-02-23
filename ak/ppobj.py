@@ -11,9 +11,7 @@ from collections.abc import Iterable
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import ColoredText, sh_lines_fmt, LocalPalette, CompoundPalette, LocalPaletteUser, ConfColor
-
-CHText = ColoredText
+from ak.color import CHText, sh_lines_fmt, LocalPalette, CompoundPalette, LocalPaletteUser, ConfColor
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
 CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
@@ -38,24 +36,14 @@ class PrettyPrinter(LocalPaletteUser):
 
     LOCAL_PALETTE_CLASS = PPLocalPalette
 
-    def __init__(
-        self, *, fmt_json=False, syntax_names=None, syntax_names_prefix=None,
-    ):
+    def __init__(self, *, fmt_json=False):
         """Create PrettyPrinter for printing json-like objects.
 
         Arguments:
         - fmt_json: if True generate output in json form, else - in python form.
             The difference is in value of constans only ('true' vs 'True', etc.)
-        - syntax_names: (optional) dictionary { item_type: syntax_group_name }
-        - syntax_names_prefix: (optional) if specified
         """
         self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
-
-        #syntax_names = self.make_syntax_groups_names(
-        #    syntax_names, syntax_names_prefix)
-        #self.name_syntax_id = syntax_names["NAME"]
-        #self.number_syntax_id = syntax_names["NUMBER"]
-        #self.keyword_syntax_id = syntax_names["KEYWORD"]
 
     def __call__(self, obj_to_print) -> CHText:
         """obj_to_print -> Pretty-Printable object.
@@ -72,17 +60,16 @@ class PrettyPrinter(LocalPaletteUser):
         """Generate lines of colored text - pretty representation of the object."""
         local_palette = self._mk_local_palette(
             colors_config, no_color, alt_local_palette)
-        yield from self._gen_sh_lines(local_palette, obj_to_print)
+        yield from self._gen_ch_lines(local_palette, obj_to_print)
 
-    # rename !!!!
-    def _gen_sh_lines(self, colors, obj_to_print) -> Iterator[CHText]:
+    def _gen_ch_lines(self, colors, obj_to_print) -> Iterator[CHText]:
         """obj_to_print -> CHText objects.
 
         Each CHText corresponds to one line of the result.
         """
         line_chunks = []
 
-        for chunk in self._gen_sh_chunks_for_obj(colors, obj_to_print, offset=0):
+        for chunk in self._gen_ch_chunks_for_obj(colors, obj_to_print, offset=0):
             if chunk is None:
                 # indicator of the new line
                 yield CHText.make(line_chunks)
@@ -97,14 +84,13 @@ class PrettyPrinter(LocalPaletteUser):
         """obj_to_print -> pretty string."""
         return "\n".join(self.gen_pplines(obj_to_print))
 
-    # rename !!!!
-    def _gen_sh_chunks_for_obj(
+    def _gen_ch_chunks_for_obj(
         self, _c: PPLocalPalette, obj_to_print, offset=0,
     ) -> Iterator[CHText._Chunk]:
         # generate parts for colored text result
 
         if self._value_is_simple(obj_to_print):
-            yield self._simple_val_to_sh_chunk(_c, obj_to_print)
+            yield self._simple_val_to_ch_chunk(_c, obj_to_print)
         elif isinstance(obj_to_print, dict):
             sorted_keys = sorted(
                 obj_to_print.keys(), key=self._mk_type_sort_value
@@ -118,9 +104,9 @@ class PrettyPrinter(LocalPaletteUser):
                         chunks.append(_c.no_color(", "))
                     else:
                         is_first = False
-                    chunks.append(self._dict_key_to_sh_chunk(_c, key))
+                    chunks.append(self._dict_key_to_sc_chunk(_c, key))
                     chunks.append(_c.no_color(": "))
-                    chunks.append(self._simple_val_to_sh_chunk(
+                    chunks.append(self._simple_val_to_ch_chunk(
                         _c, obj_to_print[key]))
                 chunks.append(_c.no_color("}"))
                 scr_len = CHText.calc_chunks_len(chunks)
@@ -141,9 +127,9 @@ class PrettyPrinter(LocalPaletteUser):
                     yield _c.no_color(",")
                 yield None
                 yield prefix
-                yield self._dict_key_to_sh_chunk(_c, key)
+                yield self._dict_key_to_sc_chunk(_c, key)
                 yield _c.no_color(": ")
-                yield from self._gen_sh_chunks_for_obj(
+                yield from self._gen_ch_chunks_for_obj(
                     _c, obj_to_print[key], offset+2)
             yield None
             yield _c.no_color(" " * offset + "}")
@@ -151,7 +137,7 @@ class PrettyPrinter(LocalPaletteUser):
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print values in one line
                 items_chunks = [
-                    self._simple_val_to_sh_chunk(_c, item)
+                    self._simple_val_to_ch_chunk(_c, item)
                     for item in obj_to_print
                 ]
                 scr_len = (
@@ -214,7 +200,7 @@ class PrettyPrinter(LocalPaletteUser):
                         yield _c.no_color(",")
                     yield None
                     yield prefix
-                    yield from self._gen_sh_chunks_for_obj(_c, item, offset+2)
+                    yield from self._gen_ch_chunks_for_obj(_c, item, offset+2)
                 yield None
                 yield _c.no_color(" " * offset + "]")
         else:
@@ -237,8 +223,7 @@ class PrettyPrinter(LocalPaletteUser):
             return False
         return True
 
-    # !!! rename
-    def _simple_val_to_sh_chunk(self, _c: PPLocalPalette, value) -> CHText._Chunk:
+    def _simple_val_to_ch_chunk(self, _c: PPLocalPalette, value) -> CHText._Chunk:
         # simple value (number, string, built-in constant) -> CHText._Chunk
         if isinstance(value, str):
             return _c.no_color('"' + value + '"')
@@ -254,8 +239,7 @@ class PrettyPrinter(LocalPaletteUser):
             return _c.no_color("[]")
         assert False, f"value {value} is not simple"
 
-    # !!! rename
-    def _dict_key_to_sh_chunk(self, _c: PPLocalPalette, key) -> CHText._Chunk:
+    def _dict_key_to_sc_chunk(self, _c: PPLocalPalette, key) -> CHText._Chunk:
         # !!!
         key_str = '"' + key + '"' if isinstance(key, str) else str(key)
         return _c.name(key_str)
@@ -284,36 +268,6 @@ class PrettyPrinter(LocalPaletteUser):
         return any(value is keyword for keyword in [True, False, None])
 
 
-# !!!!! remove this class
-#class PPObjBase(SyntaxGroupsUser):
-#    """Base class for pretty-printable objects.
-#
-#    PPobj is an object, whose __repr__ method prints (colored) representation
-#    of some data. The data itself is available in .r attribute of the object.
-#
-#    Misc methods which are supposed to be used in python console return not
-#    a raw data, but PPobj.
-#    """
-#
-#    def gen_sh_lines(self) -> Iterator[SHText]:
-#        """Generate SHText lines of PPObj representation."""
-#        yield from []
-#        raise NotImplementedError
-#
-#    def gen_pplines(self) -> Iterator[str]:
-#        """Generate lines of PPObj representation."""
-#        yield from sh_lines_fmt(self.gen_sh_lines())
-#
-#    def get_pptext(self):
-#        """Return string - PPObj representation."""
-#        return "\n".join(str(s) for s in self.gen_pplines())
-#
-#    def __str__(self):
-#        # do not remove it! Without this method the str(obj) will call
-#        # __repr__ which prints text immediately
-#        return self.get_pptext()
-
-
 class _PPObjBase(LocalPaletteUser):
     """Base class for pretty-printable objects.
 
@@ -323,7 +277,7 @@ class _PPObjBase(LocalPaletteUser):
 
     The '__str__' method of the PPObj produces the colored text: string with color
     escape sequences. But the string with escape sequences is not convenient to
-    work with: the length of the string is not equal to othe number of printable
+    work with: the length of the string is not equal to the number of printable
     characters.
 
     PPObj should implement two methods:
@@ -333,6 +287,8 @@ class _PPObjBase(LocalPaletteUser):
     CHText object keeps track of printable and not-printable
     characters, so that it is possible to use it in f-strings with width format
     specifiers.
+
+    !!!!!!!!
 
     Arguments of these methods allow to get information about colors configuraions
     from application config. Check LocalPaletteUser class for more information.
@@ -408,71 +364,8 @@ class PPObj(_PPObjBase):
         yield from []
         raise NotImplementedError(f"'gen_ch_lines' not implemented in '{type(self)}'")
 
-
-#class PPObjDeep(_PPObjBase):
-#    """Implementation of a more complicated case of PPObj.
-#
-#    To be used if the object of this class contains some parts which use different
-#    local palettes (compare with class PPObj). For example, table contains enum
-#    values. The enum may use it's own LocalPalette class. The information about
-#    table's own local palette is not sufficient.
-#
-#    """
-#
-#    def ch_text(
-#        self, *, colors_context=None, no_color=False, alt_local_palette=None,
-#    ) -> CHText:
-#        """!!!"""
-#        new_context, local_palette = self._mk_context_and_local_palette(
-#            colors_context, no_color, alt_local_palette)
-#        return self.make_ch_text(new_context, local_palette)
-#
-#    def ch_lines(
-#        self, *, colors_context=None, no_color=False, alt_local_palette=None,
-#    ) -> Iterator[CHText]:
-#        """ !!! """
-#        new_context, local_palette = self._mk_context_and_local_palette(
-#            colors_context, no_color, alt_local_palette)
-#        yield from self.gen_ch_lines(new_context, local_palette)
-#
-#    def make_ch_text(self, colors_context, local_palette) -> CHText:
-#        """ """
-#        try:
-#            return CHText("\n").join(self.gen_ch_lines(colors_context, local_palette))
-#        except NotImplementedError as err:
-#            if 'gen_ch_lines' not in str(err):
-#                raise
-#
-#        raise NotImplementedError(f"'ch_text' not implemented in '{type(self)}'")
-#
-#    def gen_ch_lines(self, colors_context, local_palette) -> Iterator[CHText]:
-#        """!!!"""
-#        yield from []
-#        raise NotImplementedError(f"'gen_ch_lines' not implemented in '{type(self)}'")
-
-
 # ready to use PrettyPrinter with default configuration
 pp = PrettyPrinter()
-
-
-# !!!!! remove it
-#class PrettyPrintResult(PPObjBase):
-#    """Pretty-Printable object produced by PrettyPrinter call.
-#
-#    This object can be converted to string and printed using either standard 'print'
-#    method or ak.color.sh_print method. By default global color config is used
-#    to convert names of the syntax items (produced by the PrettyPrinter) into
-#    color sequences of the finally printed text.
-#    """
-#    __slots__ = 'pretty_printer', 'obj_to_print'
-#
-#    def __init__(self, pretty_printer, obj_to_print):
-#        self.pretty_printer = pretty_printer
-#        self.obj_to_print = obj_to_print
-#
-#    def gen_sh_lines(self) -> Iterator[SHText]:
-#        """Generate SHText lines of PPObj representation."""
-#        yield from self.pretty_printer._gen_sh_lines(self.obj_to_print)
 
 
 #########################
@@ -525,13 +418,6 @@ class PPWrap(PPObj):
             alt_local_palette=alt_local_palette,
         )
 
-    #    def gen_pplines(self) -> Iterable[CHText]:
-    #        yield from self._PPRINTER._gen_pplines(
-    #
-    #    def gen_sh_lines(self) -> Iterator[SHText]:
-    #        """Generate SHText lines - repr of the self.r object."""
-    #        yield from sh_lines_fmt(self._PPRINTER._gen_sh_lines(self.r))
-
 
 #########################
 # PPTable
@@ -561,23 +447,6 @@ class PPTable(PPObj):
         keyword = ConfColor('TABLE.KEYWORD')
         warn = ConfColor('TABLE.WARN')
 
-        #LOCAL_SYNTAX = {
-        #    # local_synt_id: synt_id
-        #    'BORDER': 'TABLE.BORDER',
-        #    'COL_TITLE': 'TABLE.COL_TITLE',
-        #    'NUMBER': 'TABLE.NUMBER',
-        #    'KEYWORD': 'TABLE.KEYWORD',
-        #    'WARN': 'TABLE.WARN',
-        #}
-
-        #def __init__(self, local_colors):
-        #    super().__init__(local_colors)
-        #    self.border = local_colors['BORDER'][1]
-        #    self.col_title = local_colors['COL_TITLE'][1]
-        #    self.number = local_colors['NUMBER'][1]
-        #    self.keyword = local_colors['KEYWORD'][1]
-        #    self.warn = local_colors['WARN'][1]
-
     LOCAL_PALETTE_CLASS = TableLocalPalette
 
     def __init__(
@@ -592,8 +461,6 @@ class PPTable(PPObj):
             title_records=None,
             fields_types=None,
             no_color=False,
-            syntax_names=None,
-            syntax_names_prefix=None,  # !!!! kill'm all
     ):
         """Constructor of PPTable object - this object prints table.
 
@@ -655,18 +522,10 @@ class PPTable(PPObj):
         # In case of table the original object is the list of records:
         self.r = self.records
 
-        # !!!! no syntax names!!!
-        #if no_color:
-        #    syntax_names = {k: None for k in self._SYNTAX_GROUPS_NAMES.keys()}
-        #else:
-        #    syntax_names = self.make_syntax_groups_names(
-        #        syntax_names, syntax_names_prefix)
-
         # self._default_pptable_printer produces 'default' representation of the table
         # (that is what is produced by 'print(pptable)')
         self._default_pptable_printer = _PPTableImpl(
             records,
-            syntax_names,
             header=header,
             footer=footer,
             fmt=fmt,
@@ -771,13 +630,6 @@ class PPTable(PPObj):
 
         if skip_columns:
             fmt_obj.remove_columns(skip_columns)
-
-        # !!!!!
-#        if no_color:
-#            syntax_names = {
-#                k: None for k in self._default_pptable_printer.syntax_names.keys()}
-#        else:
-#            syntax_names = self._default_pptable_printer.syntax_names
 
         cur_pptable_printer = _PPTableImpl(self.r, local_palette, fmt_obj=fmt_obj)
 
@@ -1690,7 +1542,7 @@ class _PPTableImpl:
             self.ch_text = ch_text
 
     def __init__(
-            self, records, syntax_names, *,
+            self, records, *,
             header=None,
             footer=None,
             fmt=None,
@@ -1716,7 +1568,6 @@ class _PPTableImpl:
         self.header = header
         self.footer = (
             footer if footer is not None else f"Total {len(self.records)} records")
-        # self.syntax_names = syntax_names !!!!!
 
     def _init_format(self, fmt, fmt_obj, fields, fields_types) -> PPTableFormat:
         # part of PPTable constructor.

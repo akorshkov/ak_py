@@ -1,12 +1,9 @@
 """Tools for creation of "methods caller" objects for http calls."""
 
 from ak import conn_http
-from ak.color import ColoredText
+from ak.color import CHText
 from ak.hdoc import BoundMethodNotes
 from ak.mcaller import MCaller
-
-
-CHText = ColoredText
 
 
 class MCallerMetaHttpMethod:

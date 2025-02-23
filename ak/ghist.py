@@ -8,11 +8,9 @@ import re
 import threading
 from typing import Iterator
 
-from ak.color import ColorsConfig, ColoredText, LocalPalette, ConfColor
+from ak.color import ColorsConfig, CHText, LocalPalette, ConfColor
 from ak.ppobj import PPObj
 from ak.utils import Timer, Comparable, compare_dictionaries
-
-CHText = ColoredText
 
 
 try:
@@ -2009,63 +2007,17 @@ class GHistReport(PPObj):
         yield from self.report_formatter._gen_ch_lines(self.data, _c)
 
 
-## !!!! combine with SyntaxGroupsUser
-#class GHistColorsConfig(ColorsConfig):
-#    """Global config of colors used by ghist.
-#
-#    Syntax names used by ghist reports are very different from standard syntax names,
-#    that's why different ColorsConfig class is used.
-#
-#    Application should call ak.color.set_global_colors_config(c) to register object
-#    of this class as global color config.
-#    """
-#
-#    OWN_DFLT_CONFIG = {
-#        'GHIST': {
-#            'REPO': "CYAN:bold",
-#            'BRANCH': "GREEN:bold",
-#            'HASH': "YELLOW",
-#            'HASH_NOT_MERGED': "",
-#            'COMMIT_TIME': "BLUE",
-#            'COMMIT_NAME': "GREEN",
-#            'VERSION': "CYAN",
-#            'VER_NOT_BUILT': "RED",
-#            'VER_NOT_MERGED': "RED",
-#        }
-#    }
-#
-#    BUILT_IN_CONFIG = {**ColorsConfig.BUILT_IN_CONFIG, **OWN_DFLT_CONFIG}
-
-
 class ReportFormatter:
     """Convert report data into syntax-highlited text.
 
     (expects data in the format as produced by ReposCollection.make_reports_data)
     """
 
-# !!!!!!
-#    _SYNTAX_GROUPS_NAMES = {
-#        'REPO': 'GHIST.REPO',
-#        'BRANCH': 'GHIST.BRANCH',
-#        'HASH': 'GHIST.HASH',
-#        'HASH_NOT_MERGED': 'GHIST.HASH_NOT_MERGED',
-#        'COMMIT_TIME': 'GHIST.COMMIT_TIME',
-#        'COMMIT_NAME': 'GHIST.COMMIT_NAME',
-#        'VERSION': 'GHIST.VERSION',
-#        'VER_NOT_BUILT': 'GHIST.VER_NOT_BUILT',
-#        'VER_NOT_MERGED': 'GHIST.VER_NOT_MERGED',
-#    }
-
-#    _CHUNK_SPACE = SHText._Chunk("", " ")
-
-    # !!! wtf syntax_names
     def __init__(self):
         pass
-        #self.syntax_names = self.make_syntax_groups_names(
-        #    syntax_names, syntax_names_prefix)
 
     def _gen_ch_lines(self, report_data, _c) -> Iterator[CHText]:
-        """Generate report SHText lines for collected report data. !!!
+        """Generate report CHText lines for collected report data. !!!
 
         Arguments:  !!!!
         - report_data: [('component_name', RGraph), ] - properly ordered
@@ -2093,7 +2045,7 @@ class ReportFormatter:
             yield from self._gen_rbuild_descr(rbuild, offset+1, _c)
 
     def _gen_rbuild_descr(self, rbuild, offset, _c) -> Iterator[CHText]:
-        # generate ColoredText lines of description of RBuild (including
+        # generate CHText lines of description of RBuild (including
         # commits in this build)
 
         # prepare build title line
@@ -2183,7 +2135,7 @@ class ReportFormatter:
         yield CHText.make(result)
 
     def gen_commit_descr(self, commit, merged, offset, _c) -> Iterator[CHText]:
-        """Generate ColoredText lines of a single commit descripiton."""
+        """Generate CHText lines of a single commit descripiton."""
         author_name = str(commit.author.name)
         if len(author_name) > 18:
             author_name = author_name[:18]
