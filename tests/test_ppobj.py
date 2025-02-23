@@ -648,7 +648,7 @@ class TestPPTable(unittest.TestCase):
         # 0. prepare custom field type
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_text(
+            def make_desired_cell_ch_text(
                 self, value, fmt_modifier, _c,
             ) -> ([CHText._Chunk], int):
                 """Custom format value for a table column.
@@ -756,7 +756,7 @@ class TestPPTable(unittest.TestCase):
         # 0. prepare enum field type
         statuses_enum = PPEnumFieldType({
             10: "Ok status",
-            999: ("Error status", "ENUM.NAME_WARN"),
+            999: ("Error status", "name_warn"),
         })
 
         # 0.1 prepare the table

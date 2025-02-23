@@ -7,7 +7,7 @@ from typing import Iterator
 from ak.color import (
     ColoredText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, LocalPalette,
     get_global_colors_config, set_global_colors_config,
-    sh_fmt, sh_print,
+    sh_fmt, sh_print, ConfColor,
 )
 
 
@@ -479,6 +479,7 @@ class TestPalette(unittest.TestCase):
 
     def test_color_text_creation(self):
         """Test palette producing ColoredText"""
+        # !!! ??? is this method of the palette required ???
         palette = Palette({
             'style_1': ColorFmt('GREEN'),
             'style_2': ColorFmt('BLUE'),
@@ -706,7 +707,7 @@ class TestColorsConfig(unittest.TestCase):
             colored_texts['VERY_COLORED'], colored_texts['TABLE.BORDER'])
 
     def test_not_default_config(self):
-        """Test ColorsConfig construction with initial config."""
+        """Simulate !!! Test ColorsConfig construction with initial config."""
 
         # syntax colors description is processed first and has higher precenence
         # than defaults hardcoded in python code.
@@ -866,11 +867,11 @@ class TestColorsConfig(unittest.TestCase):
                 'SYNT_X_2': "GREEN",
                 'SYNT_2': "RED",
             }
-            LOCAL_SYNTAX = {
-                'S3': 'SYNT_X_3',
-                'S2': 'SYNT_X_2',
-                'S1': 'SYNT_2',
-            }
+            #LOCAL_SYNTAX = {
+            #    'S3': 'SYNT_X_3',
+            #    'S2': 'SYNT_X_2',
+            #    'S1': 'SYNT_2',
+            #}
 
         # 1. before MyLocalPalette is registered in the config some syntaxes
         # are not resolved
@@ -968,31 +969,26 @@ class TestLocalPalete(unittest.TestCase):
             "TEXT": "",
             "NUMBER": "YELLOW",
             "KEYWORD": "BLUE:bold",
+            "WARN": "RED",
         }
 
     class MyLocalPalette(LocalPalette):
         SYNTAX_DEFAULTS = {
             "TBL.TEXT": "NUMBER",
             "TBL.BORDER": "GREEN",
+            "TBL.WARN": "WARN",
         }
 
-        LOCAL_SYNTAX = {
-            "TEXT": "TBL.TEXT",
-            "BRDR": "TBL.BORDER",
-        }
-
-        def __init__(self, local_colors):
-            super().__init__(local_colors)
-            assert local_colors.keys() == self.LOCAL_SYNTAX.keys()
-            self.ctxt = local_colors["TEXT"][1]
-            self.border = local_colors["BRDR"][1]
+        ctxt = ConfColor("TBL.TEXT")
+        border = ConfColor("TBL.BORDER")
+        warn = ConfColor("TBL.WARN")
 
     def test_local_palette_creation_from_global_config(self):
         """Test construction of LocalPalette object from global config."""
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        # 1. create the local_palette object from the global colors config
+        # create the local_palette object from the global colors config
         # and check it works
         local_palette = self.MyLocalPalette.make()
 
@@ -1005,8 +1001,120 @@ class TestLocalPalete(unittest.TestCase):
             "local syntax id 'TEXT' corresponds to 'NUMBER' syntax in "
             "the global config => YELLOW")
 
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_local_palettes_inheritance_trivial(self):
+        """Trivial case of palettes inheritance - no changes in derived class."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
+
+        class DerivedPalette(self.MyLocalPalette):
+            pass
+
+        parent_palette = self.MyLocalPalette.make()
+        derived_palette = DerivedPalette.make()
+
+        sample_text = "sample text"
+
+        self.assertEqual(
+            str(ColoredText(parent_palette.ctxt(sample_text))),
+            str(ColoredText(derived_palette.ctxt(sample_text))),
+            "result should be the same as derived palette is expected "
+            "to be identical to the parent palette")
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_local_palettes_inheritance(self):
+        """Test usual case of palette inheritance."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
+
+        class DerivedPalette(self.MyLocalPalette):
+            SYNTAX_DEFAULTS = {
+                "TBL.WARN": "YELLOW",  # should have no effect
+                "TBL.ALT_TEXT": "KEYWORD",
+            }
+            ctxt = ConfColor("TBL.ALT_TEXT")
+            new_synt = ConfColor("TBL.WARN")
+
+        parent_palette = self.MyLocalPalette.make()
+        derived_palette = DerivedPalette.make()
+        # print(global_conf.make_report())
+
+        sample_text = "sample text"
+
+        # 1. check behavior of 'ctxt' color
+        # It is explicitely overidden in DerivedPalette
+        self.assertEqual(
+            str(ColoredText(parent_palette.ctxt(sample_text))),
+            str(ColoredText(ColorFmt("YELLOW")(sample_text))),
+            "ctxt -> TBL.TEXT -> NUMBER -> YELLOW. "
+            "Presence of the derived class must not affect base class palette")
+
+        self.assertEqual(
+            str(ColoredText(derived_palette.ctxt(sample_text))),
+            str(ColorFmt("BLUE", bold=True)(sample_text)),
+            "ctxt -> TBL.ALT_TEXT -> KEYWORD -> BLUE:bold. ")
+
+        # 2. check behavior of 'border' color.
+        # It is not modified in any way in DerivedPalette
+        self.assertEqual(
+            str(ColoredText(parent_palette.border(sample_text))),
+            str(ColoredText(derived_palette.border(sample_text))),
+        )
+
+        # 3. check hehavior of 'warn' color.
+        # It uses color of "TBL.WARN" syntax in config.
+        # Even though DerivedPalette provides own default for this
+        # syntax id, it does not affect anything. The base class
+        # is registered in the config first and initializes the color for
+        # this syntax.
+        self.assertEqual(
+            str(ColoredText(parent_palette.warn(sample_text))),
+            str(ColorFmt("RED")(sample_text)),
+            "warn -> TBL.WARN -> WARN -> RED. ")
+
+        self.assertEqual(
+            str(ColoredText(parent_palette.warn(sample_text))),
+            str(ColoredText(derived_palette.warn(sample_text))),
+        )
+
+        # 4. check behavior of 'new_synt' color.
+        with self.assertRaises(AttributeError) as exc:
+            parent_palette.new_synt(sample_text)
+
+        err_msg = str(exc.exception)
+        self.assertIn("MyLocalPalette", err_msg)
+        self.assertIn("object has no attribute", err_msg)
+        self.assertIn("new_synt", err_msg)
+
+        self.assertEqual(
+            str(ColoredText(derived_palette.new_synt(sample_text))),
+            str(ColorFmt("RED")(sample_text)),
+            "warn -> TBL.WARN -> WARN -> RED. "
+            "Even though default for TBL.WARN is YELLOW, it has no effect "
+            "because the default for this syntax is defined in parent class")
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_alt_local_palette_creation(self):
+        """!!!! get rid of alt local palettes !!! """
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
+
+        # 1. create the local_palette object from the global colors config
+        local_palette = self.MyLocalPalette.make()
+        sample_text = "sample text"
+        color_text_0 = ColoredText(local_palette.ctxt(sample_text))
+
         # 2. create local_palette which uses different syntaxes from global conf
-        alt_palette = self.MyLocalPalette.make(alt_local_syntax={"TEXT": "KEYWORD"})
+        class AltPalette(self.MyLocalPalette):
+            ctxt = ConfColor("KEYWORD")
+
+        alt_palette = self.MyLocalPalette.make(alt_local_palette=AltPalette)
 
         self.assertEqual(
             str(ColoredText(alt_palette.ctxt(sample_text))),

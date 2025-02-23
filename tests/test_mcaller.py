@@ -104,7 +104,7 @@ class TestMCallerClass(unittest.TestCase):
         self.assertEqual(raw_result['auth'], "x3x")
 
         # make sure custom pprinter is used
-        repr_str = result.get_colored_text()
+        repr_str = str(result.ch_text())
         self.assertEqual(repr_str, "self repr string")
 
         # 4. check get_mcaller_meta direct call

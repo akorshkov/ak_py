@@ -123,7 +123,7 @@ class TestMCallerSQL(unittest.TestCase):
         # 0. prepare custom field type
         class CustomFieldType(PPTableFieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_text(
+            def make_desired_cell_ch_text(
                 self, value, fmt_modifier, _c,
             ) -> ([str|tuple], int):
                 """adds some text to a value """

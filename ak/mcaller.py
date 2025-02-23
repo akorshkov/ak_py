@@ -131,7 +131,7 @@ class PPMethod(PPWrap):
         self.pp_method = pp_method
 
     # !!!!!
-    def gen_color_lines(
+    def ch_lines(
         self, colors_config=None, no_color=False, alt_local_syntax=None,
     ):
         """Generate lines of pretty text."""

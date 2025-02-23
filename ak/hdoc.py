@@ -15,13 +15,15 @@ python's concole scope.
 import inspect
 from typing import Iterator
 
-from ak.color import SyntaxGroupsUser, SHText, sh_lines_fmt
+from ak.color import LocalPalette, LocalPaletteUser, ColoredText, sh_lines_fmt, ConfColor
+
+CHText = ColoredText
 
 
 #########################
 # 'll'-command specific classes
 
-class LLImpl(SyntaxGroupsUser):
+class LLImpl(LocalPaletteUser):
     """Implementation of 'll' command.
 
     Usage:
@@ -30,10 +32,17 @@ class LLImpl(SyntaxGroupsUser):
     ... summary of local variables is printed ...
     """
 
-    _SYNTAX_GROUPS_NAMES = {
-        'NAME': 'NAME',
-        'CATEGORY': 'CATEGORY',
-    }
+    class LLImplLocalPalette(LocalPalette):
+        SYNTAX_DEFAULTS = {
+            # synt_id: default_color
+            'LL.NAME': 'NAME',
+            'LL.CATEGORY': 'MAGENTA',
+        }
+
+        name = ConfColor('LL.NAME')
+        category = ConfColor('LL.CATEGORY')
+
+    LOCAL_PALETTE_CLASS = LLImplLocalPalette
 
     def __init__(self, locals_dict):
         """Create 'll' object which prints summary of values in python console.
@@ -42,9 +51,11 @@ class LLImpl(SyntaxGroupsUser):
         - locals_dict: dictionary of console's locals
         """
         self.locals_dict = locals_dict
-        self.syntax_names = self.make_syntax_groups_names(None, None)
+        #self.syntax_names = self.make_syntax_groups_names(None, None)
+        self._c = self._mk_local_palette(None, None, None)
 
-    def gen_sh_lines(self) -> Iterator[SHText]:
+    # !!! rename
+    def gen_sh_lines(self) -> Iterator[CHText]:
         # generate lines (SHText values) which make a summary of
         # variables in self.locals_dict
 
@@ -78,21 +89,20 @@ class LLImpl(SyntaxGroupsUser):
             if cat_is_first:
                 cat_is_first = False
             else:
-                yield SHText("")
-            yield SHText((self.syntax_names['CATEGORY'], category_name), ":")
+                yield CHText(self._c.no_color(""))
+            yield CHText(self._c.categoty(category_name), ":")
             items, items_wo_descr = items_by_category[category_name]
             if items:
                 items.sort(key=lambda kv: kv[0])
                 max_name_len = max(len(item[0]) for item in items)
                 name_col_len = min(max_name_len, 20) + 1
                 for name, descr in items:
-                    c_name_descr = SHText(self.syntax_names['NAME'], name).fixed_len(
-                        name_col_len)
+                    c_name_descr = CHText(self._c.name(name)).fixed_len(name_col_len)
                     c_name_descr += ("", f": {descr}")
                     yield c_name_descr
             if items_wo_descr:
-                yield SHText("  ") + SHText(", ").join(
-                    (self.syntax_names['NAME'], name)
+                yield CHText("  ") + CHText(", ").join(
+                    self._c.name(name)
                     for name in items_wo_descr)
 
     def _get_explicit_value_descr(self, value):
@@ -131,7 +141,7 @@ class LLImpl(SyntaxGroupsUser):
 #########################
 # 'h'-command specific classes
 
-class HCommand(SyntaxGroupsUser):
+class HCommand(LocalPaletteUser):
     """Implementation of 'h' command.
 
     h(obj) prints some text related to the 'obj'. The text is produced by
@@ -141,16 +151,26 @@ class HCommand(SyntaxGroupsUser):
     _DFLT_FILT_ARG = object()
     _LEVEL_H, _LEVEL_HH = 1, 2  # correspond to 'h' and 'hh' commands
 
-    _SYNTAX_GROUPS_NAMES = {
-        'ATTR': 'ATTR',
-        'FUNC_NAME': 'FUNC_NAME',
-        'TAG': 'TAG',
-        'WARN': 'WARN',
-    }
+    class HCmdLocalPalette(LocalPalette):
+        SYNTAX_DEFAULTS = {
+            # synt_id: default_color
+            'HDOC.ATTR': 'YELLOW',
+            'HDOC.FUNC_NAME': 'BLUE',
+            'HDOC.TAG': 'GREEN',
+            'HDOC.WARN': 'WARN',
+        }
+        attr = ConfColor('HDOC.ATTR')
+        func_name = ConfColor('HDOC.FUNC_NAME')
+        tag = ConfColor('HDOC.TAG')
+        warn = ConfColor('HDOC.WARN')
+
+
+    LOCAL_PALETTE_CLASS = HCmdLocalPalette
 
     def __init__(self, dets_level=_LEVEL_H):
-        self.syntax_names = self.make_syntax_groups_names(None, None)
+        #self.syntax_names = self.make_syntax_groups_names(None, None)  !!!!
         self.dets_level = dets_level
+        self._c = self._mk_local_palette(None, None, None)
 
     def __call__(self, obj, filt=_DFLT_FILT_ARG):
         # this method does not return the help text, but prints it
@@ -169,13 +189,14 @@ class HCommand(SyntaxGroupsUser):
                     obj, filt, dets_level=self.dets_level, fmt_oneline=False))
         )
 
-    def _gen_sh_lines(self, obj, filt, dets_level, fmt_oneline) -> Iterator[SHText]:
+    # rename !!!
+    def _gen_sh_lines(self, obj, filt, dets_level, fmt_oneline) -> Iterator[CHText]:
         # generate lines of text which make output of 'h' command
 
         # Object is h-doc capable if it has '_h_doc' attribute.
         if hasattr(obj, '_h_doc'):
             yield from obj._h_doc.gen_help_text(
-                obj, filt, self.syntax_names, dets_level, fmt_oneline)
+                obj, filt, self._c, dets_level, fmt_oneline)
 
     def _get_ll_descr(self):
         # object description for 'll' command
@@ -186,8 +207,8 @@ class HDocItem:
     """Base for classes which hold h-doc information for some object"""
 
     def gen_help_text(
-        self, obj, filt, syntax_names, dets_level, fmt_oneline,
-    ) -> Iterator[SHText]:
+        self, obj, filt, _c, dets_level, fmt_oneline,
+    ) -> Iterator[CHText]:
         """Generate h-doc syntax-highlihted text for an object.
 
         Arguments:
@@ -195,7 +216,7 @@ class HDocItem:
             that self is obj._h_doc
         - filt: some object which can be specified to modify generated help text.
             Processing of this object may be implemented in derived classes.
-        - syntax_names: syntax names to be used
+        - syntax_names: syntax names to be used !!!!!
         - dets_level: details level.
         - fmt_oneline: henerate one-line help.
         """
@@ -203,20 +224,20 @@ class HDocItem:
         assert obj._h_doc is self
 
         if fmt_oneline:
-            yield from self._gen_help_oneline(obj, filt, syntax_names, dets_level)
+            yield from self._gen_help_oneline(obj, filt, _c, dets_level)
         else:
-            yield from self._gen_help_text(obj, filt, syntax_names, dets_level)
+            yield from self._gen_help_text(obj, filt, _c, dets_level)
 
     def _gen_help_text(
-        self, _obj, _filt, _syntax_names, _dets_level, _bm_notes=None,
-    ) -> Iterator[SHText]:
+        self, _obj, _filt, _local_palette, _dets_level, _bm_notes=None,
+    ) -> Iterator[CHText]:
         # to be implemented in derived classes
         yield from[]
         raise NotImplementedError
 
     def _gen_help_oneline(
-        self, _obj, _filt, _syntax_names, _dets_level, _bm_notes=None,
-    ) -> Iterator[SHText]:
+        self, _obj, _filt, _local_palette, _dets_level, _bm_notes=None,
+    ) -> Iterator[CHText]:
         # to be implemented in derived classes
         yield from []
         raise NotImplementedError
@@ -236,7 +257,7 @@ class BoundMethodNotes:
     implemented a method '_get_hdoc_method_notes'. Like this:
 
     class ClassX:
-        def _get_hdoc_method_notes(self, bound_method, syntax_names):
+        def _get_hdoc_method_notes(self, bound_method, _c):
             assert self is bound_method.__self__
             assert hasattr(bound_method, '_h_doc')
             ...
@@ -250,17 +271,17 @@ class BoundMethodNotes:
 
         Arguments:
         - is_available: False if it does not make sence to call the bound method
-        - note_short:  SHText to be included into h-doc of the bound method.
+        - note_short:  CHText to be included into h-doc of the bound method.
                        F.e.: "n/a"
         - note_line:  SHtext to be included into h-doc of the bound method. F.e.:
                       "! requires token access, not basic auth !"
         """
         for arg, name in [(note_short, 'note_short'), (note_line, 'note_line')]:
-            assert isinstance(arg, (str, SHText)), (
+            assert isinstance(arg, (str, CHText)), (
                 f"'{name}' argument has unexpected type {type(arg)}. "
-                f"Either SHText or str is expected")
+                f"Either CHText or str is expected")
         if isinstance(note_short, str):
-            note_short = SHText(note_short)
+            note_short = CHText(note_short)
 
         self.is_available = is_available
         self.note_short = note_short
@@ -366,7 +387,7 @@ class HDocItemFunc(HDocItem):
         'tags',  # list of all tags
     )
 
-    _CHUNK_SPACE_HASHSYMBOL = SHText._Chunk("", " #")
+    # _CHUNK_SPACE_HASHSYMBOL = SHText._Chunk("",) !!!!!
 
     def __init__(self, func, func_name, doc_string, hidden=False):
         """HDocItemFunc - 'h' metadata about a single function/method.
@@ -394,35 +415,35 @@ class HDocItemFunc(HDocItem):
         self.main_tag = self.tags[0] if self.tags else "misc"
 
     def _gen_help_oneline(
-        self, obj, _filt, syntax_names, _dets_level, _bm_notes=None,
-    ) -> Iterator[SHText]:
+        self, obj, _filt, _c, _dets_level, _bm_notes=None,
+    ) -> Iterator[CHText]:
         # generate one-line function description
 
-        bm_notes = _bm_notes or self._get_bound_method_notes(obj, syntax_names)
+        bm_notes = _bm_notes or self._get_bound_method_notes(obj, _c)
 
         args_descr = ", ".join(self.arg_names)
-        yield SHText(
-            (syntax_names['FUNC_NAME'], self.name),
-            ("", f"({args_descr}) "),
+        yield CHText(
+            _c.func_name(self.name),
+            _c.no_color(f"({args_descr}) "),
             bm_notes.note_short,
             f" {self.short_descr}",
         )
 
     def _gen_help_text(
-        self, obj, _filt, syntax_names, _dets_level, _bm_notes=None,
-    ) -> Iterator[SHText]:
+        self, obj, _filt, _c, _dets_level, _bm_notes=None,
+    ) -> Iterator[CHText]:
         # generate detailed function description
 
-        bm_notes = _bm_notes or self._get_bound_method_notes(obj, syntax_names)
+        bm_notes = _bm_notes or self._get_bound_method_notes(obj, _c)
 
         yield from self._gen_help_oneline(
-            obj, _filt, syntax_names, _dets_level, bm_notes)
+            obj, _filt, _c, _dets_level, bm_notes)
 
         if bm_notes.note_line:
-            yield SHText("    ", bm_notes.note_line)
+            yield CHText("    ", bm_notes.note_line)
 
         for line in self.body_lines:
-            yield SHText(f"    {line}")
+            yield CHText(f"    {line}")
 
         def _gen_tags():
             yield self.main_tag
@@ -430,15 +451,15 @@ class HDocItemFunc(HDocItem):
                 if tag != self.main_tag:
                     yield tag
 
-        ct = syntax_names['TAG']
-        sh_text_chunks = [SHText._Chunk("", "   ")]
+        sh_text_chunks = [_c.no_color("   ")]
+        ct_chunk_space_hash_symbol = _c.no_color(" #")
         for tag in _gen_tags():
-            sh_text_chunks.append(self._CHUNK_SPACE_HASHSYMBOL)
-            sh_text_chunks.append(SHText._Chunk(ct, tag))
+            sh_text_chunks.append(ct_chunk_space_hash_symbol)
+            sh_text_chunks.append(_c.tag(tag))
 
-        yield SHText.make(sh_text_chunks)
+        yield CHText.make(sh_text_chunks)
 
-    def _get_bound_method_notes(self, obj, syntax_names) -> BoundMethodNotes:
+    def _get_bound_method_notes(self, obj, _c) -> BoundMethodNotes:
         # get the BoundMethodNotes in case the h-doc is being generated
         # for bound method
         try:
@@ -450,7 +471,7 @@ class HDocItemFunc(HDocItem):
             return BoundMethodNotes(True, "", "")
 
         # if we got here the 'obj' corresponds to bound method
-        return notes_method(obj, syntax_names)
+        return notes_method(obj, _c)
 
 
 class HDocItemCls(HDocItem):
@@ -556,8 +577,8 @@ class HDocItemCls(HDocItem):
             yield h_item
 
     def _gen_help_oneline(
-        self, obj, _filt, syntax_names, _dets_level, _bm_notes=None,
-    ) -> Iterator[SHText]:
+        self, obj, _filt, _c, _dets_level, _bm_notes=None,
+    ) -> Iterator[CHText]:
         # generate one-line class or object description
         assert _bm_notes is None, (
             "'_bm_notes' are applicable for bound methods, but this mehod "
@@ -565,11 +586,11 @@ class HDocItemCls(HDocItem):
 
         obj_indicator = "" if inspect.isclass(obj) else "Object of "
 
-        yield SHText(f"{obj_indicator}{self.name}  {self.short_descr}")
+        yield CHText(f"{obj_indicator}{self.name}  {self.short_descr}")
 
     def _gen_help_text(
-        self, obj, _filt, syntax_names, dets_level, _bm_notes=None,
-    ) -> Iterator[SHText]:
+        self, obj, _filt, _c, dets_level, _bm_notes=None,
+    ) -> Iterator[CHText]:
         # generate detailed class (or object) description
         #
         # In case "h(x.method)" was called, of this method will be:
@@ -580,14 +601,12 @@ class HDocItemCls(HDocItem):
             "'_bm_notes' are applicable for bound methods, but this mehod "
             "generates h-doc for class or object of class")
 
-        yield from self._gen_help_oneline(obj, _filt, syntax_names, dets_level)
+        yield from self._gen_help_oneline(obj, _filt, _c, dets_level)
 
         # generate description of attributes
         if hasattr(obj, '_HDOC_ATTRS'):
             is_class = inspect.isclass(obj)
-            attrs_hdocs = []  # [(attr_name, sh_descr), ]
-            color_attr = syntax_names['ATTR']
-            color_warning = syntax_names['WARN']
+            attrs_hdocs = []  # [(attr_name, sh_descr), ]  !!! not sh!
             for attr_name, attr_descr in obj._HDOC_ATTRS:
                 include_attr = True
                 attr_is_available = True
@@ -597,19 +616,19 @@ class HDocItemCls(HDocItem):
                         attr_is_available = False
                 if include_attr:
                     if not attr_is_available:
-                        attr_descr = SHText(
-                            (color_warning, "<n/a>"),
+                        attr_descr = CHText(
+                            _c.warn("<n/a>"),
                             " ",
                             attr_descr)
                     attrs_hdocs.append((attr_name, attr_descr))
             if attrs_hdocs:
-                yield SHText("Attributes:")
+                yield CHText("Attributes:")
                 max_name_len = max(len(attr_name) for attr_name, _ in attrs_hdocs)
                 max_name_len = max(max_name_len, 5)
                 for attr_name, attr_descr in attrs_hdocs:
-                    yield SHText(
+                    yield CHText(
                         "  ",
-                        (color_attr, f"{attr_name:{max_name_len}}"),
+                        _c.attr(f"{attr_name:{max_name_len}}"),
                         " - ",
                         attr_descr)
 
@@ -621,7 +640,6 @@ class HDocItemCls(HDocItem):
 
         # generate descriptions of methods
         for tag, h_items in self.h_items_by_tag.items():
-            ct = syntax_names['TAG']
             tag_line_reported = False
             for h_item in h_items:
                 if h_item.hidden:
@@ -629,20 +647,20 @@ class HDocItemCls(HDocItem):
                 # in case we generate h-doc not for a class but for an
                 # object of class, the methods are actually bound methods and
                 # additional information (bm_notes) may be available.
-                bm_notes = self._get_bound_method_notes(obj, h_item, syntax_names)
+                bm_notes = self._get_bound_method_notes(obj, h_item, _c)
                 if not bm_notes.is_available and not report_na_methods:
                     continue
 
                 if not tag_line_reported:
-                    yield SHText("#", (ct, tag))
+                    yield CHText("#", _c.tag(tag))
                     tag_line_reported = True
 
                 for method_help_line in h_item._gen_help_oneline(
-                    obj, _filt, syntax_names, dets_level, bm_notes,
+                    obj, _filt, _c, dets_level, bm_notes,
                 ):
-                    yield SHText("  ", method_help_line)
+                    yield CHText("  ", method_help_line)
 
-    def _get_bound_method_notes(self, obj, h_item, syntax_names) -> BoundMethodNotes:
+    def _get_bound_method_notes(self, obj, h_item, _c) -> BoundMethodNotes:
         # get the BoundMethodNotes for methods defined in the class if
         # h-doc is being generated not for a class, but for an object of
         # class.
@@ -665,7 +683,7 @@ class HDocItemCls(HDocItem):
 
             if callable(attr) and hasattr(attr, '__self__'):
                 # attr is bound method. BoundMethodNotes can be created for it.
-                return obj_self._get_hdoc_method_notes(attr, syntax_names)
+                return obj_self._get_hdoc_method_notes(attr, _c)
 
         return BoundMethodNotes(True, "", "")
 

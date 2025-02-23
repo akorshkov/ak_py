@@ -8,7 +8,7 @@ import re
 import threading
 from typing import Iterator
 
-from ak.color import ColorsConfig, ColoredText, LocalPalette
+from ak.color import ColorsConfig, ColoredText, LocalPalette, ConfColor
 from ak.ppobj import PPObj
 from ak.utils import Timer, Comparable, compare_dictionaries
 
@@ -1989,28 +1989,15 @@ class GHistReport(PPObj):
             'GHIST.VER_NOT_BUILT': "RED",
             'GHIST.VER_NOT_MERGED': "RED",
         }
-        LOCAL_SYNTAX = {
-            'REPO': "GHIST.REPO",
-            'BRANCH': "GHIST.BRANCH",
-            'HASH': "GHIST.HASH",
-            'HASH_NOT_MERGED': "GHIST.HASH_NOT_MERGED",
-            'COMMIT_TIME': "GHIST.COMMIT_TIME",
-            'COMMIT_NAME': "GHIST.COMMIT_NAME",
-            'VERSION': "GHIST.VERSION",
-            'VER_NOT_BUILT': "GHIST.VER_NOT_BUILT",
-            'VER_NOT_MERGED': "GHIST.VER_NOT_MERGED",
-        }
-        def __init__(self, local_colors):
-            super().__init__(local_colors)
-            self.repo = local_colors['REPO'][1]
-            self.branch = local_colors['BRANCH'][1]
-            self.hash = local_colors['HASH'][1]
-            self.hash_not_merged = local_colors['HASH_NOT_MERGED'][1]
-            self.commit_time = local_colors['COMMIT_TIME'][1]
-            self.commit_name = local_colors['COMMIT_NAME'][1]
-            self.version = local_colors['VERSION'][1]
-            self.ver_not_built = local_colors['VER_NOT_BUILT'][1]
-            self.ver_not_merged = local_colors['VER_NOT_MERGED'][1]
+        repo = ConfColor('GHIST.REPO')
+        branch = ConfColor('GHIST.BRANCH')
+        hash = ConfColor('GHIST.HASH')
+        hash_not_merged = ConfColor('GHIST.HASH_NOT_MERGED')
+        commit_time = ConfColor('GHIST.COMMIT_TIME')
+        commit_name = ConfColor('GHIST.COMMIT_NAME')
+        version = ConfColor('GHIST.VERSION')
+        ver_not_built = ConfColor('GHIST.VER_NOT_BUILT')
+        ver_not_merged = ConfColor('GHIST.VER_NOT_MERGED')
 
     LOCAL_PALETTE_CLASS = GHistLocalPalette
 
