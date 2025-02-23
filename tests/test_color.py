@@ -1109,7 +1109,7 @@ class TestLocalPalete(unittest.TestCase):
         class AltPalette(self.MyLocalPalette):
             ctxt = ConfColor("KEYWORD")
 
-        alt_palette = self.MyLocalPalette.make(alt_local_palette=AltPalette)
+        alt_palette = AltPalette.make()
 
         self.assertEqual(
             str(CHText(alt_palette.ctxt(sample_text))),

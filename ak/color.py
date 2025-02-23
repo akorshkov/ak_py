@@ -1443,10 +1443,11 @@ class LocalPaletteUser:
         # !!!!!
         assert cls.LOCAL_PALETTE_CLASS is not None, (
             f"'LOCAL_PALETTE_CLASS' is not implemented in {str(cls)}")
+        palette_class = alt_local_palette or cls.LOCAL_PALETTE_CLASS
         if colors_conf is None:
             colors_conf = get_global_colors_config()
 
-        return cls.LOCAL_PALETTE_CLASS.make(colors_conf, no_color, alt_local_palette)
+        return palette_class.make(colors_conf, no_color)
 
 
 def sh_fmt(arg, *, palette=None) -> CHText:
@@ -1619,7 +1620,7 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
 
     @classmethod
     def make(
-        cls, colors_conf=None, no_color=None, alt_local_palette=None,
+        cls, colors_conf=None, no_color=None
     ):
         """Register cls in colors config and prepare the local palette.
 
@@ -1632,9 +1633,6 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
         - alt_local_palette: {local_synt_id: alt_global_synt_id}. Contains
             alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
         """
-        if alt_local_palette is not None:
-            return alt_local_palette.make(colors_conf, no_color)
-
         assert cls._LOCAL_SYNTAX is not None, (
             f"internal error: '_LOCAL_SYNTAX' is not present in "
             f"LocalPalette class {cls}")
@@ -1665,7 +1663,7 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
     @classmethod
     def get_no_color_palette(cls):
         """!!!"""
-        return cls.make(None, True, None)
+        return cls.make(None, True)
 
     @classmethod
     def _register_in_colors_conf(cls, colors_conf):
@@ -1706,8 +1704,7 @@ class CompoundPalette(LocalPalette):
         if result is None:
             actual_palette_class = self.SUB_PALETTES_MAP.get(
                 palette_class, palette_class)
-            result = actual_palette_class.make(
-                self.colors_conf, self._no_color, actual_palette_class)
+            result = actual_palette_class.make(self.colors_conf, self._no_color)
             self._sub_palettes[key] = result
         return result
 
