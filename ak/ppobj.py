@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import CHText, sh_lines_fmt, LocalPalette, CompoundPalette, LocalPaletteUser, ConfColor
+from ak.color import CHText, LocalPalette, CompoundPalette, LocalPaletteUser, ConfColor
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
 CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
@@ -1632,11 +1632,6 @@ class _PPTableImpl:
     def remove_columns(self, columns_names):
         """Remove columns from table."""
         self._ppt_fmt.remove_columns(columns_names)
-
-#    def gen_pplines(self) -> Iterator[str]:
-#        """Produce the lines of PPTable representation"""
-#        for colored_text in sh_lines_fmt(self.gen_ch_lines()):
-#            yield str(colored_text)
 
     def gen_ch_lines(self, _c: PPTable.TableLocalPalette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""

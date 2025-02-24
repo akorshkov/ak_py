@@ -355,48 +355,48 @@ class _CTText:
         self.scrlen += len(chunk.text)
 
 
-class SHText(_CTText):
-    """Syntax-Highlighted text.
-
-    Direct creation of CHText in application code may be inconvenient
-    bacause actual colors to be used depend on configuration and not
-    not be easily available.
-
-    Low-level code creates text specifying not names of actual colors, but
-    names on syntaxes.
-
-    sh_descr = SHText("Result is: ", ("OK", "success"), ". Grats!")
-
-    Later on use Palette object to produce colored text:
-
-    print(some_palette(sh_descr))
-    """
-    __slots__ = tuple()
-
-    def __init__(self, *parts):
-        """Construct SHText.
-
-        Each arguments may be:
-          - a simple string
-          - another object of this class
-          - (syntax_name, text) pair
-        """
-        super().__init__()
-
-        for part in parts:
-            self += self._mk_init_item(part)
-
-    @classmethod
-    def _mk_init_item(cls, part):
-        # constructor helper
-        if isinstance(part, (list, tuple)):
-            # ("SYNTAX", "text") pair is expected
-            if len(part) != 2:
-                raise ValueError(
-                    f'unexpected item: {part}. Expected ("SYNTAX", text) pair')
-            syntax, text = part
-            return cls._Chunk(syntax, text)
-        return part
+#class SHText(_CTText):
+#    """Syntax-Highlighted text.
+#
+#    Direct creation of CHText in application code may be inconvenient
+#    bacause actual colors to be used depend on configuration and not
+#    not be easily available.
+#
+#    Low-level code creates text specifying not names of actual colors, but
+#    names on syntaxes.
+#
+#    sh_descr = SHText("Result is: ", ("OK", "success"), ". Grats!")
+#
+#    Later on use Palette object to produce colored text:
+#
+#    print(some_palette(sh_descr))
+#    """
+#    __slots__ = tuple()
+#
+#    def __init__(self, *parts):
+#        """Construct SHText.
+#
+#        Each arguments may be:
+#          - a simple string
+#          - another object of this class
+#          - (syntax_name, text) pair
+#        """
+#        super().__init__()
+#
+#        for part in parts:
+#            self += self._mk_init_item(part)
+#
+#    @classmethod
+#    def _mk_init_item(cls, part):
+#        # constructor helper
+#        if isinstance(part, (list, tuple)):
+#            # ("SYNTAX", "text") pair is expected
+#            if len(part) != 2:
+#                raise ValueError(
+#                    f'unexpected item: {part}. Expected ("SYNTAX", text) pair')
+#            syntax, text = part
+#            return cls._Chunk(syntax, text)
+#        return part
 
 
 class CHText(_CTText):
@@ -749,11 +749,12 @@ class Palette:
         # produce item, which can be used to construct CHText
         if isinstance(item, CHText):
             return item
-        if isinstance(item, SHText):
-            return [
-                self.get_color(chunk.syntax)(chunk.text)
-                for chunk in item.chunks]
-        elif isinstance(item, (list, tuple)):
+        # if isinstance(item, SHText):  - removing the SHText
+        #     return [
+        #         self.get_color(chunk.syntax)(chunk.text)
+        #         for chunk in item.chunks]
+        # elif isinstance(item, (list, tuple)):
+        if isinstance(item, (list, tuple)):
             if len(item) != 2:
                 raise ValueError(
                     f"invalid syntax text item {item}. "
@@ -1450,34 +1451,34 @@ class LocalPaletteUser:
         return palette_class.make(colors_conf, no_color)
 
 
-def sh_fmt(arg, *, palette=None) -> CHText:
-    """Convert an argument to CHText using global colors config.
-
-    Arguments:
-    - arg: can be either
-      - SHText
-      - an object with 'sh_text' method
-      - any object, that can be converted to string. Trivial formating is
-        used in this case and so that no color sequences would be included
-        into the final text.
-    - palette: specify this argument if you want to use not the default palette
-    """
-    if palette is None:
-        palette = get_global_palette()
-    sh_text_attr = getattr(arg, 'sh_text', None)
-    if sh_text_attr is not None:
-        return palette(sh_text_attr())
-    if isinstance(arg, SHText):
-        return palette(arg)
-    return palette(str(arg))
-
-
-def sh_lines_fmt(sh_lines, palette=None) -> Iterator[CHText]:
-    """Convert multiple SHText into CHText objects using global colors config."""
-    if palette is None:
-        palette = get_global_palette()
-    for sh_text in sh_lines:
-        yield palette(sh_text)
+#def sh_fmt(arg, *, palette=None) -> CHText:
+#    """Convert an argument to CHText using global colors config.
+#
+#    Arguments:
+#    - arg: can be either
+#      - SHText
+#      - an object with 'sh_text' method
+#      - any object, that can be converted to string. Trivial formating is
+#        used in this case and so that no color sequences would be included
+#        into the final text.
+#    - palette: specify this argument if you want to use not the default palette
+#    """
+#    if palette is None:
+#        palette = get_global_palette()
+#    sh_text_attr = getattr(arg, 'sh_text', None)
+#    if sh_text_attr is not None:
+#        return palette(sh_text_attr())
+#    if isinstance(arg, SHText):
+#        return palette(arg)
+#    return palette(str(arg))
+#
+#
+#def sh_lines_fmt(sh_lines, palette=None) -> Iterator[CHText]:
+#    """Convert multiple SHText into CHText objects using global colors config."""
+#    if palette is None:
+#        palette = get_global_palette()
+#    for sh_text in sh_lines:
+#        yield palette(sh_text)
 
 
 def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
@@ -1505,9 +1506,9 @@ def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
         if sh_text_attr is not None:
             yield sh_text_attr()
             return
-        if isinstance(obj, SHText):
-            yield palette(obj)
-            return
+        #if isinstance(obj, SHText):
+        #    yield palette(obj)
+        #    return
         yield obj
 
     cur_line_args = []

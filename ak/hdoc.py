@@ -15,7 +15,7 @@ python's concole scope.
 import inspect
 from typing import Iterator
 
-from ak.color import LocalPalette, LocalPaletteUser, CHText, sh_lines_fmt, ConfColor
+from ak.color import LocalPalette, LocalPaletteUser, CHText, ConfColor
 
 
 #########################
@@ -180,10 +180,8 @@ class HCommand(LocalPaletteUser):
         # It's a separate method to be used in tests.
         return "\n".join(
             str(colored_text)
-            for colored_text in sh_lines_fmt(
-                self._gen_sh_lines(
-                    obj, filt, dets_level=self.dets_level, fmt_oneline=False))
-        )
+            for colored_text in self._gen_sh_lines(
+                obj, filt, dets_level=self.dets_level, fmt_oneline=False))
 
     # rename !!!
     def _gen_sh_lines(self, obj, filt, dets_level, fmt_oneline) -> Iterator[CHText]:

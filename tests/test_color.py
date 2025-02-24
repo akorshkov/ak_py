@@ -5,9 +5,9 @@ import io
 from typing import Iterator
 
 from ak.color import (
-    CHText, SHText, ColorFmt, ColorBytes, Palette, ColorsConfig, LocalPalette,
+    CHText, ColorFmt, ColorBytes, Palette, ColorsConfig, LocalPalette,
     get_global_colors_config, set_global_colors_config,
-    sh_fmt, sh_print, ConfColor,
+    sh_print, ConfColor,
 )
 
 
@@ -528,46 +528,46 @@ class TestPalette(unittest.TestCase):
         self.assertIn('style_1', report)
 
 
-class TestSHText(unittest.TestCase):
-    """Test SHText"""
-
-    def test_basic_sh_text_functionality(self):
-        """Test basic functionality of SHText"""
-
-        sh_descr = SHText("Some ", ("SYNTAX", "text"), " to test")
-
-        # SHText does not know actual colors corresponding to
-        # syntax regions, so conversion to str produces plain text
-        self.assertEqual("Some text to test", str(sh_descr))
-        self.assertEqual("Some text to test", sh_descr.plain_text())
-
-        # use palette to create CHText
-        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
-        ct = palette(sh_descr)
-        ct_expected = CHText(
-            "Some ",
-            ColorFmt('GREEN')("text"),
-            " to test")
-        self.assertEqual(
-            ct_expected, ct,
-            f"{ct_expected} != {ct}",
-        )
-
-        # unknown syntax name should not raise error
-        palette = Palette({})
-        ct = palette(sh_descr)
-        self.assertEqual("Some text to test", str(ct))
-
-    def test_sh_text_basic_propertirs(self):
-        """SHText corner cases."""
-
-        # empty constructior => empty result
-        sh_descr = SHText()
-
-        self.assertEqual("", str(sh_descr))
-
-        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
-        self.assertEqual("", palette(sh_descr))
+#class TestSHText(unittest.TestCase):
+#    """Test SHText"""
+#
+#    def test_basic_sh_text_functionality(self):
+#        """Test basic functionality of SHText"""
+#
+#        sh_descr = SHText("Some ", ("SYNTAX", "text"), " to test")
+#
+#        # SHText does not know actual colors corresponding to
+#        # syntax regions, so conversion to str produces plain text
+#        self.assertEqual("Some text to test", str(sh_descr))
+#        self.assertEqual("Some text to test", sh_descr.plain_text())
+#
+#        # use palette to create CHText
+#        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
+#        ct = palette(sh_descr)
+#        ct_expected = CHText(
+#            "Some ",
+#            ColorFmt('GREEN')("text"),
+#            " to test")
+#        self.assertEqual(
+#            ct_expected, ct,
+#            f"{ct_expected} != {ct}",
+#        )
+#
+#        # unknown syntax name should not raise error
+#        palette = Palette({})
+#        ct = palette(sh_descr)
+#        self.assertEqual("Some text to test", str(ct))
+#
+#    def test_sh_text_basic_propertirs(self):
+#        """SHText corner cases."""
+#
+#        # empty constructior => empty result
+#        sh_descr = SHText()
+#
+#        self.assertEqual("", str(sh_descr))
+#
+#        palette = Palette({"SYNTAX": ColorFmt('GREEN')})
+#        self.assertEqual("", palette(sh_descr))
 
 
 class TestColorsConfig(unittest.TestCase):
@@ -838,71 +838,71 @@ class TestColorsConfig(unittest.TestCase):
         self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_3'])
         self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_4'])
 
-    def test_register_palette_user(self):
-        """Data from palette user makes it possible to resolve color rules"""
-        class MyMinorColorsConfig(ColorsConfig):
-            BUILT_IN_CONFIG = {
-                "SYNT_1": "SYNT_X_2",
-                "SYNT_2": "YELLOW",
-                "SYNT_3": "BLUE",
-            }
-
-        colors_conf = MyMinorColorsConfig(
-            {
-                "SYNT_3": "SYNT_X_3",
-                "SYNT_4": "SYNT_1",
-            })
-
-        # so far the configuration is the same as in previous test case.
-        # coloring rules for SYNT_1, SYNT_3 and SYNT_4 can't be resolved.
-        #
-        # When config was created it was expected that 'SYNT_X_3' syntax will
-        # be used. But the class which actually use it and provide info about
-        # it is registered in the Config only later. This is ok.
-
-        class MyLocalPalette(LocalPalette):
-            """Test LocalPalette which introduces rules for some syntaxes"""
-            SYNTAX_DEFAULTS = {
-                'SYNT_X_3': "RED",
-                'SYNT_X_2': "GREEN",
-                'SYNT_2': "RED",
-            }
-
-        # 1. before MyLocalPalette is registered in the config some syntaxes
-        # are not resolved
-        report = colors_conf.make_report()
-        # print(report)
-        lines_by_synt_id = self._color_report_to_map(report)
-        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
-
-        global_palette = colors_conf.get_palette()
-
-        test_text = "test"
-        self.assertEqual(
-            str(global_palette(SHText(('SYNT_1', test_text)))),
-            test_text,
-            "'SYNT_1' rule is not resolved, plain text is produced")
-
-        # 2. after MyLocalPalette is registered the config becomes updated.
-        # Rule for 'SYNT_1' can be resolved now.
-
-        # this affected the colors_conf
-        _ = MyLocalPalette.make(colors_conf)
-
-        report = colors_conf.make_report()
-        # print(report)
-        lines_by_synt_id = self._color_report_to_map(report)
-        self.assertNotIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
-
-        # and the global palette created by colors_conf is different now
-        global_palette = colors_conf.get_palette()
-
-        self.assertEqual(
-            str(global_palette(SHText(('SYNT_1', test_text)))),
-            str(ColorFmt('GREEN')(test_text)),
-        )
-
-        # properties of the created MyLocalPalette object are not tested here
+#    def test_register_palette_user(self):
+#        """Data from palette user makes it possible to resolve color rules"""
+#        class MyMinorColorsConfig(ColorsConfig):
+#            BUILT_IN_CONFIG = {
+#                "SYNT_1": "SYNT_X_2",
+#                "SYNT_2": "YELLOW",
+#                "SYNT_3": "BLUE",
+#            }
+#
+#        colors_conf = MyMinorColorsConfig(
+#            {
+#                "SYNT_3": "SYNT_X_3",
+#                "SYNT_4": "SYNT_1",
+#            })
+#
+#        # so far the configuration is the same as in previous test case.
+#        # coloring rules for SYNT_1, SYNT_3 and SYNT_4 can't be resolved.
+#        #
+#        # When config was created it was expected that 'SYNT_X_3' syntax will
+#        # be used. But the class which actually use it and provide info about
+#        # it is registered in the Config only later. This is ok.
+#
+#        class MyLocalPalette(LocalPalette):
+#            """Test LocalPalette which introduces rules for some syntaxes"""
+#            SYNTAX_DEFAULTS = {
+#                'SYNT_X_3': "RED",
+#                'SYNT_X_2': "GREEN",
+#                'SYNT_2': "RED",
+#            }
+#
+#        # 1. before MyLocalPalette is registered in the config some syntaxes
+#        # are not resolved
+#        report = colors_conf.make_report()
+#        # print(report)
+#        lines_by_synt_id = self._color_report_to_map(report)
+#        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+#
+#        global_palette = colors_conf.get_palette()
+#
+#        test_text = "test"
+#        self.assertEqual(
+#            str(global_palette(SHText(('SYNT_1', test_text)))),
+#            test_text,
+#            "'SYNT_1' rule is not resolved, plain text is produced")
+#
+#        # 2. after MyLocalPalette is registered the config becomes updated.
+#        # Rule for 'SYNT_1' can be resolved now.
+#
+#        # this affected the colors_conf
+#        _ = MyLocalPalette.make(colors_conf)
+#
+#        report = colors_conf.make_report()
+#        # print(report)
+#        lines_by_synt_id = self._color_report_to_map(report)
+#        self.assertNotIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+#
+#        # and the global palette created by colors_conf is different now
+#        global_palette = colors_conf.get_palette()
+#
+#        self.assertEqual(
+#            str(global_palette(SHText(('SYNT_1', test_text)))),
+#            str(ColorFmt('GREEN')(test_text)),
+#        )
+#
+#        # properties of the created MyLocalPalette object are not tested here
 
     def test_get_palette_all_colors(self):
         """Test ceation of Palette containing all colors from config"""
@@ -1179,190 +1179,190 @@ class TestLocalPalete(unittest.TestCase):
         set_global_colors_config(None)
 
 
-class TestGlobalColorsFormattingMethods(unittest.TestCase):
-    """Test global methods for processing syntax-highlighted text"""
-
-    class TstColorsConfig(ColorsConfig):
-        # not a nice-loking colors config, but ok for test purposes
-        BUILT_IN_CONFIG = {
-            "TEXT": "",
-            "NAME": "BLUE:bold",
-            "DESCR": "YELLOW",
-        }
-
-    class _DummySHTextGenerator:
-        def __init__(self, *sh_lines):
-            self._sh_lines = sh_lines
-
-        def gen_sh_lines(self) -> Iterator[SHText]:
-            yield from self._sh_lines
-
-        def sh_text(self) -> SHText:
-            return SHText("\n").join(self._sh_lines)
-
-    def test_global_color_conf_usage(self):
-        """Test setting of global color config.
-
-        sh_fmt global function uses it, so we will use this function for test.
-        """
-
-        blue_colors_conf = self.TstColorsConfig()
-        red_colors_conf = self.TstColorsConfig({'NAME': "RED"})
-
-        sample_plain_text = "sample text"
-        sample_sh_text = SHText(("NAME", sample_plain_text))
-
-        # 1. global config contains colors
-        set_global_colors_config(blue_colors_conf)
-
-        blue_ct = sh_fmt(sample_sh_text)
-        self.assertIsInstance(blue_ct, CHText)
-        self.assertEqual(blue_ct.plain_text(), sample_plain_text)
-        self.assertNotEqual(
-            str(blue_ct), sample_plain_text,
-            "blue_ct object is expected to contain color sequences because "
-            "the global config contains some color configuration for "
-            "the 'NAME' syntax group")
-
-        # 2. palette is explicitley specified for sh_fmt
-        red_ct = sh_fmt(sample_sh_text, palette=red_colors_conf.get_palette())
-        self.assertIsInstance(red_ct, CHText)
-        self.assertEqual(red_ct.plain_text(), sample_plain_text)
-        self.assertNotEqual(
-            str(blue_ct), str(red_ct),
-            "even though the global color config is still the same, "
-            "different palette was used to prepare the red_ct, so "
-            "different color sequences are expected")
-
-        # 3. set different gobal colors
-        set_global_colors_config(red_colors_conf)
-        new_red_ct = sh_fmt(sample_sh_text)
-
-
-        self.assertEqual(
-            str(new_red_ct), str(red_ct),
-            "according to the global config the sample_sh_text now should be red")
-
-        # reset global golors config
-        set_global_colors_config(None)
-
-    def test_sh_fmt_method(self):
-        """sh_fmt - converts single argument into CHText."""
-
-        # test misc types of arguments the sh_fmt accepts
-        # 1. SHText
-        sample_text = "sample text"
-        ct = sh_fmt(SHText(("NAME", sample_text)))
-        self.assertEqual(ct.plain_text(), sample_text)
-        self.assertNotEqual(str(ct), sample_text)
-
-        # 2. simple string
-        ct = sh_fmt(sample_text)
-        self.assertEqual(ct.plain_text(), sample_text)
-        self.assertEqual(str(ct), sample_text)
-
-        # 3. SHText generator
-        obj_with_shtext_descr = self._DummySHTextGenerator(
-            SHText(("NAME", "usual")),
-            SHText(("CATEGORY", "description")),
-        )
-        ct = sh_fmt(obj_with_shtext_descr)
-        self.assertEqual(ct.plain_text(), "usual\ndescription")
-
-        # 4. other types should be treated as strings
-        x = ("NAME", "name")
-        ct = sh_fmt(x)
-        self.assertIsInstance(ct, CHText)
-        # even though the argument looks like a colored chunk argument of SHText,
-        # it should not be interpreted as colored text. It's just a tuple.
-        # So, the result should be '("NAME", "name")' or "('NAME', 'name')"
-        self.assertEqual(ct.plain_text(), str(x))
-
-    def test_sh_print_method(self):
-        """Test sh_print function."""
-
-        # 1. print simple string
-        with io.StringIO() as output:
-            sh_print("sample", file=output)
-            result = output.getvalue()
-        self.assertEqual(result, "sample\n")
-
-        # 2. print SHText object
-        with io.StringIO() as output:
-            sh_print(SHText(("NAME", "test name text")), file=output)
-            result = output.getvalue()
-        self.assertIn("test name text", result)
-        self.assertNotEqual(result, "test name text\n")  # color sequences expected
-
-        # 3. print SHText generator
-        obj_with_shtext_descr = self._DummySHTextGenerator(
-            SHText(("NAME", "usual")),
-            SHText(("CATEGORY", "description")),
-        )
-        with io.StringIO() as output:
-            sh_print(obj_with_shtext_descr, file=output)
-            result = output.getvalue()
-        # obj description consists of 2 lines.
-        # each line ends with '\n'
-        lines = result.split('\n')
-        self.assertEqual(len(lines), 3)
-        self.assertIn("usual", lines[0])
-        self.assertIn("description", lines[1])
-        self.assertEqual(lines[2], "")
-
-        # 4. print several items
-        with io.StringIO() as output:
-            sh_print(
-                "item1",
-                "item2",
-                SHText(("NAME", "name")),
-                obj_with_shtext_descr,
-                SHText(("NUMBER", "25")),
-                file=output)
-            result = output.getvalue()
-
-        plain_text_result = CHText.strip_colors(result)
-        # all printed items are separated by ' ', obj_with_shtext_descr
-        # consists of two lines, so the result also consists of two lines
-        expected_text = (
-            "item1 item2 name usual\n"
-            "description 25\n")
-        self.assertEqual(plain_text_result, expected_text)
-
-        # 5. make sure other objects are can be printed
-        # (the same way standard 'print' prints them)
-
-        # 5.1. this item looks like a syntax group of SHText.
-        # But it must not be interpreted as colored text, it should be printed
-        # as a simple tuple.
-        x = ("NAME", "name")
-
-        with io.StringIO() as output:
-            sh_print(x, file=output)
-            result = output.getvalue()
-
-        self.assertEqual(result, f"{x}\n")
-
-        # 5.2. test printing miscellaneous other objects
-
-        items_to_print = [
-            [],
-            {},
-            "text",
-            "",
-            ("NAME", "name"),
-            ("NAME", "name", 5),
-            None,
-            True,
-            False,
-        ]
-
-        with io.StringIO() as output:
-            sh_print(*items_to_print, file=output)
-            result = output.getvalue()
-
-        with io.StringIO() as output:
-            print(*items_to_print, file=output)
-            expected_result = output.getvalue()
-
-        self.assertEqual(result, expected_result)
+#class TestGlobalColorsFormattingMethods(unittest.TestCase):
+#    """Test global methods for processing syntax-highlighted text"""
+#
+#    class TstColorsConfig(ColorsConfig):
+#        # not a nice-loking colors config, but ok for test purposes
+#        BUILT_IN_CONFIG = {
+#            "TEXT": "",
+#            "NAME": "BLUE:bold",
+#            "DESCR": "YELLOW",
+#        }
+#
+#    class _DummySHTextGenerator:
+#        def __init__(self, *sh_lines):
+#            self._sh_lines = sh_lines
+#
+#        def gen_sh_lines(self) -> Iterator[SHText]:
+#            yield from self._sh_lines
+#
+#        def sh_text(self) -> SHText:
+#            return SHText("\n").join(self._sh_lines)
+#
+##    def test_global_color_conf_usage(self):
+##        """Test setting of global color config.
+##
+##        sh_fmt global function uses it, so we will use this function for test.
+##        """
+##
+##        blue_colors_conf = self.TstColorsConfig()
+##        red_colors_conf = self.TstColorsConfig({'NAME': "RED"})
+##
+##        sample_plain_text = "sample text"
+##        sample_sh_text = SHText(("NAME", sample_plain_text))
+##
+##        # 1. global config contains colors
+##        set_global_colors_config(blue_colors_conf)
+##
+##        blue_ct = sh_fmt(sample_sh_text)
+##        self.assertIsInstance(blue_ct, CHText)
+##        self.assertEqual(blue_ct.plain_text(), sample_plain_text)
+##        self.assertNotEqual(
+##            str(blue_ct), sample_plain_text,
+##            "blue_ct object is expected to contain color sequences because "
+##            "the global config contains some color configuration for "
+##            "the 'NAME' syntax group")
+##
+##        # 2. palette is explicitley specified for sh_fmt
+##        red_ct = sh_fmt(sample_sh_text, palette=red_colors_conf.get_palette())
+##        self.assertIsInstance(red_ct, CHText)
+##        self.assertEqual(red_ct.plain_text(), sample_plain_text)
+##        self.assertNotEqual(
+##            str(blue_ct), str(red_ct),
+##            "even though the global color config is still the same, "
+##            "different palette was used to prepare the red_ct, so "
+##            "different color sequences are expected")
+##
+##        # 3. set different gobal colors
+##        set_global_colors_config(red_colors_conf)
+##        new_red_ct = sh_fmt(sample_sh_text)
+##
+##
+##        self.assertEqual(
+##            str(new_red_ct), str(red_ct),
+##            "according to the global config the sample_sh_text now should be red")
+##
+##        # reset global golors config
+##        set_global_colors_config(None)
+##
+##    def test_sh_fmt_method(self):
+##        """sh_fmt - converts single argument into CHText."""
+##
+##        # test misc types of arguments the sh_fmt accepts
+##        # 1. SHText
+##        sample_text = "sample text"
+##        ct = sh_fmt(SHText(("NAME", sample_text)))
+##        self.assertEqual(ct.plain_text(), sample_text)
+##        self.assertNotEqual(str(ct), sample_text)
+##
+##        # 2. simple string
+##        ct = sh_fmt(sample_text)
+##        self.assertEqual(ct.plain_text(), sample_text)
+##        self.assertEqual(str(ct), sample_text)
+##
+##        # 3. SHText generator
+##        obj_with_shtext_descr = self._DummySHTextGenerator(
+##            SHText(("NAME", "usual")),
+##            SHText(("CATEGORY", "description")),
+##        )
+##        ct = sh_fmt(obj_with_shtext_descr)
+##        self.assertEqual(ct.plain_text(), "usual\ndescription")
+##
+##        # 4. other types should be treated as strings
+##        x = ("NAME", "name")
+##        ct = sh_fmt(x)
+##        self.assertIsInstance(ct, CHText)
+##        # even though the argument looks like a colored chunk argument of SHText,
+##        # it should not be interpreted as colored text. It's just a tuple.
+##        # So, the result should be '("NAME", "name")' or "('NAME', 'name')"
+##        self.assertEqual(ct.plain_text(), str(x))
+#
+#    def test_sh_print_method(self):
+#        """Test sh_print function."""
+#
+#        # 1. print simple string
+#        with io.StringIO() as output:
+#            sh_print("sample", file=output)
+#            result = output.getvalue()
+#        self.assertEqual(result, "sample\n")
+#
+#        # 2. print SHText object
+#        with io.StringIO() as output:
+#            sh_print(SHText(("NAME", "test name text")), file=output)
+#            result = output.getvalue()
+#        self.assertIn("test name text", result)
+#        self.assertNotEqual(result, "test name text\n")  # color sequences expected
+#
+#        # 3. print SHText generator
+#        obj_with_shtext_descr = self._DummySHTextGenerator(
+#            SHText(("NAME", "usual")),
+#            SHText(("CATEGORY", "description")),
+#        )
+#        with io.StringIO() as output:
+#            sh_print(obj_with_shtext_descr, file=output)
+#            result = output.getvalue()
+#        # obj description consists of 2 lines.
+#        # each line ends with '\n'
+#        lines = result.split('\n')
+#        self.assertEqual(len(lines), 3)
+#        self.assertIn("usual", lines[0])
+#        self.assertIn("description", lines[1])
+#        self.assertEqual(lines[2], "")
+#
+#        # 4. print several items
+#        with io.StringIO() as output:
+#            sh_print(
+#                "item1",
+#                "item2",
+#                SHText(("NAME", "name")),
+#                obj_with_shtext_descr,
+#                SHText(("NUMBER", "25")),
+#                file=output)
+#            result = output.getvalue()
+#
+#        plain_text_result = CHText.strip_colors(result)
+#        # all printed items are separated by ' ', obj_with_shtext_descr
+#        # consists of two lines, so the result also consists of two lines
+#        expected_text = (
+#            "item1 item2 name usual\n"
+#            "description 25\n")
+#        self.assertEqual(plain_text_result, expected_text)
+#
+#        # 5. make sure other objects are can be printed
+#        # (the same way standard 'print' prints them)
+#
+#        # 5.1. this item looks like a syntax group of SHText.
+#        # But it must not be interpreted as colored text, it should be printed
+#        # as a simple tuple.
+#        x = ("NAME", "name")
+#
+#        with io.StringIO() as output:
+#            sh_print(x, file=output)
+#            result = output.getvalue()
+#
+#        self.assertEqual(result, f"{x}\n")
+#
+#        # 5.2. test printing miscellaneous other objects
+#
+#        items_to_print = [
+#            [],
+#            {},
+#            "text",
+#            "",
+#            ("NAME", "name"),
+#            ("NAME", "name", 5),
+#            None,
+#            True,
+#            False,
+#        ]
+#
+#        with io.StringIO() as output:
+#            sh_print(*items_to_print, file=output)
+#            result = output.getvalue()
+#
+#        with io.StringIO() as output:
+#            print(*items_to_print, file=output)
+#            expected_result = output.getvalue()
+#
+#        self.assertEqual(result, expected_result)
