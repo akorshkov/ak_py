@@ -8,7 +8,7 @@ import re
 import threading
 from typing import Iterator
 
-from ak.color import ColorsConfig, CHText, LocalPalette, ConfColor
+from ak.color import ColorsConfig, CHText, Palette, ConfColor
 from ak.ppobj import PPObj
 from ak.utils import Timer, Comparable, compare_dictionaries
 
@@ -1974,7 +1974,7 @@ class GHistReport(PPObj):
     To print the report simply print this object.
     """
 
-    class GHistLocalPalette(LocalPalette):
+    class GHistPalette(Palette):
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'GHIST.REPO': "CYAN:bold",
@@ -1997,7 +1997,7 @@ class GHistReport(PPObj):
         ver_not_built = ConfColor('GHIST.VER_NOT_BUILT')
         ver_not_merged = ConfColor('GHIST.VER_NOT_MERGED')
 
-    LOCAL_PALETTE_CLASS = GHistLocalPalette
+    PALETTE_CLASS = GHistPalette
 
     def __init__(self, report_data, report_formatter):
         self.data = report_data

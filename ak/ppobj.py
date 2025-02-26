@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import CHText, LocalPalette, CompoundPalette, LocalPaletteUser, ConfColor
+from ak.color import CHText, Palette, CompoundPalette, LocalPaletteUser, ConfColor
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
 CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
@@ -28,13 +28,13 @@ class PrettyPrinter(LocalPaletteUser):
         {True: 'true', False: 'false', None: 'null'},
     )
 
-    class PPLocalPalette(LocalPalette):
+    class PPPalette(Palette):
         """Palette to be used by PrettyPrinter."""
         name = ConfColor("NAME")
         number = ConfColor("NUMBER")
         keyword = ConfColor("KEYWORD")
 
-    LOCAL_PALETTE_CLASS = PPLocalPalette
+    PALETTE_CLASS = PPPalette
 
     def __init__(self, *, fmt_json=False):
         """Create PrettyPrinter for printing json-like objects.
@@ -85,7 +85,7 @@ class PrettyPrinter(LocalPaletteUser):
         return "\n".join(self.gen_pplines(obj_to_print))
 
     def _gen_ch_chunks_for_obj(
-        self, _c: PPLocalPalette, obj_to_print, offset=0,
+        self, _c: PPPalette, obj_to_print, offset=0,
     ) -> Iterator[CHText.Chunk]:
         # generate parts for colored text result
 
@@ -223,7 +223,7 @@ class PrettyPrinter(LocalPaletteUser):
             return False
         return True
 
-    def _simple_val_to_ch_chunk(self, _c: PPLocalPalette, value) -> CHText.Chunk:
+    def _simple_val_to_ch_chunk(self, _c: PPPalette, value) -> CHText.Chunk:
         # simple value (number, string, built-in constant) -> CHText.Chunk
         if isinstance(value, str):
             return _c.text('"' + value + '"')
@@ -239,7 +239,7 @@ class PrettyPrinter(LocalPaletteUser):
             return _c.text("[]")
         assert False, f"value {value} is not simple"
 
-    def _dict_key_to_sc_chunk(self, _c: PPLocalPalette, key) -> CHText.Chunk:
+    def _dict_key_to_sc_chunk(self, _c: PPPalette, key) -> CHText.Chunk:
         # !!!
         key_str = '"' + key + '"' if isinstance(key, str) else str(key)
         return _c.name(key_str)
@@ -326,7 +326,7 @@ class PPObj(_PPObjBase):
     """Implementation of a 'simple' PPObj.
 
     'simple' here means that all the coloring information required for
-    'ch_text' and 'ch_lines' is located in an instance of LocalPalette-derived class.
+    'ch_text' and 'ch_lines' is located in an instance of Palette-derived class.
     Implementation of 'ch_text' and 'ch_lines' methods provided in this class
     fetches corresponding local palette from context and calls 'make_ch_text'
     or 'gen_ch_lines' methods with the local palette argument.
@@ -429,7 +429,7 @@ class PPTable(PPObj):
     of data (such as results of sql query).
     """
 
-    class TableLocalPalette(CompoundPalette):
+    class TablePalette(CompoundPalette):
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'TABLE.BORDER': "GREEN",
@@ -447,7 +447,7 @@ class PPTable(PPObj):
         keyword = ConfColor('TABLE.KEYWORD')
         warn = ConfColor('TABLE.WARN')
 
-    LOCAL_PALETTE_CLASS = TableLocalPalette
+    PALETTE_CLASS = TablePalette
 
     def __init__(
             self, records, *,
@@ -647,8 +647,8 @@ class PPTableFieldType(LocalPaletteUser):
     # _DUMMY_SYNTAX_NAMES = {}  # used in default get_cell_text_len  !!! ???
 
     # !!! default field uses same palette as table
-    LOCAL_PALETTE_CLASS = PPTable.TableLocalPalette
-    # _DUMMY_NO_COLOR_LOCAL_PALETTE = LOCAL_PALETTE_CLASS.make(None, False, None)
+    PALETTE_CLASS = PPTable.TablePalette
+    # _DUMMY_NO_COLOR_LOCAL_PALETTE = PALETTE_CLASS.make(None, False, None)
 
     def __init__(self, min_width=1, max_width=999):
         self.min_width = min_width
@@ -668,7 +668,7 @@ class PPTableFieldType(LocalPaletteUser):
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_text(
             value, fmt_modifier,
-            self.LOCAL_PALETTE_CLASS.get_no_color_palette())
+            self.PALETTE_CLASS.get_no_color_palette())
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def get_title_cell_text_len(self, value, fmt_modifier) -> int:
@@ -1633,12 +1633,12 @@ class _PPTableImpl:
         """Remove columns from table."""
         self._ppt_fmt.remove_columns(columns_names)
 
-    def gen_ch_lines(self, _c: PPTable.TableLocalPalette) -> Iterator[CHText]:
+    def gen_ch_lines(self, _c: PPTable.TablePalette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""
 
         columns = self._ppt_fmt.columns
         record_fields_palettes = [
-            _c.get_sub_palette(col.field.field_type.LOCAL_PALETTE_CLASS)
+            _c.get_sub_palette(col.field.field_type.PALETTE_CLASS)
             for col in columns]
         title_fields_palettes = [_c for col in columns]
 
@@ -1807,15 +1807,15 @@ class PPEnumFieldType(PPTableFieldType):
 
     Generates values for PPTable cells, f.e.: "10 Active"
     """
-    class EnumLocalPalette(PPTableFieldType.LOCAL_PALETTE_CLASS):
-        PARENT_PALETTES = [PPTableFieldType.LOCAL_PALETTE_CLASS, ]
+    class EnumPalette(PPTableFieldType.PALETTE_CLASS):
+        PARENT_PALETTES = [PPTableFieldType.PALETTE_CLASS, ]
 
         value = ConfColor('')
         name_good = ConfColor('')
         name_warn = ConfColor('')
         error = ConfColor('ERROR')
 
-    LOCAL_PALETTE_CLASS = EnumLocalPalette
+    PALETTE_CLASS = EnumPalette
     MISSING = object()
 
     _FMT_MODIFIERS = {

@@ -5,7 +5,7 @@ import io
 from typing import Iterator
 
 from ak.color import (
-    CHText, ColorFmt, ColorBytes, ColorsConfig, LocalPalette,
+    CHText, ColorFmt, ColorBytes, ColorsConfig, Palette,
     get_global_colors_config, set_global_colors_config,
     ConfColor,
 )
@@ -149,7 +149,9 @@ class TestColorFmt(unittest.TestCase):
             self.assertIn(expected_msg, err_msg)
 
 
-class TestColoredTextProperties(unittest.TestCase):
+class TestCHTextProperties(unittest.TestCase):
+    """Test properties of CHText objects."""
+    # !!!!!! Need to test CHText.Chunk properties also !!!!
 
     def test_nocolor_text(self):
         """Test CHText which does not have any effect."""
@@ -575,6 +577,7 @@ class TestColorsConfig(unittest.TestCase):
 
     class TstColorsConfig(ColorsConfig):
         # not a nice-loking colors config, but ok for test purposes
+        # note, that BUILT_IN_CONFIG settings are not inherited from the base class,
         BUILT_IN_CONFIG = {
             "TEXT": "",
             "NAME": "BLUE:bold",
@@ -592,6 +595,7 @@ class TestColorsConfig(unittest.TestCase):
 
     @classmethod
     def _color_report_to_map(cls, report):
+        # parse the report produced by ColorsConfig.make_report()
         # returns {synt_id: report_line}
         report = CHText.strip_colors(report)
         lines_by_synt_id = {}
@@ -633,9 +637,6 @@ class TestColorsConfig(unittest.TestCase):
             raw_text, colored_texts['UNEXPECTED'],
             "missing syntax means no formatting")
 
-        #print(colored_texts['VERY_COLORED'])
-        #print(colored_texts['VERY_UNCOLORED'])
-
         # all these items expected to be colored
         self.assertGreater(len(str(colored_texts['NAME'])), len(raw_text))
         self.assertGreater(len(str(colored_texts['TABLE.NAME'])), len(raw_text))
@@ -649,6 +650,35 @@ class TestColorsConfig(unittest.TestCase):
         self.assertNotEqual(
             colored_texts['NAME'], colored_texts['TABLE.ALT2_NAME'],
             "expected BLUE and GREEN colors respectively")
+
+    def test_default_syntax(self):
+        """Make sure that default syntax is used instead of unknown one."""
+
+        # "TEXT" syntax should be used as default syntax.
+        # Usually the default format means 'no colors' format.
+        # In order to verify that it is the format of "TEXT" syntax is used as
+        # default, not the dummy 'no colors' format, let's configure the "TEXT"
+        # to have some color
+        colors_conf = self.TstColorsConfig({
+            "TEXT": "RED:bold",
+        })
+
+        # make sure default format is used when unknown syntax is encountered
+        default_fmt = colors_conf.get_color("TEXT")
+        self.assertIs(default_fmt, colors_conf.get_color("UNEXPECTED_SYNTAX_ID"))
+
+        # make sure settings from base class are not inherited by colors_conf
+        keyword_fmt = colors_conf.get_color("KEYWORD")
+        self.assertIs(
+            keyword_fmt, default_fmt,
+            "even though in colors_conf base class ColorsConfig.BUILT_IN_CONFIG "
+            "there is 'KEYWORD' syntax element, there is no such element in "
+            "TstColorsConfig.BUILT_IN_CONFIG. So colors_conf should not know "
+            "about this syntax and the default syntax should be returned instead")
+
+        self.assertEqual(
+            str(keyword_fmt("default text")),
+            str(ColorFmt("RED", bold=True)("default text")))
 
     def test_turned_off_syntax_coloring(self):
         """Test turning off all the syntax coloring."""
@@ -707,7 +737,7 @@ class TestColorsConfig(unittest.TestCase):
             colored_texts['VERY_COLORED'], colored_texts['TABLE.BORDER'])
 
     def test_not_default_config(self):
-        """Simulate !!! Test ColorsConfig construction with initial config."""
+        """Simulate test ColorsConfig construction with initial config."""
 
         # syntax colors description is processed first and has higher precenence
         # than defaults hardcoded in python code.
@@ -778,7 +808,7 @@ class TestColorsConfig(unittest.TestCase):
             str(colors_conf.get_color("SHADE")(sample_text)),
             str(ColorFmt("g4", bg_color="g5")(sample_text)))
 
-    def test_config_not_resilved_items(self):
+    def test_config_not_resolved_items(self):
         """Test situation when some items in the config can't be resolved.
 
         This usually means an error in configuration. But such situations
@@ -825,7 +855,7 @@ class TestColorsConfig(unittest.TestCase):
 
         # check how colors config report look
         report = colors_conf.make_report()
-        print(report)
+        # print(report)
         lines_by_synt_id = self._color_report_to_map(report)
 
         self.assertEqual(
@@ -838,88 +868,109 @@ class TestColorsConfig(unittest.TestCase):
         self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_3'])
         self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_4'])
 
-#    def test_register_palette_user(self):
-#        """Data from palette user makes it possible to resolve color rules"""
-#        class MyMinorColorsConfig(ColorsConfig):
-#            BUILT_IN_CONFIG = {
-#                "SYNT_1": "SYNT_X_2",
-#                "SYNT_2": "YELLOW",
-#                "SYNT_3": "BLUE",
-#            }
-#
-#        colors_conf = MyMinorColorsConfig(
-#            {
-#                "SYNT_3": "SYNT_X_3",
-#                "SYNT_4": "SYNT_1",
-#            })
-#
-#        # so far the configuration is the same as in previous test case.
-#        # coloring rules for SYNT_1, SYNT_3 and SYNT_4 can't be resolved.
-#        #
-#        # When config was created it was expected that 'SYNT_X_3' syntax will
-#        # be used. But the class which actually use it and provide info about
-#        # it is registered in the Config only later. This is ok.
-#
-#        class MyLocalPalette(LocalPalette):
-#            """Test LocalPalette which introduces rules for some syntaxes"""
-#            SYNTAX_DEFAULTS = {
-#                'SYNT_X_3': "RED",
-#                'SYNT_X_2': "GREEN",
-#                'SYNT_2': "RED",
-#            }
-#
-#        # 1. before MyLocalPalette is registered in the config some syntaxes
-#        # are not resolved
-#        report = colors_conf.make_report()
-#        # print(report)
-#        lines_by_synt_id = self._color_report_to_map(report)
-#        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
-#
-#        global_palette = colors_conf.get_palette()
-#
-#        test_text = "test"
-#        self.assertEqual(
-#            str(global_palette(SHText(('SYNT_1', test_text)))),
-#            test_text,
-#            "'SYNT_1' rule is not resolved, plain text is produced")
-#
-#        # 2. after MyLocalPalette is registered the config becomes updated.
-#        # Rule for 'SYNT_1' can be resolved now.
-#
-#        # this affected the colors_conf
-#        _ = MyLocalPalette.make(colors_conf)
-#
-#        report = colors_conf.make_report()
-#        # print(report)
-#        lines_by_synt_id = self._color_report_to_map(report)
-#        self.assertNotIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
-#
-#        # and the global palette created by colors_conf is different now
-#        global_palette = colors_conf.get_palette()
-#
-#        self.assertEqual(
-#            str(global_palette(SHText(('SYNT_1', test_text)))),
-#            str(ColorFmt('GREEN')(test_text)),
-#        )
-#
-#        # properties of the created MyLocalPalette object are not tested here
+    def test_register_palette_user(self):
+        """Data from palette user makes it possible to resolve color rules"""
+        class MyMinorColorsConfig(ColorsConfig):
+            BUILT_IN_CONFIG = {
+                "SYNT_1": "SYNT_X_2",
+                "SYNT_2": "YELLOW",
+                "SYNT_3": "BLUE",
+            }
 
-    def test_get_palette_all_colors(self):
+        colors_conf = MyMinorColorsConfig(
+            {
+                "SYNT_3": "SYNT_X_3",
+                "SYNT_4": "SYNT_1",
+            })
+
+        # so far the configuration is the same as in previous test case.
+        # coloring rules for SYNT_1, SYNT_3 and SYNT_4 can't be resolved.
+        #
+        # When config was created it was expected that 'SYNT_X_3' syntax will
+        # be used. But the class which actually use it and provide info about
+        # it is registered in the Config only later. This is ok.
+
+        class MyPalette(Palette):
+            """Test Palette which introduces rules for some syntaxes"""
+            SYNTAX_DEFAULTS = {
+                'SYNT_X_3': "RED",
+                'SYNT_X_2': "GREEN",
+                'SYNT_2': "RED",
+            }
+
+        # 1. before MyPalette is registered in the config some syntaxes
+        # are not resolved
+        report = colors_conf.make_report()
+        # print(report)
+        lines_by_synt_id = self._color_report_to_map(report)
+        self.assertIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+
+        global_palette = colors_conf.get_palette()
+
+        test_text = "test"
+        self.assertEqual(
+            str(global_palette.get_color('SYNT_1')(test_text)),
+            test_text,
+            "'SYNT_1' rule is not resolved, plain text is produced")
+
+        # 2. after MyPalette is registered the config becomes updated.
+        # Rule for 'SYNT_1' can be resolved now.
+
+        # this affected the colors_conf
+        _ = MyPalette.make(colors_conf)
+
+        report = colors_conf.make_report()
+        # print(report)
+        lines_by_synt_id = self._color_report_to_map(report)
+        self.assertNotIn('<NOT RESOLVED>', lines_by_synt_id['SYNT_1'])
+
+        # and the global palette created by colors_conf is different now
+        global_palette = colors_conf.get_palette()
+
+        self.assertEqual(
+            str(global_palette.get_color('SYNT_1')(test_text)),
+            str(ColorFmt('GREEN')(test_text)),
+        )
+
+        # properties of the created MyPalette object are not tested here
+
+    def test_global_palette(self):
         """Test ceation of Palette containing all colors from config"""
         colors_conf = self.TstColorsConfig()
 
         global_palette = colors_conf.get_palette()
 
-        fmt_text = global_palette["TEXT"]
-        self.assertIs(fmt_text, colors_conf.get_color("TEXT"), "!!!")
+        # global palette has some standard syntaxes:
+        # text, name, keyword, ok, warn, error
+        # Fields corresponding to these syntaxes are always present in the
+        # global palette (even if the global config does not know about
+        # these syntaxes)
+
+        # "NAME" syntax is present in our config, global_palette.name uses it
+        self.assertIs(
+            global_palette.name, global_palette["NAME"],
+            "must produce the same result for built-in syntaxes")
+        self.assertIs(global_palette.name, colors_conf.get_color("NAME"))
+        self.assertEqual(
+            str(global_palette.name("some text")),
+            str(ColorFmt("BLUE", bold=True)("some text")))
+
+        # "KEYWORD" syntax is present in our config, but
+        # global_palette.keyword should be present. Default syntax is used instead.
+        self.assertIs(global_palette.keyword, global_palette["KEYWORD"])
+        self.assertIs(global_palette.keyword, colors_conf.get_color("TEXT"))
+
+        # the global palette should have access to all the colors in the config
+        fmt_table_border = global_palette["TABLE.BORDER"]
+        self.assertIs(fmt_table_border, colors_conf.get_color("TABLE.BORDER"))
+        self.assertEqual(
+            str(fmt_table_border("some text")),
+            str(ColorFmt("RED")("some text")))
 
         fmt_very_colored = global_palette["VERY_COLORED"]
-        self.assertIs(fmt_very_colored, colors_conf.get_color("VERY_COLORED"), "!!!")
+        self.assertIs(fmt_very_colored, colors_conf.get_color("VERY_COLORED"))
 
-        fmt_table_border = global_palette["TABLE.BORDER"]
-        self.assertIs(fmt_table_border, colors_conf.get_color("TABLE.BORDER"), "!!!")
-
-        self.assertIsNot(fmt_very_colored, fmt_table_border, "!!!")
+        self.assertIsNot(fmt_very_colored, fmt_table_border)
 
     def test_get_palette_multiple_calls(self):
         """Test Palette creation by ColorsConfig."""
@@ -957,10 +1008,10 @@ class TestColorsConfig(unittest.TestCase):
             "subsequent changes of the config")
 
 
-class TestLocalPalete(unittest.TestCase):
-    """Test LocalPalette functionality.
+class TestPalete(unittest.TestCase):
+    """Test Palette functionality.
 
-    LocalPalette is used by misc components of application. LocalPalette
+    Palette is used by misc components of application. Palette
     contains the part of colors configuration which is required for the
     component.
     """
@@ -974,7 +1025,7 @@ class TestLocalPalete(unittest.TestCase):
             "WARN": "RED",
         }
 
-    class MyLocalPalette(LocalPalette):
+    class MyPalette(Palette):
         SYNTAX_DEFAULTS = {
             "TBL.TEXT": "NUMBER",
             "TBL.BORDER": "GREEN",
@@ -985,14 +1036,27 @@ class TestLocalPalete(unittest.TestCase):
         border = ConfColor("TBL.BORDER")
         warn = ConfColor("TBL.WARN")
 
+    @classmethod
+    def _color_report_to_map(cls, report):
+        # parse the report produced by Palette.make_report()
+        # returns {synt_id: report_line}
+        report = CHText.strip_colors(report)
+        lines_by_synt_id = {}
+        for line in report.split('\n'):
+            chunks = line.split(':')
+            if len(chunks) < 2:
+                continue
+            lines_by_synt_id[chunks[0].strip()] = line
+        return lines_by_synt_id
+
     def test_local_palette_creation_from_global_config(self):
-        """Test construction of LocalPalette object from global config."""
+        """Test construction of Palette object from global config."""
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
         # create the local_palette object from the global colors config
         # and check it works
-        local_palette = self.MyLocalPalette.make()
+        local_palette = self.MyPalette.make()
 
         sample_text = "sample text"
         color_text_0 = CHText(local_palette.ctxt(sample_text))
@@ -1011,10 +1075,10 @@ class TestLocalPalete(unittest.TestCase):
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        class DerivedPalette(self.MyLocalPalette):
+        class DerivedPalette(self.MyPalette):
             pass
 
-        parent_palette = self.MyLocalPalette.make()
+        parent_palette = self.MyPalette.make()
         derived_palette = DerivedPalette.make()
 
         sample_text = "sample text"
@@ -1033,7 +1097,7 @@ class TestLocalPalete(unittest.TestCase):
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        class DerivedPalette(self.MyLocalPalette):
+        class DerivedPalette(self.MyPalette):
             SYNTAX_DEFAULTS = {
                 "TBL.WARN": "YELLOW",  # should have no effect
                 "TBL.ALT_TEXT": "KEYWORD",
@@ -1041,7 +1105,7 @@ class TestLocalPalete(unittest.TestCase):
             ctxt = ConfColor("TBL.ALT_TEXT")
             new_synt = ConfColor("TBL.WARN")
 
-        parent_palette = self.MyLocalPalette.make()
+        parent_palette = self.MyPalette.make()
         derived_palette = DerivedPalette.make()
         # print(global_conf.make_report())
 
@@ -1088,7 +1152,7 @@ class TestLocalPalete(unittest.TestCase):
             parent_palette.new_synt(sample_text)
 
         err_msg = str(exc.exception)
-        self.assertIn("MyLocalPalette", err_msg)
+        self.assertIn("MyPalette", err_msg)
         self.assertIn("object has no attribute", err_msg)
         self.assertIn("new_synt", err_msg)
 
@@ -1102,63 +1166,13 @@ class TestLocalPalete(unittest.TestCase):
         # cleanup global config
         set_global_colors_config(None)
 
-    def test_alt_local_palette_creation(self):
-        """!!!! get rid of alt local palettes !!! """
-        global_conf = self.TstColorsConfig()
-        set_global_colors_config(global_conf)
-
-        # 1. create the local_palette object from the global colors config
-        local_palette = self.MyLocalPalette.make()
-        sample_text = "sample text"
-        color_text_0 = CHText(local_palette.ctxt(sample_text))
-
-        # 2. create local_palette which uses different syntaxes from global conf
-        class AltPalette(self.MyLocalPalette):
-            ctxt = ConfColor("KEYWORD")
-
-        alt_palette = AltPalette.make()
-
-        self.assertEqual(
-            str(CHText(alt_palette.ctxt(sample_text))),
-            str(ColorFmt("BLUE", bold=True)(sample_text)),
-            "in the alt palette local syntax id 'TEXT' corresponds to 'KEYWORD' "
-            "syntax in the global config => BLUE, bold")
-
-        # 3. creation of the alt_palette should not have changed previously
-        # created palette
-        self.assertEqual(
-            str(CHText(local_palette.ctxt(sample_text))),
-            str(color_text_0))
-
-        # 4. create another palette from the global config
-        # Creation of the alternative palette on step 2. should not have
-        # invalidated the cache.
-        local_palette_1 = self.MyLocalPalette.make()
-
-        self.assertIs(
-            local_palette, local_palette_1,
-            "same cached object is expected")
-
-        # 5. after global conf modification a different local_palette object
-        # should be created
-        global_conf.add_new_items(
-            {"SOME_NEW_SYNTAX": "RED"}, "some dummy syntax rule")
-        local_palette_2 = self.MyLocalPalette.make()
-
-        self.assertIsNot(
-            local_palette, local_palette_2,
-            "new object is expected because the config has been modified")
-
-        # cleanup global config
-        set_global_colors_config(None)
-
     def test_no_color_local_palette(self):
-        """Test construction of no-color LocalPalette."""
+        """Test construction of no-color Palette."""
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        local_palette = self.MyLocalPalette.make()
-        no_color_palette = self.MyLocalPalette.make(no_color=True)
+        local_palette = self.MyPalette.make()
+        no_color_palette = self.MyPalette.make(no_color=True)
 
         # check local_palette produces colored text and no_color_palette - plain text
         sample_text = "sample text"
@@ -1176,11 +1190,51 @@ class TestLocalPalete(unittest.TestCase):
         # cached objects expected on subsequent creations as there were no
         # modifications to the config
 
-        local_palette_1 = self.MyLocalPalette.make()
-        no_color_palette_1 = self.MyLocalPalette.make(no_color=True)
+        local_palette_1 = self.MyPalette.make()
+        no_color_palette_1 = self.MyPalette.make(no_color=True)
 
         self.assertIs(local_palette, local_palette_1)
         self.assertIs(no_color_palette, no_color_palette_1)
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_palette_report(self):
+        """Test creation of palettes report."""
+        global_conf = self.TstColorsConfig()
+        set_global_colors_config(global_conf)
+
+        class DerivedPalette(self.MyPalette):
+            SYNTAX_DEFAULTS = {
+                "TBL.WARN": "YELLOW",  # should have no effect
+                "TBL.ALT_TEXT": "KEYWORD",
+            }
+            ctxt = ConfColor("TBL.ALT_TEXT")
+            new_synt = ConfColor("TBL.WARN")
+
+        parent_palette = self.MyPalette.make()
+        derived_palette = DerivedPalette.make()
+
+        # print(parent_palette.make_report())
+        # print(derived_palette.make_report())
+
+        parent_rep_lines = self._color_report_to_map(parent_palette.make_report())
+        derived_rep_lines = self._color_report_to_map(derived_palette.make_report())
+
+        self.assertEqual(
+            {'text', 'ctxt', 'border', 'warn'},
+            set(parent_rep_lines.keys()),
+            "\n'ctxt', 'border', 'warn' - defined in MyPalette class; "
+            "'text' is the default present in all palettes"
+        )
+
+        self.assertEqual(
+            {'text', 'ctxt', 'border', 'warn', 'new_synt'},
+            set(derived_rep_lines.keys()),
+            "\n'ctxt', 'border', 'warn' are defined in the parent class; "
+            "'new_synt' is defined in DerivedPalette; "
+            "'text' is the default present in all palettes"
+        )
 
         # cleanup global config
         set_global_colors_config(None)

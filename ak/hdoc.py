@@ -15,7 +15,7 @@ python's concole scope.
 import inspect
 from typing import Iterator
 
-from ak.color import LocalPalette, LocalPaletteUser, CHText, ConfColor
+from ak.color import Palette, LocalPaletteUser, CHText, ConfColor
 
 
 #########################
@@ -30,7 +30,7 @@ class LLImpl(LocalPaletteUser):
     ... summary of local variables is printed ...
     """
 
-    class LLImplLocalPalette(LocalPalette):
+    class LLImplPalette(Palette):
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'LL.NAME': 'NAME',
@@ -40,7 +40,7 @@ class LLImpl(LocalPaletteUser):
         name = ConfColor('LL.NAME')
         category = ConfColor('LL.CATEGORY')
 
-    LOCAL_PALETTE_CLASS = LLImplLocalPalette
+    PALETTE_CLASS = LLImplPalette
 
     def __init__(self, locals_dict):
         """Create 'll' object which prints summary of values in python console.
@@ -148,7 +148,7 @@ class HCommand(LocalPaletteUser):
     _DFLT_FILT_ARG = object()
     _LEVEL_H, _LEVEL_HH = 1, 2  # correspond to 'h' and 'hh' commands
 
-    class HCmdLocalPalette(LocalPalette):
+    class HCmdPalette(Palette):
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'HDOC.ATTR': 'YELLOW',
@@ -162,7 +162,7 @@ class HCommand(LocalPaletteUser):
         warn = ConfColor('HDOC.WARN')
 
 
-    LOCAL_PALETTE_CLASS = HCmdLocalPalette
+    PALETTE_CLASS = HCmdPalette
 
     def __init__(self, dets_level=_LEVEL_H):
         self.dets_level = dets_level

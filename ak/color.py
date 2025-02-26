@@ -1071,7 +1071,7 @@ class ConfColor:
         assert False
 
 
-class _LocalPaletteMeta(type):
+class _PaletteMeta(type):
     # !!!
     def __new__(meta, classname, supers, classdict):
 
@@ -1097,13 +1097,13 @@ class _LocalPaletteMeta(type):
         return type.__new__(meta, classname, supers, classdict)
 
 
-class LocalPalette(metaclass=_LocalPaletteMeta):
+class Palette(metaclass=_PaletteMeta):
     """Collection of color formatters to be used in some specific place.
 
     For example we have a 'table' object which can be printed out using different
     colors for different items of the table.
 
-    The LocalPalette class used by the table:
+    The Palette class used by the table:
     - ptovides formatters to be used to produce text with 'border', 'title', etc.
       colors
     - creates these formatters using colors specified in the global colors config
@@ -1118,13 +1118,13 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
     use 'T.BORDER' constant to find the actual color as we may want to print the
     same table in different colors.
 
-    LocalPalette is the object which is created when it's necessary to generate
+    Palette is the object which is created when it's necessary to generate
     colored text and contains {"internal syntax id" -> color} information.
 
     Class attributes describe default rules of fetching info from global colors
     config and default colors to be used if the info was not found in the config.
     """
-    # List of other LocalPalette classes this one depends on (uses syntaxes defined
+    # List of other Palette classes this one depends on (uses syntaxes defined
     # in that classes)
     PARENT_PALETTES = None
 
@@ -1139,7 +1139,7 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
     text = ConfColor("TEXT")
 
     def __init__(self, local_colors, _no_color=None, _colors_conf=None):
-        """Constructor of LocalPalette - for internal use.
+        """Constructor of Palette - for internal use.
 
         Use the 'make' method instead.
 
@@ -1170,7 +1170,7 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
         """
         assert cls._LOCAL_SYNTAX is not None, (
             f"internal error: '_LOCAL_SYNTAX' is not present in "
-            f"LocalPalette class {cls}")
+            f"Palette class {cls}")
 
         if colors_conf is None:
             colors_conf = get_global_colors_config()
@@ -1228,9 +1228,9 @@ class LocalPalette(metaclass=_LocalPaletteMeta):
         )
 
 
-class CompoundPalette(LocalPalette):
+class CompoundPalette(Palette):
     """ """
-    SUB_PALETTES_MAP = None  # {(LocalPalette, "modifier name"): AltLocalPalette}
+    SUB_PALETTES_MAP = None  # {(Palette, "modifier name"): AltLocalPalette}
 
     def __init__(self, local_colors, no_color, colors_conf):
         super().__init__(local_colors, no_color, colors_conf)
@@ -1251,7 +1251,7 @@ class CompoundPalette(LocalPalette):
         return result
 
 
-class GlobalPalette(LocalPalette):
+class GlobalPalette(Palette):
     """!!!!"""
 
     # !!!! comment
@@ -1363,7 +1363,7 @@ class ColorsConfig:
     _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
 
     BUILT_IN_CONFIG = {
-        "TEXT": "",  # default text settings
+        "TEXT": "",  # supposed to be used as default text settings
         "NAME": "GREEN:bold",
         "KEYWORD": "BLUE:bold",
         "NUMBER": "YELLOW",
@@ -1552,6 +1552,8 @@ class ColorsConfig:
     def get_color(self, synt_id) -> ColorFmt:
         """syntax name -> ColorFmt"""
         syntax_color = self.syntax_map.get(synt_id)
+        if syntax_color is None:
+            syntax_color = self.syntax_map.get("TEXT")
         if syntax_color is None or syntax_color.color_fmt is None:
             return self._NO_EFFECTS_FMT
         return syntax_color.color_fmt
@@ -1567,7 +1569,7 @@ class ColorsConfig:
         return GlobalPalette.make(colors_conf=self)
 
 
-#    def _make_palette(self, group_name=None, **kwargs) -> 'LocalPalette':
+#    def _make_palette(self, group_name=None, **kwargs) -> 'Palette':
 #        """Creates Palette object for a specified syntax group.
 #
 #        For example, for syntax group 'TABLE' the default ColorsConfig will produce
@@ -1597,11 +1599,11 @@ class ColorsConfig:
 #        return Palette(palette_colors)
 
     def color_conf_component_is_registered(self, src_obj) -> bool:
-        """Check if LocalPalette object is registered in the ColorsConfig"""
+        """Check if Palette object is registered in the ColorsConfig"""
         return src_obj in self.registered_sources
 
     def register_color_conf_component(self, syntax_map, src_obj):
-        """Register LocalPalette object in the ColorsConfig"""
+        """Register Palette object in the ColorsConfig"""
         assert src_obj not in self.registered_sources, f"{src_obj=}"
         self.registered_sources.add(src_obj)
         new_items_flat_init_conf = self._flatten_dict(syntax_map)
@@ -1679,20 +1681,20 @@ class ColorsConfig:
 
 
 class LocalPaletteUser:
-    """Class which use LocalPalette to produce colored text.
+    """Class which use Palette to produce colored text.
 
     Functionality if this mixin helps to get the palette informatin from
     colors context.
     """
 
-    LOCAL_PALETTE_CLASS = None
+    PALETTE_CLASS = None
 
     @classmethod
     def _mk_local_palette(cls, colors_conf, no_color, alt_local_palette):
         # !!!!!
-        assert cls.LOCAL_PALETTE_CLASS is not None, (
-            f"'LOCAL_PALETTE_CLASS' is not implemented in {str(cls)}")
-        palette_class = alt_local_palette or cls.LOCAL_PALETTE_CLASS
+        assert cls.PALETTE_CLASS is not None, (
+            f"'PALETTE_CLASS' is not implemented in {str(cls)}")
+        palette_class = alt_local_palette or cls.PALETTE_CLASS
         if colors_conf is None:
             colors_conf = get_global_colors_config()
 
