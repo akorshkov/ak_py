@@ -86,7 +86,7 @@ class PrettyPrinter(LocalPaletteUser):
 
     def _gen_ch_chunks_for_obj(
         self, _c: PPLocalPalette, obj_to_print, offset=0,
-    ) -> Iterator[CHText._Chunk]:
+    ) -> Iterator[CHText.Chunk]:
         # generate parts for colored text result
 
         if self._value_is_simple(obj_to_print):
@@ -97,18 +97,18 @@ class PrettyPrinter(LocalPaletteUser):
             )
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print object in one line
-                chunks = [_c.no_color("{")]
+                chunks = [_c.text("{")]
                 is_first = True
                 for key in sorted_keys:
                     if not is_first:
-                        chunks.append(_c.no_color(", "))
+                        chunks.append(_c.text(", "))
                     else:
                         is_first = False
                     chunks.append(self._dict_key_to_sc_chunk(_c, key))
-                    chunks.append(_c.no_color(": "))
+                    chunks.append(_c.text(": "))
                     chunks.append(self._simple_val_to_ch_chunk(
                         _c, obj_to_print[key]))
-                chunks.append(_c.no_color("}"))
+                chunks.append(_c.text("}"))
                 scr_len = CHText.calc_chunks_len(chunks)
 
                 oneline_fmt = offset + scr_len < 200  # not exactly correct, ok
@@ -117,22 +117,22 @@ class PrettyPrinter(LocalPaletteUser):
                     return
 
             # print object in multiple lines
-            yield _c.no_color("{")
-            prefix = _c.no_color(" " * (offset + 2))
+            yield _c.text("{")
+            prefix = _c.text(" " * (offset + 2))
             is_first = True
             for key in sorted_keys:
                 if is_first:
                     is_first = False
                 else:
-                    yield _c.no_color(",")
+                    yield _c.text(",")
                 yield None
                 yield prefix
                 yield self._dict_key_to_sc_chunk(_c, key)
-                yield _c.no_color(": ")
+                yield _c.text(": ")
                 yield from self._gen_ch_chunks_for_obj(
                     _c, obj_to_print[key], offset+2)
             yield None
-            yield _c.no_color(" " * offset + "}")
+            yield _c.text(" " * offset + "}")
         elif isinstance(obj_to_print, list):
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print values in one line
@@ -145,21 +145,21 @@ class PrettyPrinter(LocalPaletteUser):
                 oneline_fmt = not items_chunks or offset + scr_len < 200
                 if oneline_fmt:
                     # print the list in one line
-                    yield _c.no_color("[")
+                    yield _c.text("[")
                     is_first = True
                     for item_chunk in items_chunks:
                         if is_first:
                             is_first = False
                         else:
-                            yield _c.no_color(", ")
+                            yield _c.text(", ")
                         yield item_chunk
-                    yield _c.no_color("]")
+                    yield _c.text("]")
                 else:
                     # print the list in several lines (but each line may
                     # contain several values)
-                    yield _c.no_color("[")
+                    yield _c.text("[")
                     yield None
-                    prefix = _c.no_color(" " * (offset + 2))
+                    prefix = _c.text(" " * (offset + 2))
                     len_yielded = 0
                     is_first_in_line = True
                     for i, item_chunk in enumerate(items_chunks):
@@ -167,7 +167,7 @@ class PrettyPrinter(LocalPaletteUser):
                         need_new_line = len_yielded + cur_chunk_len > 150
 
                         if need_new_line and not is_first_in_line:
-                            yield _c.no_color(",")
+                            yield _c.text(",")
                             yield None
                             len_yielded = 0
                             is_first_in_line = True
@@ -176,7 +176,7 @@ class PrettyPrinter(LocalPaletteUser):
                             yield prefix
                             len_yielded = offset + 2
                         else:
-                            yield _c.no_color(", ")
+                            yield _c.text(", ")
                             len_yielded += 2
                         yield item_chunk
                         len_yielded += cur_chunk_len
@@ -187,24 +187,24 @@ class PrettyPrinter(LocalPaletteUser):
                             yield None
                             break
                     # all items printed, new line started
-                    yield _c.no_color(" " * offset + "]")
+                    yield _c.text(" " * offset + "]")
             # print object in multiple lines
             else:
-                prefix = _c.no_color(" " * (offset + 2))
-                yield _c.no_color("[")
+                prefix = _c.text(" " * (offset + 2))
+                yield _c.text("[")
                 is_first = True
                 for item in obj_to_print:
                     if is_first:
                         is_first = False
                     else:
-                        yield _c.no_color(",")
+                        yield _c.text(",")
                     yield None
                     yield prefix
                     yield from self._gen_ch_chunks_for_obj(_c, item, offset+2)
                 yield None
-                yield _c.no_color(" " * offset + "]")
+                yield _c.text(" " * offset + "]")
         else:
-            yield _c.no_color(str(obj_to_print))
+            yield _c.text(str(obj_to_print))
 
     @classmethod
     def _all_values_are_simple(cls, obj_to_print) -> bool:
@@ -223,23 +223,23 @@ class PrettyPrinter(LocalPaletteUser):
             return False
         return True
 
-    def _simple_val_to_ch_chunk(self, _c: PPLocalPalette, value) -> CHText._Chunk:
-        # simple value (number, string, built-in constant) -> CHText._Chunk
+    def _simple_val_to_ch_chunk(self, _c: PPLocalPalette, value) -> CHText.Chunk:
+        # simple value (number, string, built-in constant) -> CHText.Chunk
         if isinstance(value, str):
-            return _c.no_color('"' + value + '"')
+            return _c.text('"' + value + '"')
         elif self.is_keyword_value(value):
             return _c.keyword(self._consts[value])
         elif isinstance(value, Number):
             return _c.number(str(value))
         elif isinstance(value, dict):
             assert not value
-            return _c.no_color("{}")
+            return _c.text("{}")
         elif isinstance(value, (list, tuple)):
             assert not value
-            return _c.no_color("[]")
+            return _c.text("[]")
         assert False, f"value {value} is not simple"
 
-    def _dict_key_to_sc_chunk(self, _c: PPLocalPalette, key) -> CHText._Chunk:
+    def _dict_key_to_sc_chunk(self, _c: PPLocalPalette, key) -> CHText.Chunk:
         # !!!
         key_str = '"' + key + '"' if isinstance(key, str) else str(key)
         return _c.name(key_str)
@@ -681,7 +681,7 @@ class PPTableFieldType(LocalPaletteUser):
 #    # !!!! rename! it's not about row_type. cell_type in arg is enough
 #    def make_desired_sh_text_for_row_type(
 #        self, value, fmt_modifier, cell_type, _c,
-#    ) -> ([CHText._Chunk], int):
+#    ) -> ([CHText.Chunk], int):
 #        """value -> desired CHText and alignment for table row of specified type."""
 #        if cell_type == CELL_TYPE_TITLE:
 #            _c = PPTable._mk_local_palette(colors_context, None, None)
@@ -692,7 +692,7 @@ class PPTableFieldType(LocalPaletteUser):
 
     def make_desired_cell_ch_text(
         self, value, fmt_modifier, field_local_palette,
-    ) -> ([CHText._Chunk], int):
+    ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
 
         Actual text may be truncated (hence different from desired text)
@@ -712,13 +712,13 @@ class PPTableFieldType(LocalPaletteUser):
             color_fmt = _c.number
             align = ALIGN_RIGHT
         else:
-            color_fmt = _c.no_color
+            color_fmt = _c.text
             align = ALIGN_LEFT
         return [color_fmt(str(value))], align
 
     def make_desired_title_cell_text(
         self, value, _fmt_modifier, _c,
-    ) -> ([CHText._Chunk], int):
+    ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for title table row."""
 
         # values for column title cells are fetched from so called title records
@@ -737,8 +737,8 @@ class PPTableFieldType(LocalPaletteUser):
     def make_cell_ch_text(
         self, value, fmt_modifier, width,
         field_local_palette, table_local_palette,
-    ) -> [CHText._Chunk]:
-        """value -> [CHText._Chunk] having exactly specified width."""
+    ) -> [CHText.Chunk]:
+        """value -> [CHText.Chunk] having exactly specified width."""
         text, align = self.make_desired_cell_ch_text(
             value, fmt_modifier, field_local_palette)
 
@@ -763,11 +763,11 @@ class PPTableFieldType(LocalPaletteUser):
             f"(specified format modifier: '{fmt_modifier}')")
 
     @staticmethod
-    def fit_to_width(ch_chunks, width, align, _c) -> [CHText._Chunk]:
-        """[CHText._Chunk] -> [CHText._Chunk] of exactly specified length.
+    def fit_to_width(ch_chunks, width, align, _c) -> [CHText.Chunk]:
+        """[CHText.Chunk] -> [CHText.Chunk] of exactly specified length.
 
         Arguments:
-        - ch_chunks: list of CHText._Chunk objects
+        - ch_chunks: list of CHText.Chunk objects
         - width: desired width of result
         - align: pbobj.ALIGN_LEFT or pbobj.ALIGN_CENTER or pbobj.ALIGN_RIGHT
         - warn_syntax_name: in case the text does not fit into width
@@ -786,11 +786,11 @@ class PPTableFieldType(LocalPaletteUser):
             if align == ALIGN_CENTER:
                 left_filer_len = filler_len // 2
                 right_filler_len = filler_len - left_filer_len
-                result = [_c.no_color(' '*left_filer_len)]
+                result = [_c.text(' '*left_filer_len)]
                 result.extend(ch_chunks)
-                result.append(_c.no_color(' '*right_filler_len))
+                result.append(_c.text(' '*right_filler_len))
                 return result
-            filler = _c.no_color(' '*filler_len)
+            filler = _c.text(' '*filler_len)
             if align == ALIGN_LEFT:
                 return ch_chunks + [filler, ]
             assert align == ALIGN_RIGHT
@@ -1168,7 +1168,7 @@ class PPTableColumn:
 
     def make_cell_ch_text(
         self, record, cell_type, field_local_palette, table_local_palette,
-    ) -> [CHText._Chunk]:
+    ) -> [CHText.Chunk]:
         """Fetch value from record and make text for a cell.
 
         Length of created text is exactly self.width.
@@ -1709,7 +1709,7 @@ class _PPTableImpl:
         skipped_line_contents = PPTableFieldType.fit_to_width(
             [
                 _c.warn("... "),
-                _c.no_color(f"{n_skipped} records skipped"),
+                _c.text(f"{n_skipped} records skipped"),
             ],
             table_width - 2,
             ALIGN_LEFT,
@@ -1780,11 +1780,11 @@ class _PPTableImpl:
         # 7. summary line
         if self.footer:
             yield CHText.make(PPTableFieldType.fit_to_width(
-                [_c.no_color(self.footer)], table_width, ALIGN_LEFT, _c))
+                [_c.text(self.footer)], table_width, ALIGN_LEFT, _c))
 
     def _make_table_line(
         self, record, cols_and_palettes, sep, cell_type, table_local_palette,
-    ) -> [CHText._Chunk]:
+    ) -> [CHText.Chunk]:
         # create CHText chunks - representaion of a single record in table
         line = [sep]
         is_first = True
@@ -1863,7 +1863,7 @@ class PPEnumFieldType(PPTableFieldType):
 
     def make_desired_cell_ch_text(
         self, value, fmt_modifier, _c,
-    ) -> ([CHText._Chunk], int):
+    ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment"""
 
         cache_key = id(_c) # !!!!
@@ -1908,7 +1908,7 @@ class PPEnumFieldType(PPTableFieldType):
             name, syntax_name = self.enum_missing_value
             val_len = max(self.max_val_len, len(str(value)))
 
-        color_fmt = _c.no_color if syntax_name is None else _c.local_colors[syntax_name]
+        color_fmt = _c.get_color(syntax_name)
 
         # 'val' format
         val_text_items, align = super().make_desired_cell_ch_text(value, None, _c)
@@ -1922,9 +1922,9 @@ class PPEnumFieldType(PPTableFieldType):
         pad_len = val_len - CHText.calc_chunks_len(val_text_items)
         if pad_len > 0:
             # align 'value' portion of the text to right
-            full_text_items.append(_c.no_color(" " * pad_len))
+            full_text_items.append(_c.text(" " * pad_len))
         full_text_items.extend(val_text_items)
-        full_text_items.append(_c.no_color(" "))
+        full_text_items.append(_c.text(" "))
         full_text_items.append(color_fmt(name))
         by_fmt_cache['full'][value] = (full_text_items, ALIGN_LEFT)
 

@@ -62,34 +62,181 @@ from typing import Iterator
 #########################
 # Color printer
 
-class _CTText:
-    # 'Chunked Typed Text' - text, consisting of chunks with
-    # different properties
+@dataclass(frozen=True)
+class _CHTextChunk:
+    # !!!!!
+    c_prefix: str
+    text: str
+    c_suffix: str
+
+    @classmethod
+    def make_plain(cls, text):
+        """chunk of plain (not colored) text"""
+        return cls("", text, "")
+
+    def is_plain(self) -> bool:
+        """if chunk corresponds to plain (not colored) text"""
+        return not self.c_prefix
+
+    def clone(self, new_text):
+        """create new chunk with same color but different text"""
+        return type(self)(self.c_prefix, new_text, self.c_suffix)
+
+    def has_same_type(self, other) -> bool:
+        """if other chunk has same color"""
+        return self.c_prefix == other.c_prefix
+
+    def add_chunks_same_type(self, other):
+        """ !!! """
+        assert self.has_same_type(other)
+        return type(self)(self.c_prefix, self.text + other.text, self.c_suffix)
+
+    # Methods which make _CHTextChunk behavior similar to CHText
+    def __str__(self):
+        # produce colored text
+        return f"{self.c_prefix}{self.text}{self.c_suffix}" 
+
+    def plain_text(self):
+        return self.text
+
+    # !!!! may be I do need a base class for CHText and Chunk?
+    #@classmethod
+    #def strip_colors(cls, text: str) -> str:
+    #    """Colorer-formatted string -> same string w/o coloring."""
+    #    if cls._SEQ_RE is None:
+    #        cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
+
+    def __len__(self):
+        return len(self.text)
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        
+        if isinstance(other, type(self)):
+            return (
+                self.c_prefix == other.c_prefix
+                and self.text == other.text
+                and self.c_suffix == other.c_suffix)
+
+        if isinstance(other, str):
+            return self.is_plain() and self.text == other
+
+        return NotImplemented
+
+    def __iadd__(self, other) -> 'CHText':
+        return CHText(self, other)
+
+    def __add__(self, other) -> 'CHText':
+        return CHText(self, other)
+
+    def join(self, iterable) -> 'CHText':
+        sep = CHText(self)
+        return sep.join(iterable)
+
+    def __getitem__(self, index) -> '_CHTextChunk':
+        return self.clone(self.text[index])
+
+    def fixed_len(self, desired_len) -> 'CHText':
+        len_diff = desired_len - len(self.text)
+        if len_diff > 0:
+            return CHText(self, " "*len_diff)
+        if len_diff < 0:
+            return CHText(self.clone(self.text[:desired_len]))
+        return CHText(self)
+
+    def __format__(self, format_spec):
+        return CHText(self).__format__(format_spec)
+
+
+#class _CTText:
+#    # 'Chunked Typed Text' - text, consisting of chunks with
+#    # different properties
+#
+#
+#    @dataclass(frozen=True)
+#    class Chunk:
+#        # chunk of text with a specified property
+#        syntax: str
+#        text: str
+#
+#        @classmethod
+#        def make_plain(cls, text):
+#            """chunk of plain text - no property is associated with it"""
+#            return cls("", text)
+#
+#        def is_plain(self) -> bool:
+#            """if chunk corresponds to 'plain' text"""
+#            return not self.syntax
+#
+#        def clone(self, new_text):
+#            """create new chunk with same type but different text"""
+#            return type(self)(self.syntax, new_text)
+#
+#        def has_same_type(self, other) -> bool:
+#            """if other chunk has same type"""
+#            return self.syntax == other.syntax
+#
+#    def __str__(self):
+#        # defaults implementation just concatenates text of all parts.
+#        # derived classes should produce rich text if there is enouth information
+#        # for it
+#        return self.plain_text()
+
+
+
+#class SHText(_CTText):
+#    """Syntax-Highlighted text.
+#
+#    Direct creation of CHText in application code may be inconvenient
+#    bacause actual colors to be used depend on configuration and not
+#    not be easily available.
+#
+#    Low-level code creates text specifying not names of actual colors, but
+#    names on syntaxes.
+#
+#    sh_descr = SHText("Result is: ", ("OK", "success"), ". Grats!")
+#
+#    Later on use Palette object to produce colored text:
+#
+#    print(some_palette(sh_descr))
+#    """
+#    __slots__ = tuple()
+#
+#    def __init__(self, *parts):
+#        """Construct SHText.
+#
+#        Each arguments may be:
+#          - a simple string
+#          - another object of this class
+#          - (syntax_name, text) pair
+#        """
+#        super().__init__()
+#
+#        for part in parts:
+#            self += self._mk_init_item(part)
+#
+#    @classmethod
+#    def _mk_init_item(cls, part):
+#        # constructor helper
+#        if isinstance(part, (list, tuple)):
+#            # ("SYNTAX", "text") pair is expected
+#            if len(part) != 2:
+#                raise ValueError(
+#                    f'unexpected item: {part}. Expected ("SYNTAX", text) pair')
+#            syntax, text = part
+#            return cls.Chunk(syntax, text)
+#        return part
+
+
+class CHText:
+    """Colored text. Consists of several mono-colored parts."""
 
     __slots__ = 'scrlen', 'chunks'
 
-    @dataclass(frozen=True)
-    class _Chunk:
-        # chunk of text with a specified property
-        syntax: str
-        text: str
+    Chunk = _CHTextChunk
 
-        @classmethod
-        def make_plain(cls, text):
-            """chunk of plain text - no property is associated with it"""
-            return cls("", text)
-
-        def is_plain(self) -> bool:
-            """if chunk corresponds to 'plain' text"""
-            return not self.syntax
-
-        def clone(self, new_text):
-            """create new chunk with same type but different text"""
-            return type(self)(self.syntax, new_text)
-
-        def has_same_type(self, other) -> bool:
-            """if other chunk has same type"""
-            return self.syntax == other.syntax
+    _SEQ_RE = None  # to be initialized on demand. Re matching any color sequence
 
     def __init__(self, *parts):
         """Construct Chunked Typed Text.
@@ -97,7 +244,7 @@ class _CTText:
         Each arguments may be:
           - a simple string
           - another object of this class
-          - (for private use) - _Chunk or list of _Chunk objects
+          - (for private use) - Chunk or list of Chunk objects
         """
         self.scrlen = 0
         self.chunks = []
@@ -108,7 +255,7 @@ class _CTText:
     def make(cls, chunks_list):
         """Optimized constructor for internal use.
 
-        The argument must be list of _Chunk objects. Consequent chunks are
+        The argument must be list of Chunk objects. Consequent chunks are
         merged if they have the same 'syntax' property.
         """
         chunks_list = cls._merge_chunks(chunks_list)
@@ -117,38 +264,21 @@ class _CTText:
         result.chunks = chunks_list
         return result
 
-    @classmethod
-    def _merge_chunks(cls, chunks_list):
-        # merge _Chunk objects having the same 'syntax'.
-        # may return the argument if there are no chunks to merge.
-
-        need_merge = any(
-            c.has_same_type(next_c)
-            for c, next_c in zip(chunks_list[:-1], chunks_list[1:]))
-
-        if not need_merge:
-            return chunks_list
-
-        result = []
-        cur_chunk = chunks_list[0]
-        for chunk in chunks_list[1:]:
-            if not cur_chunk.has_same_type(chunk):
-                result.append(cur_chunk)
-                cur_chunk = chunk
-            else:
-                cur_chunk = cur_chunk + chunk
-        result.append(cur_chunk)
-        return result
-
     def __str__(self):
-        # defaults implementation just concatenates text of all parts.
-        # derived classes should produce rich text if there is enouth information
-        # for it
-        return self.plain_text()
+        # produce colored text
+        return "".join(f"{p.c_prefix}{p.text}{p.c_suffix}" for p in self.chunks)
 
     def plain_text(self) -> str:
         """produce simple str w/o color sequences."""
         return "".join(part.text for part in self.chunks)
+
+    @classmethod
+    def strip_colors(cls, text: str) -> str:
+        """Colorer-formatted string -> same string w/o coloring."""
+        if cls._SEQ_RE is None:
+            cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
+
+        return re.sub(cls._SEQ_RE, "", text)
 
     def __len__(self):
         return self.scrlen
@@ -173,11 +303,16 @@ class _CTText:
             p = self.chunks[0]
             return p.is_plain() and p.text == other
 
+        if isinstance(other, self.Chunk):
+            if len(self.chunks) == 0:
+                return other.text == ""
+            return len(self.chunks) == 1 and self.chunks[0] == other
+
         return NotImplemented
 
     def __iadd__(self, other):
         """add some text (of a given type or 'plain') to self"""
-        if isinstance(other, self._Chunk):
+        if isinstance(other, self.Chunk):
             self._append_chunk(other)
         elif isinstance(other, (list, tuple)):
             for part in other:
@@ -186,7 +321,7 @@ class _CTText:
             for part in other.chunks:
                 self._append_chunk(part)
         else:
-            self._append_chunk(self._Chunk.make_plain(str(other)))
+            self._append_chunk(self.Chunk.make_plain(str(other)))
 
         return self
 
@@ -297,162 +432,7 @@ class _CTText:
             return self + " "*len_diff
         return self
 
-    @classmethod
-    def calc_chunks_len(cls, chunks) -> int:
-        """[_Chunk, ] -> total len of the text in the chunks"""
-        return sum(len(c.text) for c in chunks)
-
-    @classmethod
-    def resize_chunks_list(cls, chunks, new_len):  # -> [cls._Chunk]:
-        """Truncates list of chunks or appends a chunk of empty text"""
-        assert new_len >= 0
-        existing_len = cls.calc_chunks_len(chunks)
-        if existing_len == new_len:
-            return chunks
-        if existing_len < new_len:
-            return chunks + [cls._Chunk.make_plain(" "*(new_len - existing_len))]
-        remaining_len = new_len
-        result = []
-        for item in chunks:
-            if remaining_len == 0:
-                return result
-            cur_item_len = len(item.text)
-            if cur_item_len <= remaining_len:
-                result.append(item)
-                remaining_len -= cur_item_len
-            else:
-                result.append(item.clone(item.text[:remaining_len]))
-                remaining_len = 0
-        result.append(cls._Chunk.make_plain(" "*remaining_len))
-        return result
-
-    def _get_chunk_pos(self, position):
-        # position of visible character -> (chunk_id, char_pos_in_chunk)
-        # (None, None) is returned if position is out of range
-        if position < 0:
-            return None, None
-        for chunk_id, chunk in enumerate(self.chunks):
-            if position < len(chunk.text):
-                return chunk_id, position
-            position -= len(chunk.text)
-        return None, None  # position >= total length
-
-    def _append_chunk(self, chunk):
-        # append _Chunk to self
-        if not chunk.text:
-            # It is safe to skip chunks with empty text.
-            # It is expected that when we start printing new typed chunk
-            # terminal is in default state. In this case printing c_prefix
-            # followed by c_suffix has no visible effect and leaves terminal
-            # in the same (default) state.
-            return
-        if self.chunks and chunk.has_same_type(self.chunks[-1]):
-            # merge with previous chunk
-            prev_chunk = self.chunks[-1]
-            self.chunks[-1] = prev_chunk.clone(prev_chunk.text + chunk.text)
-        else:
-            self.chunks.append(chunk)
-        self.scrlen += len(chunk.text)
-
-
-#class SHText(_CTText):
-#    """Syntax-Highlighted text.
-#
-#    Direct creation of CHText in application code may be inconvenient
-#    bacause actual colors to be used depend on configuration and not
-#    not be easily available.
-#
-#    Low-level code creates text specifying not names of actual colors, but
-#    names on syntaxes.
-#
-#    sh_descr = SHText("Result is: ", ("OK", "success"), ". Grats!")
-#
-#    Later on use Palette object to produce colored text:
-#
-#    print(some_palette(sh_descr))
-#    """
-#    __slots__ = tuple()
-#
-#    def __init__(self, *parts):
-#        """Construct SHText.
-#
-#        Each arguments may be:
-#          - a simple string
-#          - another object of this class
-#          - (syntax_name, text) pair
-#        """
-#        super().__init__()
-#
-#        for part in parts:
-#            self += self._mk_init_item(part)
-#
-#    @classmethod
-#    def _mk_init_item(cls, part):
-#        # constructor helper
-#        if isinstance(part, (list, tuple)):
-#            # ("SYNTAX", "text") pair is expected
-#            if len(part) != 2:
-#                raise ValueError(
-#                    f'unexpected item: {part}. Expected ("SYNTAX", text) pair')
-#            syntax, text = part
-#            return cls._Chunk(syntax, text)
-#        return part
-
-
-class CHText(_CTText):
-    """Colored text. Consists of several mono-colored parts."""
-
-    __slots__ = tuple()
-
-    @dataclass(frozen=True)
-    class _Chunk:
-        # chunk of colored text
-        c_prefix: str
-        text: str
-        c_suffix: str
-
-        @classmethod
-        def make_plain(cls, text):
-            """chunk of plain (not colored) text"""
-            return cls("", text, "")
-
-        def is_plain(self) -> bool:
-            """if chunk corresponds to plain (not colored) text"""
-            return not self.c_prefix
-
-        def clone(self, new_text):
-            """create new chunk with same color but different text"""
-            return type(self)(self.c_prefix, new_text, self.c_suffix)
-
-        def has_same_type(self, other) -> bool:
-            """if other chunk has same color"""
-            return self.c_prefix == other.c_prefix
-
-        def __add__(self, other):
-            """ !!! """
-            assert self.has_same_type(other)
-            return type(self)(self.c_prefix, self.text + other.text, self.c_suffix)
-
-    _SEQ_RE = None  # to be initialized on demand. Re matching any color sequence
-
-    @classmethod
-    def _make_chunk(cls, color_prefix, text, color_suffix):
-        # Construct 'single-chunk' CHText with explicit escape sequences.
-        return cls._Chunk(color_prefix, text, color_suffix)
-
-    def __str__(self):
-        # produce colored text
-        return "".join(f"{p.c_prefix}{p.text}{p.c_suffix}" for p in self.chunks)
-
-    @classmethod
-    def strip_colors(cls, text: str) -> str:
-        """Colorer-formatted string -> same string w/o coloring."""
-        if cls._SEQ_RE is None:
-            cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
-
-        return re.sub(cls._SEQ_RE, "", text)
-
-    def __format__(self, format_spec):
+    def __format__(self, format_spec) -> str:
         """Support formatted printing.
 
         Argument:
@@ -512,6 +492,92 @@ class CHText(_CTText):
             prefix_width = filler_width // 2
             suffix_width = filler_width - prefix_width
             return filler_ch*prefix_width + str(self) + filler_ch*suffix_width
+
+    @classmethod
+    def calc_chunks_len(cls, chunks) -> int:
+        """[Chunk, ] -> total len of the text in the chunks"""
+        return sum(len(c.text) for c in chunks)
+
+    @classmethod
+    def resize_chunks_list(cls, chunks, new_len):  # -> [cls.Chunk]:
+        """Truncates list of chunks or appends a chunk of empty text"""
+        assert new_len >= 0
+        existing_len = cls.calc_chunks_len(chunks)
+        if existing_len == new_len:
+            return chunks
+        if existing_len < new_len:
+            return chunks + [cls.Chunk.make_plain(" "*(new_len - existing_len))]
+        remaining_len = new_len
+        result = []
+        for item in chunks:
+            if remaining_len == 0:
+                return result
+            cur_item_len = len(item.text)
+            if cur_item_len <= remaining_len:
+                result.append(item)
+                remaining_len -= cur_item_len
+            else:
+                result.append(item.clone(item.text[:remaining_len]))
+                remaining_len = 0
+        result.append(cls.Chunk.make_plain(" "*remaining_len))
+        return result
+
+
+    @classmethod
+    def _make_chunk(cls, color_prefix, text, color_suffix):
+        # Construct 'single-chunk' CHText with explicit escape sequences.
+        return cls.Chunk(color_prefix, text, color_suffix)
+
+    @classmethod
+    def _merge_chunks(cls, chunks_list):
+        # merge Chunk objects having the same 'syntax'.
+        # may return the argument if there are no chunks to merge.
+
+        need_merge = any(
+            c.has_same_type(next_c)
+            for c, next_c in zip(chunks_list[:-1], chunks_list[1:]))
+
+        if not need_merge:
+            return chunks_list
+
+        result = []
+        cur_chunk = chunks_list[0]
+        for chunk in chunks_list[1:]:
+            if not cur_chunk.has_same_type(chunk):
+                result.append(cur_chunk)
+                cur_chunk = chunk
+            else:
+                cur_chunk = cur_chunk.add_chunks_same_type(chunk)
+        result.append(cur_chunk)
+        return result
+
+    def _get_chunk_pos(self, position):
+        # position of visible character -> (chunk_id, char_pos_in_chunk)
+        # (None, None) is returned if position is out of range
+        if position < 0:
+            return None, None
+        for chunk_id, chunk in enumerate(self.chunks):
+            if position < len(chunk.text):
+                return chunk_id, position
+            position -= len(chunk.text)
+        return None, None  # position >= total length
+
+    def _append_chunk(self, chunk):
+        # append Chunk to self
+        if not chunk.text:
+            # It is safe to skip chunks with empty text.
+            # It is expected that when we start printing new typed chunk
+            # terminal is in default state. In this case printing c_prefix
+            # followed by c_suffix has no visible effect and leaves terminal
+            # in the same (default) state.
+            return
+        if self.chunks and chunk.has_same_type(self.chunks[-1]):
+            # merge with previous chunk
+            prev_chunk = self.chunks[-1]
+            self.chunks[-1] = prev_chunk.clone(prev_chunk.text + chunk.text)
+        else:
+            self.chunks.append(chunk)
+        self.scrlen += len(chunk.text)
 
 
 class _ColorSequences:
@@ -660,11 +726,11 @@ class ColorFmt:
             cls._NO_COLOR = cls(None)
         return cls._NO_COLOR
 
-    def __call__(self, text) -> CHText:
+    def __call__(self, text) -> CHText.Chunk:
         """text -> colored text (CHText object)."""
-        return CHText(self.ch_chunk(text))
+        return self.ch_chunk(text)
 
-    def ch_chunk(self, text) -> CHText._Chunk:
+    def ch_chunk(self, text) -> CHText.Chunk:
         """ !!! """
         return CHText._make_chunk(self._color_prefix, text, self._color_suffix)
 
@@ -693,104 +759,8 @@ class ColorBytes:
 
 
 #########################
-# Palette and ColorsConfig
+# GlobalPalette and ColorsConfig
 
-class Palette:
-    """Simple mapping 'syntax_name' -> ColorFmt"""
-
-    def __init__(self, colors, use_colors=True):
-        """Create simple dictionary {syntax_type: ColorFmt}.
-
-        Example:
-            Palette({'syntax1': ColorFmt('RED'), 'syntax2': ColorFmt('BLUE')})
-        """
-        self.colors = colors.copy()
-        self.use_colors = use_colors
-
-    def make_report(self) -> str:
-        """Create report of colors in the palette"""
-        return "\n".join(
-            str(line) for line in self.gen_report_lines())
-
-    def gen_report_lines(self) -> Iterator[str]:
-        for syntax_name, color_fmt in sorted(self.colors.items()):
-            yield f"{syntax_name:15}: {color_fmt('<SAMPLE>')}"
-
-    def get_color(self, syntax_name) -> ColorFmt:
-        """syntax_name -> ColorFmt"""
-        no_effects_fmt = ColorFmt.get_plaintext_fmt()
-
-        if not self.use_colors:
-            return no_effects_fmt
-
-        return self.colors.get(syntax_name, no_effects_fmt)
-
-    def __getitem__(self, index):
-        """same behavior as get_color method"""
-        return self.get_color(index)
-
-    def __call__(self, *items) -> CHText:
-        """Produce multi-colored CHText.
-
-        Arguments:
-        - items: each item me be
-          - plain text
-          - SHText
-          - ('syntax_name', 'text')
-          - CHText
-        """
-        result = ColorFmt.get_plaintext_fmt()('')
-        for item in items:
-            result += self._item_to_colored_text(item)
-        return result
-
-    def _item_to_colored_text(self, item):
-        # process single item of __call__
-        # produce item, which can be used to construct CHText
-        if isinstance(item, CHText):
-            return item
-        # if isinstance(item, SHText):  - removing the SHText
-        #     return [
-        #         self.get_color(chunk.syntax)(chunk.text)
-        #         for chunk in item.chunks]
-        # elif isinstance(item, (list, tuple)):
-        if isinstance(item, (list, tuple)):
-            if len(item) != 2:
-                raise ValueError(
-                    f"invalid syntax text item {item}. "
-                    f"expected pair ('syntax_name', 'text')")
-            syntax_name, text = item
-            return self.get_color(syntax_name)(text)
-
-        return ColorFmt.get_plaintext_fmt()(item)
-
-
-_COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
-_GLOBAL_PALETTE = None
-
-
-def get_global_colors_config():
-    """Get global ColorsConfig"""
-    global _COLORS_CONFIG
-    if _COLORS_CONFIG is None:
-        _COLORS_CONFIG = ColorsConfig({})  # all defaults
-    return _COLORS_CONFIG
-
-
-def set_global_colors_config(colors_config, no_color=False):
-    """Set global ColorsConfig !!!!! """
-    global _COLORS_CONFIG, _GLOBAL_COLORS_CONTEXT, _GLOBAL_PALETTE
-    _COLORS_CONFIG = colors_config
-    _GLOBAL_PALETTE = None
-
-
-# !!!! looks like it's not required. Or is it?
-def get_global_palette():
-    """Get the Palette corresponding to the global colors config."""
-    global _GLOBAL_PALETTE
-    if _GLOBAL_PALETTE is None:
-        _GLOBAL_PALETTE = get_global_colors_config().get_palette()
-    return _GLOBAL_PALETTE
 
 
 class SyntaxColor:
@@ -1092,6 +1062,280 @@ class SyntaxColor:
 
         return modifiers
 
+class ConfColor:
+    """!!! """
+    def __init__(self, synt_id):
+        self.synt_id = synt_id
+
+    def __call__(self, text) -> CHText.Chunk:
+        assert False
+
+
+class _LocalPaletteMeta(type):
+    # !!!
+    def __new__(meta, classname, supers, classdict):
+
+        # _LOCAL_SYNTAX - {local_synt_name: syntax_id_in_colors_conf}
+        # contents of this dictionary is created based on 'ConfColor' items in
+        # the classdict.
+        assert '_LOCAL_SYNTAX' not in classdict, "it should not be created explicitly"
+        local_syntax_map = {}
+        # In order to implement inheritance it is necessary to combine this data
+        # from base classes and current class
+        for base_class in supers:
+            base_syntax_map = getattr(base_class, '_LOCAL_SYNTAX')
+            if base_syntax_map is not None:
+                local_syntax_map.update(base_syntax_map)
+
+        for name, field in classdict.items():
+            if isinstance(field, ConfColor):
+                local_syntax_map[name] = field.synt_id
+
+        classdict = {n: v for n, v in classdict.items() if n not in local_syntax_map}
+        classdict['_LOCAL_SYNTAX'] = local_syntax_map
+
+        return type.__new__(meta, classname, supers, classdict)
+
+
+class LocalPalette(metaclass=_LocalPaletteMeta):
+    """Collection of color formatters to be used in some specific place.
+
+    For example we have a 'table' object which can be printed out using different
+    colors for different items of the table.
+
+    The LocalPalette class used by the table:
+    - ptovides formatters to be used to produce text with 'border', 'title', etc.
+      colors
+    - creates these formatters using colors specified in the global colors config
+    - contains default colors, so that explicit global config is not required
+    - registers info about self in the global config (for reporting purposes)
+
+    !!!!!!!!!!!!!!!!!!!!
+
+    The color used to print table border may be configured in the application
+    config file, corresponding syntax id could be 'T.BORDER'.
+    The code which produces text representation of the 'table' object should not
+    use 'T.BORDER' constant to find the actual color as we may want to print the
+    same table in different colors.
+
+    LocalPalette is the object which is created when it's necessary to generate
+    colored text and contains {"internal syntax id" -> color} information.
+
+    Class attributes describe default rules of fetching info from global colors
+    config and default colors to be used if the info was not found in the config.
+    """
+    # List of other LocalPalette classes this one depends on (uses syntaxes defined
+    # in that classes)
+    PARENT_PALETTES = None
+
+    # init rules of the new global syntaxes introduced by this class
+    SYNTAX_DEFAULTS = None  # {synt_id: default_color}
+
+    # ready to use palette objects
+    _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
+
+    # no_color = ColorFmt.get_plaintext_fmt()
+    # !!!!!!! always available, plain text
+    text = ConfColor("TEXT")
+
+    def __init__(self, local_colors, _no_color=None, _colors_conf=None):
+        """Constructor of LocalPalette - for internal use.
+
+        Use the 'make' method instead.
+
+        Argument:
+        - local_colors: {local_synt_id: (synt_id, color_fmt)}
+        """
+        assert self._LOCAL_SYNTAX.keys() == local_colors.keys()
+
+        self._local_colors = local_colors  # ????
+
+        for n, v in self._local_colors.items():
+            setattr(self, n, v[1])
+
+    @classmethod
+    def make(
+        cls, colors_conf=None, no_color=None
+    ):
+        """Register cls in colors config and prepare the local palette.
+
+        Arguments:
+        - colors_conf: ColorsConfig object, by default the global one is used
+        !!!!
+        - no_color: if True prepares a local palette which does not add any
+            coloring effects to any text
+        !!!!!!
+        - alt_local_palette: {local_synt_id: alt_global_synt_id}. Contains
+            alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
+        """
+        assert cls._LOCAL_SYNTAX is not None, (
+            f"internal error: '_LOCAL_SYNTAX' is not present in "
+            f"LocalPalette class {cls}")
+
+        if colors_conf is None:
+            colors_conf = get_global_colors_config()
+
+        cls._register_in_colors_conf(colors_conf)
+
+        if no_color:
+            if cls._PALETTE_NO_COLOR is None:
+                cls._PALETTE_NO_COLOR = cls({
+                        local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
+                        for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+                    }, no_color, colors_conf)
+            return cls._PALETTE_NO_COLOR
+
+        local_palette = colors_conf.get_cached_obj(cls)
+        if local_palette is None:
+            local_palette = cls({
+                    local_synt_id: (synt_id, colors_conf.get_color(synt_id))
+                    for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+                }, no_color, colors_conf)
+            colors_conf.put_into_cache(cls, local_palette)
+
+        return local_palette
+
+    def get_color(self, local_synt_id) -> ColorFmt:
+        """!!!"""
+        x = self._local_colors.get(local_synt_id)
+        if x is None:
+            return self.text
+        return x[1]
+
+    @classmethod
+    def get_no_color_palette(cls):
+        """!!!"""
+        return cls.make(None, True)
+
+    @classmethod
+    def _register_in_colors_conf(cls, colors_conf):
+        # Register cls in the colors_conf as color config component
+        if colors_conf.color_conf_component_is_registered(cls):
+            return
+        if cls.PARENT_PALETTES is not None:
+            for p_cls in cls.PARENT_PALETTES:
+                p_cls._register_in_colors_conf(colors_conf)
+
+        if cls.SYNTAX_DEFAULTS is not None:
+            colors_conf.register_color_conf_component(cls.SYNTAX_DEFAULTS, cls)
+
+    def make_report(self) -> str:
+        """Create colored report of self."""
+        return "\n".join(
+            f"{local_synt_id}: {CHText(color_fmt(synt_id))}"
+            for local_synt_id, (synt_id, color_fmt)
+            in sorted(self._local_colors.items())
+        )
+
+
+class CompoundPalette(LocalPalette):
+    """ """
+    SUB_PALETTES_MAP = None  # {(LocalPalette, "modifier name"): AltLocalPalette}
+
+    def __init__(self, local_colors, no_color, colors_conf):
+        super().__init__(local_colors, no_color, colors_conf)
+        self._no_color = no_color
+        self.colors_conf = colors_conf
+        self._sub_palettes = {}
+
+    def get_sub_palette(
+        self, palette_class, modifier_name=None
+    ):
+        key = (palette_class, modifier_name)
+        result = self._sub_palettes.get(key)
+        if result is None:
+            actual_palette_class = self.SUB_PALETTES_MAP.get(
+                palette_class, palette_class)
+            result = actual_palette_class.make(self.colors_conf, self._no_color)
+            self._sub_palettes[key] = result
+        return result
+
+
+class GlobalPalette(LocalPalette):
+    """!!!!"""
+
+    # !!!! comment
+    text = ConfColor("TEXT")
+    name = ConfColor("NAME")
+    keyword = ConfColor("KEYWORD")
+    ok = ConfColor("OK")
+    warn = ConfColor("WARN")
+    error = ConfColor("ERROR")
+
+    def __init__(self, local_colors, _no_color=None, _colors_conf=None):
+        """ !!!"""
+        super().__init__(local_colors, _no_color, _colors_conf)
+        self._colors_conf = _colors_conf
+
+
+#    def __init__(self, colors, use_colors=True):
+#        """Create simple dictionary {syntax_type: ColorFmt}.
+#
+#        Example:
+#            !!!!! no more
+#            GlobalPalette({'syntax1': ColorFmt('RED'), 'syntax2': ColorFmt('BLUE')})
+#        """
+#        self.colors = colors.copy()
+#        self.use_colors = use_colors
+
+#    def make_report(self) -> str:
+#        """Create report of colors in the palette"""
+#        return "\n".join(
+#            str(line) for line in self.gen_report_lines())
+#
+#    def gen_report_lines(self) -> Iterator[str]:
+#        for syntax_name, color_fmt in sorted(self.colors.items()):
+#            yield f"{syntax_name:15}: {color_fmt('<SAMPLE>')}"
+
+    def get_color(self, syntax_name) -> ColorFmt:
+        """syntax_name -> ColorFmt"""
+        return self._colors_conf.get_color(syntax_name)
+#        no_effects_fmt = ColorFmt.get_plaintext_fmt()
+#
+#        if not self.use_colors:
+#            return no_effects_fmt
+#
+#        return self.colors.get(syntax_name, no_effects_fmt)
+
+    def __getitem__(self, index):
+        """same behavior as get_color method"""
+        return self.get_color(index)
+
+#    def __call__(self, *items) -> CHText:
+#        """Produce multi-colored CHText.
+#
+#        Arguments:
+#        - items: each item me be
+#          - plain text
+#          - ('syntax_name', 'text')  !!!!! ??????
+#          - CHText
+#          - CHText.Chunk
+#        """
+#        result = ColorFmt.get_plaintext_fmt()('')
+#        for item in items:
+#            result += self._item_to_colored_text(item)
+#        return result
+#
+#    def _item_to_colored_text(self, item):
+#        # process single item of __call__
+#        # produce item, which can be used to construct CHText
+#        if isinstance(item, (CHText, CHText.Chunk)):
+#            return item
+#        # if isinstance(item, SHText):  - removing the SHText
+#        #     return [
+#        #         self.get_color(chunk.syntax)(chunk.text)
+#        #         for chunk in item.chunks]
+#        # elif isinstance(item, (list, tuple)):
+#        if isinstance(item, (list, tuple)):
+#            if len(item) != 2:
+#                raise ValueError(
+#                    f"invalid syntax text item {item}. "
+#                    f"expected pair ('syntax_name', 'text')")
+#            syntax_name, text = item
+#            return self.get_color(syntax_name)(text)
+#
+#        return ColorFmt.get_plaintext_fmt()(item)
+
 
 class ColorsConfig:
     """Colors configuration. Usually a global object.
@@ -1305,7 +1549,6 @@ class ColorsConfig:
                     result[f"{key}.{skey}"] = val_and_src
         return result
 
-    # !!!!! is it used ??
     def get_color(self, synt_id) -> ColorFmt:
         """syntax name -> ColorFmt"""
         syntax_color = self.syntax_map.get(synt_id)
@@ -1313,40 +1556,45 @@ class ColorsConfig:
             return self._NO_EFFECTS_FMT
         return syntax_color.color_fmt
 
-    def get_palette(self) -> Palette:
+    def get_palette(self) -> GlobalPalette:
         """Get Palette which contains all the syntaxes in this ColorsConfig."""
         if self._cached_palette is None:
             self._cached_palette = self._make_palette()
         return self._cached_palette
 
-    def _make_palette(self, group_name=None, **kwargs) -> Palette:
-        """Creates Palette object for a specified syntax group.
+    def _make_palette(self):
+        """!!!! """
+        return GlobalPalette.make(colors_conf=self)
 
-        For example, for syntax group 'TABLE' the default ColorsConfig will produce
-        Palette with following items:
-            "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
 
-        Additional amendments to palette colors may be specified in kwargs.
-        kwargs format:
-        "PALETTE_SYNTAX_NAME": "CONF_SYNTAX_NAME"
-        """
-        prefix = "" if group_name is None else group_name + "."
-        prefix_len = len(prefix)
-        palette_colors = {}
-        for full_syntax_name, syntax_color in self.syntax_map.items():
-            color_fmt = syntax_color.color_fmt
-            if color_fmt is None:
-                color_fmt = self._NO_EFFECTS_FMT
-
-            if not full_syntax_name.startswith(prefix):
-                continue
-            syntax_name = full_syntax_name[prefix_len:]
-            palette_colors[syntax_name] = color_fmt
-
-        for syntax, conf_syntax in kwargs.items():
-            palette_colors[syntax] = self.get_color(conf_syntax)
-
-        return Palette(palette_colors)
+#    def _make_palette(self, group_name=None, **kwargs) -> 'LocalPalette':
+#        """Creates Palette object for a specified syntax group.
+#
+#        For example, for syntax group 'TABLE' the default ColorsConfig will produce
+#        Palette with following items:
+#            "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
+#
+#        Additional amendments to palette colors may be specified in kwargs.
+#        kwargs format:
+#        "PALETTE_SYNTAX_NAME": "CONF_SYNTAX_NAME"
+#        """
+#        prefix = "" if group_name is None else group_name + "."
+#        prefix_len = len(prefix)
+#        palette_colors = {}
+#        for full_syntax_name, syntax_color in self.syntax_map.items():
+#            color_fmt = syntax_color.color_fmt
+#            if color_fmt is None:
+#                color_fmt = self._NO_EFFECTS_FMT
+#
+#            if not full_syntax_name.startswith(prefix):
+#                continue
+#            syntax_name = full_syntax_name[prefix_len:]
+#            palette_colors[syntax_name] = color_fmt
+#
+#        for syntax, conf_syntax in kwargs.items():
+#            palette_colors[syntax] = self.get_color(conf_syntax)
+#
+#        return Palette(palette_colors)
 
     def color_conf_component_is_registered(self, src_obj) -> bool:
         """Check if LocalPalette object is registered in the ColorsConfig"""
@@ -1481,266 +1729,78 @@ class LocalPaletteUser:
 #        yield palette(sh_text)
 
 
-def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
-    """Print colored text using global color config.
-
-    Main purpose of the method is to print SHText or objects, that generate
-    SHText (that is objects which have 'gen_sh_lines' or 'sh_text' methods)
-
-    As the number of SHText lines generated by arg.gen_sh_lines() may be large
-    this method prints each line as soon as it receives it.
-
-    It prints all other objects the same way the standard 'print' does.
-    """
-    if palette is None:
-        palette = get_global_palette()
-
-    def _obj_to_print_items(obj):
-        # do convert the argument to lines of colored text if possible
-        sh_lines_attr = getattr(arg, 'gen_sh_lines', None)
-        if sh_lines_attr is not None:
-            for sh_text in sh_lines_attr():
-                yield palette(sh_text)
-            return
-        sh_text_attr = getattr(arg, 'sh_text', None)
-        if sh_text_attr is not None:
-            yield sh_text_attr()
-            return
-        #if isinstance(obj, SHText):
-        #    yield palette(obj)
-        #    return
-        yield obj
-
-    cur_line_args = []
-    for arg in args:
-        start_new_line = False
-        for colored_text in _obj_to_print_items(arg):
-            if start_new_line:
-                print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
-                cur_line_args = []
-            cur_line_args.append(colored_text)
-            start_new_line = True
-    if cur_line_args:
-        print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
-
-
-class ConfColor:
-    """!!! """
-    def __init__(self, synt_id):
-        self.synt_id = synt_id
-
-    def __call__(self, text) -> CHText._Chunk:
-        assert False
-
-
-class _LocalPaletteMeta(type):
-    # !!!
-    def __new__(meta, classname, supers, classdict):
-
-        # _LOCAL_SYNTAX - {local_synt_name: syntax_id_in_colors_conf}
-        # contents of this dictionary is created based on 'ConfColor' items in
-        # the classdict.
-        assert '_LOCAL_SYNTAX' not in classdict, "it should not be created explicitly"
-        local_syntax_map = {}
-        # In order to implement inheritance it is necessary to combine this data
-        # from base classes and current class
-        for base_class in supers:
-            base_syntax_map = getattr(base_class, '_LOCAL_SYNTAX')
-            if base_syntax_map is not None:
-                local_syntax_map.update(base_syntax_map)
-
-        for name, field in classdict.items():
-            if isinstance(field, ConfColor):
-                local_syntax_map[name] = field.synt_id
-
-        classdict = {n: v for n, v in classdict.items() if n not in local_syntax_map}
-        classdict['_LOCAL_SYNTAX'] = local_syntax_map
-
-        return type.__new__(meta, classname, supers, classdict)
-
-
-class LocalPalette(metaclass=_LocalPaletteMeta):
-    """Collection of color formatters to be used in some specific place.
-
-    For example we have a 'table' object which can be printed out using different
-    colors for different items of the table.
-
-    The LocalPalette class used by the table:
-    - ptovides formatters to be used to produce text with 'border', 'title', etc.
-      colors
-    - creates these formatters using colors specified in the global colors config
-    - contains default colors, so that explicit global config is not required
-    - registers info about self in the global config (for reporting purposes)
-
-    !!!!!!!!!!!!!!!!!!!!
-
-    The color used to print table border may be configured in the application
-    config file, corresponding syntax id could be 'T.BORDER'.
-    The code which produces text representation of the 'table' object should not
-    use 'T.BORDER' constant to find the actual color as we may want to print the
-    same table in different colors.
-
-    LocalPalette is the object which is created when it's necessary to generate
-    colored text and contains {"internal syntax id" -> color} information.
-
-    Class attributes describe default rules of fetching info from global colors
-    config and default colors to be used if the info was not found in the config.
-    """
-    # List of other LocalPalette classes this one depends on (uses syntaxes defined
-    # in that classes)
-    PARENT_PALETTES = None
-
-    # init rules of the new global syntaxes introduced by this class
-    SYNTAX_DEFAULTS = None  # {synt_id: default_color}
-
-    # ready to use palette objects
-    _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
-
-    no_color = ColorFmt.get_plaintext_fmt().ch_chunk
-    
-    def __init__(self, local_colors, _no_color=None, _colors_conf=None):
-        """Constructor of LocalPalette - for internal use.
-
-        Use the 'make' method instead.
-
-        Argument:
-        - local_colors: {local_synt_id: (synt_id, color_fmt)}
-        """
-        assert self._LOCAL_SYNTAX.keys() == local_colors.keys()
-
-        # !!!!!!
-        assert all(
-            not isinstance(f, ColorFmt)
-            for f in local_colors.values()
-        )
-
-        for n, v in local_colors.items():
-            setattr(self, n, v)
-
-        self.local_colors = local_colors  # ????
-
-    @classmethod
-    def make(
-        cls, colors_conf=None, no_color=None
-    ):
-        """Register cls in colors config and prepare the local palette.
-
-        Arguments:
-        - colors_conf: ColorsConfig object, by default the global one is used
-        !!!!
-        - no_color: if True prepares a local palette which does not add any
-            coloring effects to any text
-        !!!!!!
-        - alt_local_palette: {local_synt_id: alt_global_synt_id}. Contains
-            alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
-        """
-        assert cls._LOCAL_SYNTAX is not None, (
-            f"internal error: '_LOCAL_SYNTAX' is not present in "
-            f"LocalPalette class {cls}")
-
-        if colors_conf is None:
-            colors_conf = get_global_colors_config()
-
-        cls._register_in_colors_conf(colors_conf)
-
-        if no_color:
-            if cls._PALETTE_NO_COLOR is None:
-                cls._PALETTE_NO_COLOR = cls({
-                        local_synt_id: ColorsConfig._NO_EFFECTS_FMT.ch_chunk
-                        for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
-                    }, no_color, colors_conf)
-            return cls._PALETTE_NO_COLOR
-
-        local_palette = colors_conf.get_cached_obj(cls)
-        if local_palette is None:
-            local_palette = cls({
-                    local_synt_id: colors_conf.get_color(synt_id).ch_chunk
-                    for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
-                }, no_color, colors_conf)
-            colors_conf.put_into_cache(cls, local_palette)
-
-        return local_palette
-
-    @classmethod
-    def get_no_color_palette(cls):
-        """!!!"""
-        return cls.make(None, True)
-
-    @classmethod
-    def _register_in_colors_conf(cls, colors_conf):
-        # Register cls in the colors_conf as color config component
-        if colors_conf.color_conf_component_is_registered(cls):
-            return
-        if cls.PARENT_PALETTES is not None:
-            for p_cls in cls.PARENT_PALETTES:
-                p_cls._register_in_colors_conf(colors_conf)
-
-        if cls.SYNTAX_DEFAULTS is not None:
-            colors_conf.register_color_conf_component(cls.SYNTAX_DEFAULTS, cls)
-
-    def make_report(self) -> str:
-        """Create colored report of self."""
-        return "\n".join(
-            f"{local_synt_id}: {CHText(color_fmt(synt_id))}"
-            for local_synt_id, (synt_id, color_fmt)
-            in sorted(self.local_colors.items())
-        )
-
-
-class CompoundPalette(LocalPalette):
-    """ """
-    SUB_PALETTES_MAP = None  # {(LocalPalette, "modifier name"): AltLocalPalette}
-
-    def __init__(self, local_colors, no_color, colors_conf):
-        super().__init__(local_colors, no_color, colors_conf)
-        self._no_color = no_color
-        self.colors_conf = colors_conf
-        self._sub_palettes = {}
-
-    def get_sub_palette(
-        self, palette_class, modifier_name=None
-    ):
-        key = (palette_class, modifier_name)
-        result = self._sub_palettes.get(key)
-        if result is None:
-            actual_palette_class = self.SUB_PALETTES_MAP.get(
-                palette_class, palette_class)
-            result = actual_palette_class.make(self.colors_conf, self._no_color)
-            self._sub_palettes[key] = result
-        return result
-
-
-#class CompoundPalette(LocalPalette):
-#    """Contains palettes required to print complex object.
+#def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
+#    """Print colored text using global color config.
 #
-#    For example, a table may contain enum values. Different enum types may use
-#    their own palettes. The code of table object itself may not even know what
-#    color palettes are used by the field values. Still it should be possible
-#    to configure/customize the palette for the whole table.
+#    Main purpose of the method is to print SHText or objects, that generate
+#    SHText (that is objects which have 'gen_sh_lines' or 'sh_text' methods)
+#
+#    As the number of SHText lines generated by arg.gen_sh_lines() may be large
+#    this method prints each line as soon as it receives it.
+#
+#    It prints all other objects the same way the standard 'print' does.
 #    """
+#    if palette is None:
+#        palette = get_global_palette()
 #
-#    def __init__(self, local_colors):
-#        """Constructor of CompoundPalette - for internal use.
+#    def _obj_to_print_items(obj):
+#        # do convert the argument to lines of colored text if possible
+#        sh_lines_attr = getattr(arg, 'gen_sh_lines', None)
+#        if sh_lines_attr is not None:
+#            for sh_text in sh_lines_attr():
+#                yield palette(sh_text)
+#            return
+#        sh_text_attr = getattr(arg, 'sh_text', None)
+#        if sh_text_attr is not None:
+#            yield sh_text_attr()
+#            return
+#        #if isinstance(obj, SHText):
+#        #    yield palette(obj)
+#        #    return
+#        yield obj
 #
-#        !!!
-#        """
-#        super().__init__(local_colors)
-#        self._colors_conf = colors_conf
-#        self._palettes = {}
-#        self._alt_skins = {}
-#        self._child_palettes = {}
-#
-#    def make_local_palette(self, palette_class):
-#        palette_obj = self._palettes.get(palette_class)
-#        if palette_obj is not None:
-#            return palette_obj
-#        
-#        actual_class = self._alt_skins.get(palette_class, palette_class)
-#        palette_obj = actual_class.make(self._colors_conf)
-#        self._palettes[palette_class] = palette_obj
-#
-#        return palette_obj
-#
-#    @classmethod
-#    def make(cs, colors_conf=None, no_color=None, sub_configs=None):
-#        pass
+#    cur_line_args = []
+#    for arg in args:
+#        start_new_line = False
+#        for colored_text in _obj_to_print_items(arg):
+#            if start_new_line:
+#                print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
+#                cur_line_args = []
+#            cur_line_args.append(colored_text)
+#            start_new_line = True
+#    if cur_line_args:
+#        print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
+
+
+
+
+_COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
+_GLOBAL_PALETTE = None
+
+
+def get_global_colors_config():
+    """Get global ColorsConfig"""
+    global _COLORS_CONFIG
+    if _COLORS_CONFIG is None:
+        _COLORS_CONFIG = ColorsConfig({})  # all defaults
+    return _COLORS_CONFIG
+
+
+def set_global_colors_config(colors_config, no_color=False):
+    """Set global ColorsConfig !!!!! """
+    global _COLORS_CONFIG, _GLOBAL_COLORS_CONTEXT, _GLOBAL_PALETTE
+    _COLORS_CONFIG = colors_config
+    _GLOBAL_PALETTE = None
+
+
+# !!!! looks like it's not required. Or is it?
+def get_global_palette():
+    """Get the Palette corresponding to the global colors config."""
+    global _GLOBAL_PALETTE
+    if _GLOBAL_PALETTE is None:
+        _GLOBAL_PALETTE = get_global_colors_config().get_palette()
+    return _GLOBAL_PALETTE
+
+
+
+

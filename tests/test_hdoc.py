@@ -314,7 +314,7 @@ class TestMethodNotes(unittest.TestCase):
                 """
                 assert self is bound_method.__self__
                 assert hasattr(bound_method, '_h_doc')
-                fmt = _c.no_color if self.allow_method else _c.warn
+                fmt = _c.text if self.allow_method else _c.warn
                 return BoundMethodNotes(
                     is_available=self.allow_method,
                     note_short=CHText(fmt(self.note_short)),

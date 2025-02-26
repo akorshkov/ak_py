@@ -2025,11 +2025,11 @@ class ReportFormatter:
         """
         for repo_id, rgraph in report_data:
             branches = rgraph.branches
-            yield CHText(_c.no_color(""))
+            yield CHText(_c.text(""))
             yield CHText(
-                _c.no_color("==== repo "),
+                _c.text("==== repo "),
                 _c.repo(repo_id),
-                _c.no_color(" ===="),
+                _c.text(" ===="),
             )
             for rbranch in branches:
                 yield from self._gen_branch_report(repo_id, rbranch, 0, _c)
@@ -2038,9 +2038,9 @@ class ReportFormatter:
         yield CHText.make([
             self._mk_offset_sh_chunk(offset, _c),
             _c.repo(repo_id),
-            _c.no_color(" "),
+            _c.text(" "),
             _c.branch(rbranch.branch_name),
-            _c.no_color(":")])
+            _c.text(":")])
         for rbuild in rbranch.get_rbuilds_list():
             yield from self._gen_rbuild_descr(rbuild, offset+1, _c)
 
@@ -2057,7 +2057,7 @@ class ReportFormatter:
         if rbuild.rcommit is not None:
             commit = rbuild.rcommit.commit
             t_time = datetime.fromtimestamp(commit.committed_date).isoformat(sep=' ')
-            build_title.append(_c.no_color(f" ({t_time})"))
+            build_title.append(_c.text(f" ({t_time})"))
 
         # build_title now looks like:
         #   10.260.2714 (2022-08-31 17:36:46)
@@ -2068,8 +2068,8 @@ class ReportFormatter:
         if rbuild.included_at:
             incl_at_offset_str.append(
                 self._mk_offset_sh_chunk(CHText.calc_chunks_len(build_title), _c, 1))
-            incl_at_offset_str.append(_c.no_color(" / "))
-            build_title.append(_c.no_color(" / "))
+            incl_at_offset_str.append(_c.text(" / "))
+            build_title.append(_c.text(" / "))
             build_title.extend(self._mk_included_at_descr(rbuild.included_at[0], _c))
         yield CHText.make(build_title)
 
@@ -2084,8 +2084,8 @@ class ReportFormatter:
             yield from self.gen_commit_descr(
                 rc.commit, commits_merged, offset + 1, _c)
 
-    def _mk_buildnum_descr(self, build_num, _c) -> Iterator[CHText._Chunk]:
-        # BuildNumData -> Iterator[CHText._Chunk]
+    def _mk_buildnum_descr(self, build_num, _c) -> Iterator[CHText.Chunk]:
+        # BuildNumData -> Iterator[CHText.Chunk]
         if build_num.is_fake_not_built():
             return [
                 _c.ver_not_built("- not built -")]
@@ -2095,14 +2095,14 @@ class ReportFormatter:
 
         return [_c.version(str(build_num))]
 
-    def _mk_included_at_descr(self, incl_at, _c) -> Iterator[CHText._Chunk]:
+    def _mk_included_at_descr(self, incl_at, _c) -> Iterator[CHText.Chunk]:
         # prepare description of the parent component's build:
         # "parent_repo relese/3.4 10.15.35"
         result = [
             _c.repo(incl_at[0]),
-            _c.no_color(" "),
+            _c.text(" "),
             _c.branch(incl_at[1]),
-            _c.no_color(" "),
+            _c.text(" "),
         ]
         result.extend(self._mk_buildnum_descr(incl_at[2], _c))
         return result
@@ -2114,23 +2114,23 @@ class ReportFormatter:
         # "      proj_lib1=3.4.5"
         bump_versions_descr = [_c.version(str(bump.to_buildnum))]
         if bump.from_build_nums:
-            bump_versions_descr.append(_c.no_color("<-"))
+            bump_versions_descr.append(_c.text("<-"))
             if len(bump.from_build_nums) == 1:
                 bump_versions_descr.append(
                     _c.version(str(bump.from_build_nums[0])))
             else:
-                bump_versions_descr.append(_c.no_color("["))
+                bump_versions_descr.append(_c.text("["))
                 is_first = True
                 for bn in bump.from_build_nums:
                     if is_first:
                         is_first = False
                     else:
-                        bump_versions_descr.append(_c.no_color(", "))
-                    bump_versions_descr.append(_c.no_color(str(bn)))
-                bump_versions_descr.append(_c.no_color("]"))
+                        bump_versions_descr.append(_c.text(", "))
+                    bump_versions_descr.append(_c.text(str(bn)))
+                bump_versions_descr.append(_c.text("]"))
         result = [self._mk_offset_sh_chunk(offset + 1, _c)]
         result.append(_c.repo(comp_name))
-        result.append(_c.no_color("="))
+        result.append(_c.text("="))
         result.extend(bump_versions_descr)
         yield CHText.make(result)
 
@@ -2146,16 +2146,16 @@ class ReportFormatter:
         hash_color = _c.hash if merged else _c.hash_not_merged
         yield CHText.make([
             hash_color(commit.hexsha[:11]),
-            _c.no_color(" "),
+            _c.text(" "),
             _c.commit_time(
                 datetime.fromtimestamp(commit.committed_date).isoformat(sep=' ')),
-            _c.no_color(" "),
+            _c.text(" "),
             _c.commit_name(author_name),
-            _c.no_color(t_message),
+            _c.text(t_message),
         ])
 
-    def _mk_offset_sh_chunk(self, offset, _c, _step=2) -> CHText._Chunk:
-        return _c.no_color(" " * (offset * _step))
+    def _mk_offset_sh_chunk(self, offset, _c, _step=2) -> CHText.Chunk:
+        return _c.text(" " * (offset * _step))
 
 
 def find_commit_chain(from_commit, to_commit, except_commit=None):

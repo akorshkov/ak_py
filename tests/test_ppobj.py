@@ -4,7 +4,7 @@ import unittest
 import io
 from collections import namedtuple
 
-from ak.color import CHText, sh_print
+from ak.color import CHText
 from ak import ppobj
 from ak.ppobj import PrettyPrinter, pp
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
@@ -27,7 +27,7 @@ class TestPrettyPrinter(unittest.TestCase):
                 f"{text}")
             # not a very good tests, because these substrings may be found inside
             # string literals. But no such string literals are used in tests.
-            for bad_str in ["[ ", " ]", "{ ", " }", " ,", "_Chunk"]:
+            for bad_str in ["[ ", " ]", "{ ", " }", " ,", "Chunk"]:
                 self.assertNotIn(
                     bad_str, line,
                     f"'{bad_str}' found in line {i}:\n|{line}|\nFull text:\n"
@@ -163,7 +163,7 @@ class TestPrettyPrinter(unittest.TestCase):
             print_result = output.getvalue()
 
         with io.StringIO() as output:
-            sh_print(pp_obj, file=output)
+            print(pp_obj, file=output)
             sh_print_result = output.getvalue()
 
         self.assertEqual(converted_result, print_result)
@@ -647,7 +647,7 @@ class TestPPTable(unittest.TestCase):
             """Produce some text, which is not just str(value)"""
             def make_desired_cell_ch_text(
                 self, value, fmt_modifier, _c,
-            ) -> ([CHText._Chunk], int):
+            ) -> ([CHText.Chunk], int):
                 """Custom format value for a table column.
 
                 This one appends some text to a value.

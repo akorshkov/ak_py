@@ -86,7 +86,7 @@ class LLImpl(LocalPaletteUser):
             if cat_is_first:
                 cat_is_first = False
             else:
-                yield CHText(self._c.no_color(""))
+                yield CHText(self._c.text(""))
             yield CHText(self._c.categoty(category_name), ":")
             items, items_wo_descr = items_by_category[category_name]
             if items:
@@ -415,7 +415,7 @@ class HDocItemFunc(HDocItem):
         args_descr = ", ".join(self.arg_names)
         yield CHText(
             _c.func_name(self.name),
-            _c.no_color(f"({args_descr}) "),
+            _c.text(f"({args_descr}) "),
             bm_notes.note_short,
             f" {self.short_descr}",
         )
@@ -442,8 +442,8 @@ class HDocItemFunc(HDocItem):
                 if tag != self.main_tag:
                     yield tag
 
-        sh_text_chunks = [_c.no_color("   ")]
-        ct_chunk_space_hash_symbol = _c.no_color(" #")
+        sh_text_chunks = [_c.text("   ")]
+        ct_chunk_space_hash_symbol = _c.text(" #")
         for tag in _gen_tags():
             sh_text_chunks.append(ct_chunk_space_hash_symbol)
             sh_text_chunks.append(_c.tag(tag))
