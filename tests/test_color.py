@@ -150,13 +150,18 @@ class TestColorFmt(unittest.TestCase):
 
 
 class TestCHTextProperties(unittest.TestCase):
-    """Test properties of CHText objects."""
-    # !!!!!! Need to test CHText.Chunk properties also !!!!
+    """Test CHText objects."""
+
+    @staticmethod
+    def _mk_chtext(color_name, raw_text) -> CHText:
+        # ColorFmt produces not CHText, but CHText.Chunk objects
+        # These classes have similar behavior, but here we test CHText.
+        return CHText(ColorFmt(color_name)(raw_text))
 
     def test_nocolor_text(self):
         """Test CHText which does not have any effect."""
         raw_text = 'text'
-        nocolor_text = ColorFmt(None)(raw_text)
+        nocolor_text = self._mk_chtext(None, raw_text)
 
         self.assertEqual(len(raw_text), len(nocolor_text))
         self.assertEqual(raw_text, nocolor_text.plain_text())
@@ -176,7 +181,7 @@ class TestCHTextProperties(unittest.TestCase):
     def test_making_copies(self):
         """Make sure operations with the copy no not affect original."""
         raw_text = "some_text"
-        orig = ColorFmt('GREEN')(raw_text)
+        orig = self._mk_chtext('GREEN', raw_text)
 
         t = CHText(orig)
         self.assertEqual(raw_text, orig.plain_text())
@@ -184,7 +189,7 @@ class TestCHTextProperties(unittest.TestCase):
         t = CHText(orig, "some more")
         self.assertEqual(raw_text, orig.plain_text())
 
-        other_t = ColorFmt('GREEN')("other text")
+        other_t = self._mk_chtext('GREEN', "other text")
         t = CHText(other_t, orig)
         self.assertEqual(raw_text, orig.plain_text())
         t = CHText(orig, other_t)
@@ -200,10 +205,10 @@ class TestCHTextProperties(unittest.TestCase):
         CHText with no color considered equal to raw string.
         """
         raw_text = "text"
-        green_text = ColorFmt('GREEN')(raw_text)
-        green_text1 = ColorFmt('GREEN')(raw_text)
-        red_text = ColorFmt('RED')(raw_text)
-        nocolor_text = ColorFmt(None)(raw_text)
+        green_text = self._mk_chtext('GREEN', raw_text)
+        green_text1 = self._mk_chtext('GREEN', raw_text)
+        red_text = self._mk_chtext('RED', raw_text)
+        nocolor_text = self._mk_chtext(None, raw_text)
 
         self.assertTrue(green_text == green_text)
         self.assertTrue(green_text == green_text1)
@@ -227,11 +232,11 @@ class TestCHTextProperties(unittest.TestCase):
     def test_concatenation(self):
         """Text different ways to concatenate CHText."""
 
-        part_1 = ColorFmt('GREEN')("p1")
-        part_2 = ColorFmt('GREEN')("p2")
+        part_1 = self._mk_chtext('GREEN', "p1")
+        part_2 = self._mk_chtext('GREEN', "p2")
 
         t = part_1 + part_2
-        expected = ColorFmt('GREEN')("p1p2")
+        expected = self._mk_chtext('GREEN', "p1p2")
 
         self.assertTrue(t == expected)
         self.assertEqual("p1", part_1.plain_text())
@@ -244,16 +249,29 @@ class TestCHTextProperties(unittest.TestCase):
         t += part_2
         self.assertTrue(t == expected)
 
+    def test_concatenation_with_strings(self):
+        """Test concatenation of str and CText."""
+        part_1 = self._mk_chtext('GREEN', "p1")
+        part_2 = self._mk_chtext(None, "plain")
+
+        t = "plain" + part_1
+        self.assertIsInstance(t, CHText)
+
+        t1 = part_2 + part_1
+        self.assertIsInstance(t1, CHText)
+
+        self.assertEqual(t, t1)
+
     def test_join(self):
         """Test CHText.join method."""
 
-        sep = ColorFmt('GREEN')('=')
+        sep = self._mk_chtext('GREEN', '=')
 
         empty = sep.join([])
         self.assertEqual("", empty.plain_text())
 
         parts = [
-            ColorFmt('RED')('red'),
+            self._mk_chtext('RED', 'red'),
             "white",
         ]
 
@@ -263,7 +281,7 @@ class TestCHTextProperties(unittest.TestCase):
     def test_formatting(self):
         """Test string formatting of CHText objects"""
 
-        t = ColorFmt('GREEN')("text")
+        t = self._mk_chtext('GREEN', "text")
 
         # just check formatting produce no errors
         _ = f"{t}"        # printed as "text"
@@ -289,13 +307,13 @@ class TestCHTextProperties(unittest.TestCase):
         """Test slising of CHText."""
 
         # CHText to be used in tests
-        text = ColorFmt('GREEN')('green') + ColorFmt('RED')('red')
+        text = self._mk_chtext('GREEN', 'green') + self._mk_chtext('RED', 'red')
         self.assertEqual(8, len(text))
         self.assertEqual("greenred", text.plain_text())
 
         # 1. test simple indexing (1 character)
-        green_fmt = ColorFmt('GREEN')
-        red_fmt = ColorFmt('RED')
+        green_fmt = lambda text: CHText(ColorFmt('GREEN')(text))
+        red_fmt = lambda text: CHText(ColorFmt('RED')(text))
 
         # 1.1. positive indexes
         self.assertEqual(green_fmt('g'), text[0])
@@ -355,7 +373,7 @@ class TestCHTextProperties(unittest.TestCase):
         self.assertEqual(green_fmt("reen") + red_fmt("r"), text[1:6])
 
         # 2.2. empty substrings, positive indexes
-        empty_text = ColorFmt(None)("")
+        empty_text = self._mk_chtext(None, "")
         empty_text = CHText()
         self.assertEqual(empty_text, text[0:0])
         self.assertEqual(empty_text, text[1:1])
@@ -393,7 +411,7 @@ class TestCHTextProperties(unittest.TestCase):
     def test_slising_empty_text(self):
         """make sure slicing does not fail with empty text."""
         empty_text = CHText()
-        also_empty_text = ColorFmt(None)("")
+        also_empty_text = self._mk_chtext(None, "")
 
         self.assertEqual(empty_text, also_empty_text)
 
@@ -405,7 +423,7 @@ class TestCHTextProperties(unittest.TestCase):
 
     def test_fixed_len_method(self):
         """Test CHText.fixed_len method"""
-        t = ColorFmt('RED')("123") + ColorFmt('BLUE')("456")
+        t = self._mk_chtext('RED', "123") + self._mk_chtext('BLUE', "456")
 
         # get longer result
         result = t.fixed_len(10)
@@ -424,7 +442,7 @@ class TestCHTextProperties(unittest.TestCase):
     def test_strip_colors(self):
         """test method which removes color sequences from string."""
 
-        color_text = ColorFmt('GREEN')('Green') + ColorFmt('RED')('Red')
+        color_text = self._mk_chtext('GREEN', 'Green') + self._mk_chtext('RED', 'Red')
 
         plain_str = 'GreenRed'
         colored_str = str(color_text)
@@ -437,6 +455,185 @@ class TestCHTextProperties(unittest.TestCase):
 
         stripped_colored_str = CHText.strip_colors(colored_str)
         self.assertEqual(plain_str, stripped_colored_str)
+
+
+class TestCHTextChunkProperties(unittest.TestCase):
+    """Test CHText.Chunk.
+
+    CHText.Chunk is a type of colored text parts of the CHText (CHText
+    object is a list of CHText.Chunk objects corresponding to parts of text
+    having different colors).
+    For performance reasons in some cases not CHText, but CHText.Chunk objects
+    are used in the application code.
+
+    Behavior of the CHText.Chunk is very similar to the behavior of CHText,
+    and here we test it.
+    """
+
+    def test_chtext_chunk_construction(self):
+        """Test construction of CHText.Chunk."""
+        raw_text = "some text"
+        ch_chunk = ColorFmt("GREEN")(raw_text)
+
+        self.assertNotIsInstance(ch_chunk, CHText)
+        self.assertIsInstance(ch_chunk, CHText.Chunk)
+
+        self.assertEqual(raw_text, ch_chunk.plain_text())
+
+    def test_chtext_chunk_to_str(self):
+        """Test conversion to string."""
+        raw_text = "some text"
+        ch_chunk = ColorFmt("GREEN")(raw_text)
+        green_text = str(ch_chunk)
+
+        self.assertGreater(len(green_text), len(raw_text))
+        self.assertIn(raw_text, green_text)
+
+    def test_equality_check(self):
+        """Test comparison of CHText.Chunk with CHText, CHText.Chunk and string."""
+
+        raw_text = "some text"
+
+        green_fmt = ColorFmt("GREEN")
+        green_chunk = green_fmt(raw_text)
+        green_chunk1 = green_fmt(raw_text)
+        green_text = CHText(ColorFmt("GREEN")(raw_text))
+
+        # positive cases
+        self.assertEqual(green_chunk, green_chunk)
+        self.assertEqual(green_chunk, green_chunk1)
+        self.assertEqual(green_chunk, green_text)
+        self.assertEqual(green_text, green_chunk)
+
+        # negative cases
+        red_chunk = ColorFmt("RED")(raw_text)
+
+        self.assertNotEqual(green_chunk, red_chunk)
+        self.assertNotEqual(green_text, red_chunk)
+        self.assertNotEqual(red_chunk, green_text)
+
+        self.assertNotEqual(red_chunk, raw_text)
+        self.assertNotEqual(raw_text, red_chunk)
+
+        # comparing with strings
+        no_color_chunk = ColorFmt(None)(raw_text)
+
+        self.assertEqual(no_color_chunk, raw_text)
+        self.assertEqual(raw_text, no_color_chunk)
+
+    def test_concatenation(self):
+        """Test different ways to concatenate CHText and Chunk and str."""
+
+        part_1 = ColorFmt("GREEN")("p1")
+        part_2 = ColorFmt("GREEN")("p2")
+
+        t = part_1 + part_2
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text(), "p1p2")
+
+        t = t + part_1
+        self.assertEqual(t.plain_text(), "p1p2p1")
+
+        t = part_2 + t
+        self.assertEqual(t.plain_text(), "p2p1p2p1")
+
+        t = part_1 + "plain"
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text(), "p1plain")
+
+        t = "plain" + part_1
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text(), "plainp1")
+
+    def test_join(self):
+        """Test CHText.Chunk.join method"""
+
+        sep = ColorFmt('GREEN')('=')
+
+        empty = sep.join([])
+        self.assertIsInstance(empty, CHText)
+        self.assertEqual("", empty.plain_text())
+
+        parts = [
+            ColorFmt('BLUE')('blue'),
+            CHText(ColorFmt('RED')('red')),
+            "white"
+        ]
+
+        joined = sep.join(parts)
+        self.assertEqual("blue=red=white", joined.plain_text())
+
+    def test_formatting(self):
+        """Test string formatting of CHText.Chunk objects"""
+
+        t = ColorFmt("GREEN")("text")
+
+        for colored_text, expected_plaintext in [
+            (f"{t}", "text"),
+            (f"{t:s}", "text"),  # same, 's' format specifier is optional
+            (f"{t:10}", "text      "),
+            (f"{t:>10}", "      text"),
+            (f"{t:>>10}", ">>>>>>text"),
+        ]:
+            self.assertGreater(len(colored_text), len(expected_plaintext))
+            self.assertEqual(CHText.strip_colors(colored_text), expected_plaintext)
+
+    def test_slicing(self):
+        """Test slising of CHText.Chunk"""
+
+        green_fmt = ColorFmt("GREEN")
+        t = green_fmt("green")
+
+        self.assertIs(type(t[0]), CHText.Chunk)
+        self.assertEqual(green_fmt('g'), t[0])
+        self.assertEqual('g', t[0].plain_text())
+
+        self.assertEqual(green_fmt('e'), t[2])
+        self.assertEqual(green_fmt('r'), t[-4])
+
+        for index in [5, 10, -10]:
+            with self.assertRaises(IndexError) as exc:
+                t[index]
+            err_msg = str(exc.exception)
+            self.assertIn("out of range", err_msg)
+
+        # normal substrings, positive indexes
+        self.assertEqual(green_fmt("ree"), t[1:4])
+        self.assertEqual(green_fmt("green"), t[:5])
+        self.assertEqual(green_fmt("green"), t[:15], "index too big, but this is ok")
+
+    def test_fixed_len_method(self):
+        """Test CHText.Chunk.fixed_len method"""
+        
+        green_fmt = ColorFmt("GREEN")
+        orig_ch_chunk = green_fmt("green")
+
+        t = orig_ch_chunk.fixed_len(3)
+        self.assertIsInstance(t, (CHText, CHText.Chunk))
+        self.assertEqual(t, green_fmt("gre"))
+
+        t = orig_ch_chunk.fixed_len(5)
+        self.assertIsInstance(t, (CHText, CHText.Chunk))
+        self.assertEqual(t, green_fmt("green"))
+
+        t = orig_ch_chunk.fixed_len(6)
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t, CHText(green_fmt("green"), " "))
+
+    def test_strip_colors(self):
+        """test method which removes color sequences from string."""
+        # It is a classmethod, the same as in CHText.
+        # Just test it is present
+
+        color_text = str(CHText(ColorFmt("RED")("Red"), ColorFmt("GREEN")("Green")))
+
+        dummy_ch_chunk = ColorFmt("RED")("anything")
+        self.assertIsInstance(dummy_ch_chunk, CHText.Chunk)
+
+        plain_text = dummy_ch_chunk.strip_colors(color_text)
+
+        self.assertGreater(len(color_text), len(plain_text))
+        self.assertEqual(plain_text, "RedGreen")
 
 
 class TestColorFmtBytes(unittest.TestCase):

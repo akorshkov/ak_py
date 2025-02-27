@@ -99,12 +99,10 @@ class _CHTextChunk:
     def plain_text(self):
         return self.text
 
-    # !!!! may be I do need a base class for CHText and Chunk?
-    #@classmethod
-    #def strip_colors(cls, text: str) -> str:
-    #    """Colorer-formatted string -> same string w/o coloring."""
-    #    if cls._SEQ_RE is None:
-    #        cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
+    @classmethod
+    def strip_colors(cls, text: str) -> str:
+        """Colorer-formatted string -> same string w/o coloring."""
+        return CHText.strip_colors(text)
 
     def __len__(self):
         return len(self.text)
@@ -129,6 +127,9 @@ class _CHTextChunk:
 
     def __add__(self, other) -> 'CHText':
         return CHText(self, other)
+
+    def __radd__(self, other) -> 'CHText':
+        return CHText(other, self)
 
     def join(self, iterable) -> 'CHText':
         sep = CHText(self)
@@ -325,16 +326,20 @@ class CHText:
 
         return self
 
-    def __add__(self, other):
-        """Concatenate sh_text objects"""
+    def __add__(self, other) -> 'CHText':
+        """Concatenate CHText objects"""
         result = type(self)(self)  # clone self
         result += other
         return result
 
+    def __radd__(self, other) -> 'CHText':
+        """Concatenate in case CHText is the second operand."""
+        return type(self)(other, self)
+
     def join(self, iterable):
         """Similar to str.join method.
 
-        Elements of the iterable may be either strings or _CTText objects.
+        Elements of the iterable may be either strings or CTText objects.
         """
         result = type(self)()  # construct empty object
         is_first = True
