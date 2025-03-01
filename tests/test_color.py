@@ -1332,7 +1332,7 @@ class TestPalete(unittest.TestCase):
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        # create the local_palette object from the global colors config
+        # 1. create the local_palette object from the global colors config
         # and check it works
         local_palette = self.MyPalette.make()
 
@@ -1344,6 +1344,57 @@ class TestPalete(unittest.TestCase):
             str(ColorFmt("YELLOW")(sample_text)),
             "local syntax id 'TEXT' corresponds to 'NUMBER' syntax in "
             "the global config => YELLOW")
+
+        # 1.1. subsequent creations of the palette from the same class should
+        # return the same object
+        same_palette = self.MyPalette.make()
+        self.assertIs(local_palette, same_palette)
+
+        # 2. but after update of the global config new palette object should
+        # be created
+        class DummyPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                "SOME_NEW_SYNTAX": "",
+            }
+
+        # new component may be registered in two ways:
+        # - by creation of a palette of new class
+        # - by direct regigistration of a Palette class
+        # 2.1. after the first registration of DummyPalette new MyPalette
+        # should be created
+        _ = DummyPalette.make()
+        new_local_palette = self.MyPalette.make()
+        self.assertIsNot(
+            local_palette, new_local_palette,
+            "creation of a palette of DummyPalette class has updated global config. "
+            "It is not possible to reuse previously created palettes afther that. ")
+        local_palette = new_local_palette
+
+        self.assertIs(
+            self.MyPalette.make(), local_palette,
+            "new new palette classes registered in the config, "
+            "same palette object is expected")
+
+        # 2.2. registration of previously registered DummyPalette should not affect
+        # cached palettes
+        DummyPalette.register_in_colors_conf(get_global_colors_config())
+        self.assertIs(
+            self.MyPalette.make(), local_palette,
+            "new new palette classes registered in the config, "
+            "same palette object is expected")
+
+        # 3. similar to 2., but trying different methods of palette class registration
+        set_global_colors_config(None)
+        palette_0 = self.MyPalette.make()
+
+        DummyPalette.register_in_colors_conf(get_global_colors_config())
+        palette_1 = self.MyPalette.make()
+
+        _ = DummyPalette.make()
+        palette_2 = self.MyPalette.make()
+
+        self.assertIsNot(palette_0, palette_1)
+        self.assertIs(palette_1, palette_2)
 
         # cleanup global config
         set_global_colors_config(None)

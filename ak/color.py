@@ -1533,8 +1533,9 @@ class Palette(metaclass=_PaletteMeta):
         if colors_conf is None:
             colors_conf = get_global_colors_config()
 
-        cls._register_in_colors_conf(colors_conf)
+        cls.register_in_colors_conf(colors_conf)
 
+        # !!!!  need to cache this no_color_palette or what ???
         if no_color:
             if cls._PALETTE_NO_COLOR is None:
                 cls._PALETTE_NO_COLOR = cls({
@@ -1566,13 +1567,14 @@ class Palette(metaclass=_PaletteMeta):
         return cls.make(None, True)
 
     @classmethod
-    def _register_in_colors_conf(cls, colors_conf):
+    def register_in_colors_conf(cls, colors_conf):
+        # !!! doc string
         # Register cls in the colors_conf as color config component
         if colors_conf.color_conf_component_is_registered(cls):
             return
         if cls.PARENT_PALETTES is not None:
             for p_cls in cls.PARENT_PALETTES:
-                p_cls._register_in_colors_conf(colors_conf)
+                p_cls.register_in_colors_conf(colors_conf)
 
         if cls.SYNTAX_DEFAULTS is not None:
             colors_conf.register_color_conf_component(cls.SYNTAX_DEFAULTS, cls)
