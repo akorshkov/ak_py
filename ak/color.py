@@ -1067,6 +1067,359 @@ class SyntaxColor:
 
         return modifiers
 
+
+class ColorsConfig:
+    """Colors configuration. Usually a global object.
+
+    ColorsConfig contains colors for miscelaneous syntax items such as
+    numbers in pretty-printed jsons or table borders.
+
+    This configuration may be read from the config file and then be used by
+    miscellaneous application components. In case the application config
+    does not contain information about some syntax items the application components
+    register the syntax items they are using in the ColorsConfig.
+
+    It is possible to get a report of what colors are used for different syntax
+    groups and then use this report as a starting point for colors configuration
+    in the application config file.
+
+    ColorsConfig creates Palette objects to be used by misc pretty-printers
+    for producing colored text.
+
+    !!!!!!! no get_global_colors_config !!!!!
+
+    Global ColorsConfig object is ak.color._COLORS_CONFIG. Use
+    ak.color.get_global_colors_config() and ak.color.set_global_colors_config()
+    to access this object.
+    """
+
+    _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
+
+    DFLT_SYNTAX_ID = "TEXT"
+    BUILT_IN_CONFIG = {
+        "TEXT": "",  # supposed to be used as default text settings
+        "NAME": "GREEN:bold",
+        "KEYWORD": "BLUE:bold",
+        "NUMBER": "YELLOW",
+        "OK": "GREEN:bold",
+        "WARN": "RED",
+        "ERROR": "RED:bold",
+    }
+
+    __slots__ = (
+        'syntax_map',
+        'registered_sources',
+        'no_color', # !!!!! remove it!
+        'global_palette',
+        '_cached_palette',
+        '_cache',
+    )
+
+    def __init__(self, init_config=None, *, no_color=False):
+        """Constructor.
+
+        Arguments:
+        - init_config: colors config (*)
+        - no_color: if True - ignores all other config settings and creates
+          'no-color' config
+
+        (*) data for the colors config is expected to be read from the config file.
+        Example of colors config:
+        {
+            "NAME": "BLUE:bold",
+            "TABLE": {
+                "NAME": "YELLOW",
+                "BORDER": "GREEN",
+                "NUMBER": "TABLE.NAME",
+            }
+        }
+
+        Color description format:
+            "COLOR/BG_COLOR:modifiers"
+            "OTHER_SYNTAX:modifiers"
+            "OTHER_SYNTAX:COLOR/BG_COLOR:modifiers"
+
+        here:
+        - modifiers is a list of individual modifiers with optional 'no_' prefix
+        - COLOR and BG_COLOR:
+            - color identifiers as described in ColorFmt constructor:
+                - name of the color
+                - a number
+                - r,g,b tuple
+                - string in form 'g0' - 'g23'
+            - "-" - indicator that the system color should be used
+            - "" (empty string) - indicator that the "default" color should be used.
+                The default color is the color of the "OTHER_SYNTAX" in case it
+                is used in the description, or the system color otherwise
+
+        Examples:
+            "YELLOW/BLUE:bold,faint,underline,blink,crossed"
+            "GREEN"
+            "RED:bold"
+            "OTHER_SYNTAX_NAME:no_bold"
+
+        Use colors_config.make_report() method to get more information about
+        names of syntax items currently used in the application and
+        corresponding colors.
+        """
+        if init_config is None:
+            init_config = {}
+        self.no_color = no_color
+        self.global_palette = None
+        self._cached_palette = None
+
+        self._cache = {}
+        self.registered_sources = set()
+        self.syntax_map = {}
+
+        new_init_items = self._flatten_dict(init_config)
+        self.add_new_items(new_init_items, "config")
+
+        new_init_items = self._flatten_dict(self.BUILT_IN_CONFIG)
+        self.add_new_items(new_init_items, "built in")
+
+    def add_new_items(self, new_items, src_obj_descr):
+        """Register information about new syntaxes.
+
+        When some component wants to use the ColorsConfig but the config
+        does not contain information about the syntaxes this component requires
+        the component registeres desired syntaxes in the config.
+
+        Arguments:
+        - new_items: {synt_id: init_str}, where init_str contains description
+            of the color, corresponding to the syntax
+        - src_obj_descr: description of the object which adds these items to config.
+            Will be used for reporting purposes.
+        """
+        assert isinstance(src_obj_descr, str)
+
+        if not new_items:
+            return
+
+        self._cached_palette = None
+
+        if any(synt_id not in self.syntax_map for synt_id in new_items):
+            self._cache = {}
+
+        for synt_id, init_str in new_items.items():
+            if synt_id in self.syntax_map:
+                # properties of this syntax are defined already. Probably in
+                # config file.
+                continue
+            self.syntax_map[synt_id] = SyntaxColor(
+                synt_id, init_str, src_obj_descr, self.no_color)
+
+        # Information about new syntax items has been registered
+        # But construction of some syntax items may be not finished yet (items
+        # may depend on other items, implementing rules such as 'TABLE.BORDER is
+        # same as NUMBER, but bold and blinking')
+        # Both new items and previously registered items may be not fully
+        # constructed yet. For example, the above-mentioned rule could be
+        # present in the initial config, but it can't be resolved util information
+        # about NUMBER syntax is available.
+        #
+        # Finish construction (resolve) those items we have enough information for.
+
+        to_resolve = {
+            synt_id: syntax_color
+            for synt_id, syntax_color in self.syntax_map.items()
+            if syntax_color.color_fmt is None
+        }
+
+        # id's of SyntaxColor items which definitely can't be resolved for now
+        cant_resolve = set()
+
+        while to_resolve:
+            new_resolved = set()
+            for synt_id, syntax_color in sorted(to_resolve.items()):
+                if syntax_color.color_fmt is not None:
+                    continue
+                path = []
+                while True:
+                    if syntax_color.synt_id in path:
+                        assert False, f"circular dependency detected. Fix me. !!!"
+                    if syntax_color.color_fmt is not None:
+                        # all the syntaxes accumulated in path may be resolved now
+                        parent_syntax_color = syntax_color
+                        for synt_id in reversed(path):
+                            syntax_color = self.syntax_map[synt_id]
+                            syntax_color.resolve(
+                                parent_syntax_color, self.no_color)
+                            new_resolved.add(syntax_color.synt_id)
+                            parent_syntax_color = syntax_color
+                        break
+                    if (
+                        syntax_color.synt_id in cant_resolve
+                        or syntax_color.parent_syntax_id not in self.syntax_map
+                    ):
+                        # all the syntaxes accumulated in path can't be resolved now
+                        cant_resolve.update(path)
+                        break
+                    path.append(syntax_color.synt_id)
+                    syntax_color = self.syntax_map[syntax_color.parent_syntax_id]
+            if not new_resolved:
+                # no more items can be resolved
+                break
+
+        if self.global_palette is not None:
+            # let the global palette reinitialize itself after the config updated
+            self.global_palette.set_colors_conf(self)
+
+    def put_into_cache(self, cache_key, the_obj):
+        """!!!! """
+        self._cache[cache_key] = the_obj
+
+    def get_cached_obj(self, cache_key):
+        """!!! """
+        return self._cache.get(cache_key)
+
+    @classmethod
+    def _flatten_dict(cls, syntax_map):
+        # transform structure of nested dictionaries into a flat dictionary.
+        # keys of items corresponding to elements of nested disctionaris are
+        # composed of names of items in path:
+        # {'TABLE': {'BORDER': value}}  ->  {'TABLE.BORDER': value}
+        result = {}
+        for key, value in syntax_map.items():
+            if isinstance(value, str):
+                result[key] = value
+            elif isinstance(value, dict):
+                flatten_subdict = cls._flatten_dict(value)
+                for skey, val_and_src in flatten_subdict.items():
+                    result[f"{key}.{skey}"] = val_and_src
+        return result
+
+    def get_color(self, synt_id) -> ColorFmt:
+        """syntax name -> ColorFmt"""
+        syntax_color = self.syntax_map.get(synt_id)
+        if syntax_color is None:
+            syntax_color = self.syntax_map.get(self.DFLT_SYNTAX_ID)
+        if syntax_color is None or syntax_color.color_fmt is None:
+            return self._NO_EFFECTS_FMT
+        return syntax_color.color_fmt
+
+    def get_palette(self) -> 'GlobalPalette':
+        """Get Palette which contains all the syntaxes in this ColorsConfig."""
+        if self._cached_palette is None:
+            self._cached_palette = self._make_palette()
+        return self._cached_palette
+
+    def _make_palette(self):
+        """!!!! """
+        return GlobalPalette.make(colors_conf=self)
+
+
+#    def _make_palette(self, group_name=None, **kwargs) -> 'Palette':
+#        """Creates Palette object for a specified syntax group.
+#
+#        For example, for syntax group 'TABLE' the default ColorsConfig will produce
+#        Palette with following items:
+#            "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
+#
+#        Additional amendments to palette colors may be specified in kwargs.
+#        kwargs format:
+#        "PALETTE_SYNTAX_NAME": "CONF_SYNTAX_NAME"
+#        """
+#        prefix = "" if group_name is None else group_name + "."
+#        prefix_len = len(prefix)
+#        palette_colors = {}
+#        for full_syntax_name, syntax_color in self.syntax_map.items():
+#            color_fmt = syntax_color.color_fmt
+#            if color_fmt is None:
+#                color_fmt = self._NO_EFFECTS_FMT
+#
+#            if not full_syntax_name.startswith(prefix):
+#                continue
+#            syntax_name = full_syntax_name[prefix_len:]
+#            palette_colors[syntax_name] = color_fmt
+#
+#        for syntax, conf_syntax in kwargs.items():
+#            palette_colors[syntax] = self.get_color(conf_syntax)
+#
+#        return Palette(palette_colors)
+
+    def color_conf_component_is_registered(self, src_obj) -> bool:
+        """Check if Palette object is registered in the ColorsConfig"""
+        return src_obj in self.registered_sources
+
+    def register_color_conf_component(self, syntax_map, src_obj):
+        """Register Palette object in the ColorsConfig"""
+        assert src_obj not in self.registered_sources, f"{src_obj=}"
+        self.registered_sources.add(src_obj)
+        new_items_flat_init_conf = self._flatten_dict(syntax_map)
+        self.add_new_items(new_items_flat_init_conf, str(src_obj))
+
+    def make_report(self) -> str:
+        """Create colored report of self."""
+        return "\n".join(self.gen_report_lines())
+
+    def gen_report_lines(self) -> Iterator[str]:
+        """Generate lines for self-report"""
+        offset_step = "  "
+        rep_lines = []  # ["name and init_str", "status", "source"]
+        common_path = []  # path to a current syntax element
+        for syntax_name, syntax_color in sorted(self.syntax_map.items()):
+            syntax_descr = syntax_color.init_str
+            if not syntax_descr:
+                syntax_descr = "<SAMPLE>"
+            syntax_chunks = syntax_name.split('.')
+            cur_path = syntax_chunks[:-1]
+            cur_name = syntax_chunks[-1]
+
+            # leave only prefix of common_path which is still valid for current item
+            cmn_path_valid_len = 0
+            for cmn_path_chunk, synt_path_chunk in zip(common_path, cur_path):
+                if cmn_path_chunk != synt_path_chunk:
+                    break
+                cmn_path_valid_len += 1
+            common_path = common_path[:cmn_path_valid_len]
+
+            while len(cur_path) > len(common_path):
+                # report next group name
+                depth = len(common_path)
+                group_name = cur_path[depth]
+                common_path.append(group_name)
+                rep_lines.append((f"{offset_step*depth}{group_name} ->", None, None))
+
+            assert len(cur_path) == len(common_path)
+            # report the syntax description
+            depth = len(common_path)
+            prefix = self._NO_EFFECTS_FMT(offset_step*depth)
+            color_fmt = syntax_color.color_fmt
+            status = None
+            if color_fmt is None:
+                # this syntax color is not resolved.
+                color_fmt = self._NO_EFFECTS_FMT
+                status = "<NOT RESOLVED>"
+            rep_lines.append(
+                (
+                    prefix + f"{cur_name}: " + color_fmt(syntax_descr),
+                    status,
+                    syntax_color.src_obj_name,
+                ))
+        # raw information is ready, yield the report lines
+        show_status = any(l[1] is not None for l in rep_lines)
+        max_main_part_width = max(len(l[0]) for l in rep_lines)
+        main_part_width = min(150, max(40, max_main_part_width))
+        for line in rep_lines:
+            if line[2] is None:
+                # this is a technical line, showes group name
+                yield line[0]
+                continue
+            # this line contains info about some syntax color
+            colored_text = line[0].fixed_len(main_part_width)
+
+            # add info about the status
+            if show_status:
+                status = line[1] if line[1] is not None else "<OK>"
+                colored_text += f" !{status:15}"
+
+            # add info about the source
+            colored_text += f" <- {line[2]}"
+
+            yield str(colored_text)
+
+
 class ConfColor:
     """!!! """
     def __init__(self, synt_id):
@@ -1141,7 +1494,7 @@ class Palette(metaclass=_PaletteMeta):
 
     # no_color = ColorFmt.get_plaintext_fmt()
     # !!!!!!! always available, plain text
-    text = ConfColor("TEXT")
+    text = ConfColor(ColorsConfig.DFLT_SYNTAX_ID)
 
     def __init__(self, local_colors, _no_color=None, _colors_conf=None):
         """Constructor of Palette - for internal use.
@@ -1267,44 +1620,35 @@ class GlobalPalette(Palette):
     warn = ConfColor("WARN")
     error = ConfColor("ERROR")
 
+    # !!!! comment
+    BUILTIN_ATTRS_MAP = {
+        "text": "TEXT",
+        "name": "NAME",
+        "keyword": "KEYWORD",
+        "ok": "OK",
+        "warn": "WARN",
+        "error": "ERROR",
+    }
+
     def __init__(self, local_colors, _no_color=None, _colors_conf=None):
         """ !!!"""
         super().__init__(local_colors, _no_color, _colors_conf)
         self._colors_conf = _colors_conf
 
-
-#    def __init__(self, colors, use_colors=True):
-#        """Create simple dictionary {syntax_type: ColorFmt}.
-#
-#        Example:
-#            !!!!! no more
-#            GlobalPalette({'syntax1': ColorFmt('RED'), 'syntax2': ColorFmt('BLUE')})
-#        """
-#        self.colors = colors.copy()
-#        self.use_colors = use_colors
-
-#    def make_report(self) -> str:
-#        """Create report of colors in the palette"""
-#        return "\n".join(
-#            str(line) for line in self.gen_report_lines())
-#
-#    def gen_report_lines(self) -> Iterator[str]:
-#        for syntax_name, color_fmt in sorted(self.colors.items()):
-#            yield f"{syntax_name:15}: {color_fmt('<SAMPLE>')}"
-
     def get_color(self, syntax_name) -> ColorFmt:
         """syntax_name -> ColorFmt"""
         return self._colors_conf.get_color(syntax_name)
-#        no_effects_fmt = ColorFmt.get_plaintext_fmt()
-#
-#        if not self.use_colors:
-#            return no_effects_fmt
-#
-#        return self.colors.get(syntax_name, no_effects_fmt)
 
     def __getitem__(self, index):
         """same behavior as get_color method"""
         return self.get_color(index)
+
+    def set_colors_conf(self, colors_conf):
+        """ """
+        self._colors_conf = colors_conf
+        for attr_name, synt_id in self.BUILTIN_ATTRS_MAP.items():
+            setattr(self, attr_name, colors_conf.get_color(synt_id))
+
 
 #    def __call__(self, *items) -> CHText:
 #        """Produce multi-colored CHText.
@@ -1341,348 +1685,6 @@ class GlobalPalette(Palette):
 #
 #        return ColorFmt.get_plaintext_fmt()(item)
 
-
-class ColorsConfig:
-    """Colors configuration. Usually a global object.
-
-    ColorsConfig contains colors for miscelaneous syntax items such as
-    numbers in pretty-printed jsons or table borders.
-
-    This configuration may be read from the config file and then be used by
-    miscellaneous application components. In case the application config
-    does not contain information about some syntax items the application components
-    register the syntax items they are using in the ColorsConfig.
-
-    It is possible to get a report of what colors are used for different syntax
-    groups and then use this report as a starting point for colors configuration
-    in the application config file.
-
-    ColorsConfig creates Palette objects to be used by misc pretty-printers
-    for producing colored text.
-
-    Global ColorsConfig object is ak.color._COLORS_CONFIG. Use
-    ak.color.get_global_colors_config() and ak.color.set_global_colors_config()
-    to access this object.
-    """
-
-    _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
-
-    BUILT_IN_CONFIG = {
-        "TEXT": "",  # supposed to be used as default text settings
-        "NAME": "GREEN:bold",
-        "KEYWORD": "BLUE:bold",
-        "NUMBER": "YELLOW",
-        "OK": "GREEN:bold",
-        "WARN": "RED",
-        "ERROR": "RED:bold",
-    }
-
-    __slots__ = (
-        'syntax_map',
-        'registered_sources',
-        'no_color', # !!!!! remove it!
-        '_cached_palette',
-        '_cache',
-    )
-
-    def __init__(self, init_config=None, *, no_color=False):
-        """Constructor.
-
-        Arguments:
-        - init_config: colors config (*)
-        - no_color: if True - ignores all other config settings and creates
-          'no-color' config
-
-        (*) data for the colors config is expected to be read from the config file.
-        Example of colors config:
-        {
-            "NAME": "BLUE:bold",
-            "TABLE": {
-                "NAME": "YELLOW",
-                "BORDER": "GREEN",
-                "NUMBER": "TABLE.NAME",
-            }
-        }
-
-        Color description format:
-            "COLOR/BG_COLOR:modifiers"
-            "OTHER_SYNTAX:modifiers"
-            "OTHER_SYNTAX:COLOR/BG_COLOR:modifiers"
-
-        here:
-        - modifiers is a list of individual modifiers with optional 'no_' prefix
-        - COLOR and BG_COLOR:
-            - color identifiers as described in ColorFmt constructor:
-                - name of the color
-                - a number
-                - r,g,b tuple
-                - string in form 'g0' - 'g23'
-            - "-" - indicator that the system color should be used
-            - "" (empty string) - indicator that the "default" color should be used.
-                The default color is the color of the "OTHER_SYNTAX" in case it
-                is used in the description, or the system color otherwise
-
-        Examples:
-            "YELLOW/BLUE:bold,faint,underline,blink,crossed"
-            "GREEN"
-            "RED:bold"
-            "OTHER_SYNTAX_NAME:no_bold"
-
-        Use colors_config.make_report() method to get more information about
-        names of syntax items currently used in the application and
-        corresponding colors.
-        """
-        if init_config is None:
-            init_config = {}
-        self.no_color = no_color
-        self._cached_palette = None
-
-        self._cache = {}
-        self.registered_sources = set()
-        self.syntax_map = {}
-
-        new_init_items = self._flatten_dict(init_config)
-        self.add_new_items(new_init_items, "config")
-
-        new_init_items = self._flatten_dict(self.BUILT_IN_CONFIG)
-        self.add_new_items(new_init_items, "built in")
-
-    def add_new_items(self, new_items, src_obj_descr):
-        """Register information about new syntaxes.
-
-        When some component wants to use the ColorsConfig but the config
-        does not contain information about the syntaxes this component requires
-        the component registeres desired syntaxes in the config.
-
-        Arguments:
-        - new_items: {synt_id: init_str}, where init_str contains description
-            of the color, corresponding to the syntax
-        - src_obj_descr: description of the object which adds these items to config.
-            Will be used for reporting purposes.
-        """
-        assert isinstance(src_obj_descr, str)
-
-        if not new_items:
-            return
-
-        self._cached_palette = None
-
-        if any(synt_id not in self.syntax_map for synt_id in new_items):
-            self._cache = {}
-
-        for synt_id, init_str in new_items.items():
-            if synt_id in self.syntax_map:
-                # properties of this syntax are defined already. Probably in
-                # config file.
-                continue
-            self.syntax_map[synt_id] = SyntaxColor(
-                synt_id, init_str, src_obj_descr, self.no_color)
-
-        # Information about new syntax items has been registered
-        # But construction of some syntax items may be not finished yet (items
-        # may depend on other items, implementing rules such as 'TABLE.BORDER is
-        # same as NUMBER, but bold and blinking')
-        # Both new items and previously registered items may be not fully
-        # constructed yet. For example, the above-mentioned rule could be
-        # present in the initial config, but it can't be resolved util information
-        # about NUMBER syntax is available.
-        #
-        # Finish construction (resolve) those items we have enough information for.
-
-        to_resolve = {
-            synt_id: syntax_color
-            for synt_id, syntax_color in self.syntax_map.items()
-            if syntax_color.color_fmt is None
-        }
-
-        # id's of SyntaxColor items which definitely can't be resolved for now
-        cant_resolve = set()
-
-        while to_resolve:
-            new_resolved = set()
-            for synt_id, syntax_color in sorted(to_resolve.items()):
-                if syntax_color.color_fmt is not None:
-                    continue
-                path = []
-                while True:
-                    if syntax_color.synt_id in path:
-                        assert False, f"circular dependency detected. Fix me. !!!"
-                    if syntax_color.color_fmt is not None:
-                        # all the syntaxes accumulated in path may be resolved now
-                        parent_syntax_color = syntax_color
-                        for synt_id in reversed(path):
-                            syntax_color = self.syntax_map[synt_id]
-                            syntax_color.resolve(
-                                parent_syntax_color, self.no_color)
-                            new_resolved.add(syntax_color.synt_id)
-                            parent_syntax_color = syntax_color
-                        break
-                    if (
-                        syntax_color.synt_id in cant_resolve
-                        or syntax_color.parent_syntax_id not in self.syntax_map
-                    ):
-                        # all the syntaxes accumulated in path can't be resolved now
-                        cant_resolve.update(path)
-                        break
-                    path.append(syntax_color.synt_id)
-                    syntax_color = self.syntax_map[syntax_color.parent_syntax_id]
-            if not new_resolved:
-                # no more items can be resolved
-                break
-
-    def put_into_cache(self, cache_key, the_obj):
-        """!!!! """
-        self._cache[cache_key] = the_obj
-
-    def get_cached_obj(self, cache_key):
-        """!!! """
-        return self._cache.get(cache_key)
-
-    @classmethod
-    def _flatten_dict(cls, syntax_map):
-        # transform structure of nested dictionaries into a flat dictionary.
-        # keys of items corresponding to elements of nested disctionaris are
-        # composed of names of items in path:
-        # {'TABLE': {'BORDER': value}}  ->  {'TABLE.BORDER': value}
-        result = {}
-        for key, value in syntax_map.items():
-            if isinstance(value, str):
-                result[key] = value
-            elif isinstance(value, dict):
-                flatten_subdict = cls._flatten_dict(value)
-                for skey, val_and_src in flatten_subdict.items():
-                    result[f"{key}.{skey}"] = val_and_src
-        return result
-
-    def get_color(self, synt_id) -> ColorFmt:
-        """syntax name -> ColorFmt"""
-        syntax_color = self.syntax_map.get(synt_id)
-        if syntax_color is None:
-            syntax_color = self.syntax_map.get("TEXT")
-        if syntax_color is None or syntax_color.color_fmt is None:
-            return self._NO_EFFECTS_FMT
-        return syntax_color.color_fmt
-
-    def get_palette(self) -> GlobalPalette:
-        """Get Palette which contains all the syntaxes in this ColorsConfig."""
-        if self._cached_palette is None:
-            self._cached_palette = self._make_palette()
-        return self._cached_palette
-
-    def _make_palette(self):
-        """!!!! """
-        return GlobalPalette.make(colors_conf=self)
-
-
-#    def _make_palette(self, group_name=None, **kwargs) -> 'Palette':
-#        """Creates Palette object for a specified syntax group.
-#
-#        For example, for syntax group 'TABLE' the default ColorsConfig will produce
-#        Palette with following items:
-#            "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
-#
-#        Additional amendments to palette colors may be specified in kwargs.
-#        kwargs format:
-#        "PALETTE_SYNTAX_NAME": "CONF_SYNTAX_NAME"
-#        """
-#        prefix = "" if group_name is None else group_name + "."
-#        prefix_len = len(prefix)
-#        palette_colors = {}
-#        for full_syntax_name, syntax_color in self.syntax_map.items():
-#            color_fmt = syntax_color.color_fmt
-#            if color_fmt is None:
-#                color_fmt = self._NO_EFFECTS_FMT
-#
-#            if not full_syntax_name.startswith(prefix):
-#                continue
-#            syntax_name = full_syntax_name[prefix_len:]
-#            palette_colors[syntax_name] = color_fmt
-#
-#        for syntax, conf_syntax in kwargs.items():
-#            palette_colors[syntax] = self.get_color(conf_syntax)
-#
-#        return Palette(palette_colors)
-
-    def color_conf_component_is_registered(self, src_obj) -> bool:
-        """Check if Palette object is registered in the ColorsConfig"""
-        return src_obj in self.registered_sources
-
-    def register_color_conf_component(self, syntax_map, src_obj):
-        """Register Palette object in the ColorsConfig"""
-        assert src_obj not in self.registered_sources, f"{src_obj=}"
-        self.registered_sources.add(src_obj)
-        new_items_flat_init_conf = self._flatten_dict(syntax_map)
-        self.add_new_items(new_items_flat_init_conf, str(src_obj))
-
-    def make_report(self) -> str:
-        """Create colored report of self."""
-        return "\n".join(self.gen_report_lines())
-
-    def gen_report_lines(self) -> Iterator[str]:
-        """Generate lines for self-report"""
-        offset_step = "  "
-        rep_lines = []  # ["name and init_str", "status", "source"]
-        common_path = []  # path to a current syntax element
-        for syntax_name, syntax_color in sorted(self.syntax_map.items()):
-            syntax_descr = syntax_color.init_str
-            if not syntax_descr:
-                syntax_descr = "<SAMPLE>"
-            syntax_chunks = syntax_name.split('.')
-            cur_path = syntax_chunks[:-1]
-            cur_name = syntax_chunks[-1]
-
-            # leave only prefix of common_path which is still valid for current item
-            cmn_path_valid_len = 0
-            for cmn_path_chunk, synt_path_chunk in zip(common_path, cur_path):
-                if cmn_path_chunk != synt_path_chunk:
-                    break
-                cmn_path_valid_len += 1
-            common_path = common_path[:cmn_path_valid_len]
-
-            while len(cur_path) > len(common_path):
-                # report next group name
-                depth = len(common_path)
-                group_name = cur_path[depth]
-                common_path.append(group_name)
-                rep_lines.append((f"{offset_step*depth}{group_name} ->", None, None))
-
-            assert len(cur_path) == len(common_path)
-            # report the syntax description
-            depth = len(common_path)
-            prefix = self._NO_EFFECTS_FMT(offset_step*depth)
-            color_fmt = syntax_color.color_fmt
-            status = None
-            if color_fmt is None:
-                # this syntax color is not resolved.
-                color_fmt = self._NO_EFFECTS_FMT
-                status = "<NOT RESOLVED>"
-            rep_lines.append(
-                (
-                    prefix + f"{cur_name}: " + color_fmt(syntax_descr),
-                    status,
-                    syntax_color.src_obj_name,
-                ))
-        # raw information is ready, yield the report lines
-        show_status = any(l[1] is not None for l in rep_lines)
-        max_main_part_width = max(len(l[0]) for l in rep_lines)
-        main_part_width = min(150, max(40, max_main_part_width))
-        for line in rep_lines:
-            if line[2] is None:
-                # this is a technical line, showes group name
-                yield line[0]
-                continue
-            # this line contains info about some syntax color
-            colored_text = line[0].fixed_len(main_part_width)
-
-            # add info about the status
-            if show_status:
-                status = line[1] if line[1] is not None else "<OK>"
-                colored_text += f" !{status:15}"
-
-            # add info about the source
-            colored_text += f" <- {line[2]}"
-
-            yield str(colored_text)
 
 
 class LocalPaletteUser:
@@ -1781,32 +1783,42 @@ class LocalPaletteUser:
 
 
 
-_COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
-_GLOBAL_PALETTE = None
+#_COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
+#_GLOBAL_PALETTE = None
+
+# !!! good comment here !!!!
+global_palette = GlobalPalette.make(ColorsConfig())
 
 
+# !!!!! remove all mentions of it. Probably do not need it at all
 def get_global_colors_config():
     """Get global ColorsConfig"""
-    global _COLORS_CONFIG
-    if _COLORS_CONFIG is None:
-        _COLORS_CONFIG = ColorsConfig({})  # all defaults
-    return _COLORS_CONFIG
+    global global_palette
+    return global_palette._colors_conf
+    #global _COLORS_CONFIG
+    #if _COLORS_CONFIG is None:
+    #    _COLORS_CONFIG = ColorsConfig({})  # all defaults
+    #return _COLORS_CONFIG
 
 
 def set_global_colors_config(colors_config, no_color=False):
     """Set global ColorsConfig !!!!! """
-    global _COLORS_CONFIG, _GLOBAL_COLORS_CONTEXT, _GLOBAL_PALETTE
-    _COLORS_CONFIG = colors_config
-    _GLOBAL_PALETTE = None
+    global global_palette
+    # !!!!! no_color - how to process ???
+    if colors_config is None:
+        colors_config = ColorsConfig()
+
+    global_palette.set_colors_conf(colors_config)
+    colors_config.global_palette = global_palette
 
 
-# !!!! looks like it's not required. Or is it?
-def get_global_palette():
-    """Get the Palette corresponding to the global colors config."""
-    global _GLOBAL_PALETTE
-    if _GLOBAL_PALETTE is None:
-        _GLOBAL_PALETTE = get_global_colors_config().get_palette()
-    return _GLOBAL_PALETTE
+## !!!! looks like it's not required. Or is it?
+#def get_global_palette():
+#    """Get the Palette corresponding to the global colors config."""
+#    global _GLOBAL_PALETTE
+#    if _GLOBAL_PALETTE is None:
+#        _GLOBAL_PALETTE = get_global_colors_config().get_palette()
+#    return _GLOBAL_PALETTE
 
 
 

@@ -25,7 +25,7 @@ Minimal usage example:
     )  # configures colors and logging
 
     # use it to create Palette objects:
-    colors_conf = ak.color.get_global_colors_config()
+    colors_conf = ak.color.get_global_colors_config() !!!! <- use global_palette!
 """
 
 import sys

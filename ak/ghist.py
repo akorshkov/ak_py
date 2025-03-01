@@ -8,7 +8,7 @@ import re
 import threading
 from typing import Iterator
 
-from ak.color import ColorsConfig, CHText, Palette, ConfColor
+from ak.color import CHText, Palette, ConfColor
 from ak.ppobj import PPObj
 from ak.utils import Timer, Comparable, compare_dictionaries
 

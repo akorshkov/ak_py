@@ -4,8 +4,11 @@ import unittest
 import io
 from typing import Iterator
 
+import ak.color
+
 from ak.color import (
     CHText, ColorFmt, ColorBytes, ColorsConfig, Palette,
+    global_palette as gp,
     get_global_colors_config, set_global_colors_config,
     ConfColor,
 )
@@ -769,11 +772,11 @@ class TestColorFmtBytes(unittest.TestCase):
 #        self.assertEqual("", palette(sh_descr))
 
 
-class TestColorsConfig(unittest.TestCase):
-    """Test ColorsConfig class"""
+class TestColorsConfigAndGlobalPalette(unittest.TestCase):
+    """Test ColorsConfig class and global_palette."""
 
     class TstColorsConfig(ColorsConfig):
-        # not a nice-loking colors config, but ok for test purposes
+        # not a nice-loking colors config, but ok to be used in most test cases
         # note, that BUILT_IN_CONFIG settings are not inherited from the base class,
         BUILT_IN_CONFIG = {
             "TEXT": "",
@@ -802,6 +805,84 @@ class TestColorsConfig(unittest.TestCase):
                 continue
             lines_by_synt_id[chunks[0].strip()] = line
         return lines_by_synt_id
+
+    def test_global_palette_without_configuration(self):
+        """ak.color.global_palette object should be available always."""
+
+        orig_global_palette = ak.color.global_palette
+        self.assertIsNotNone(orig_global_palette)
+
+        self.assertIs(
+            orig_global_palette, gp,
+            "gp is global_palette imported from ak.color. "
+            "ak.color.global_palette must always remain the same object")
+
+        # reset global config to the default state
+        set_global_colors_config(None)
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        # test the global_palette when color configuration is in the default state
+        raw_text = "test"
+        self.assertEqual(gp.text(raw_text), ColorFmt(None)(raw_text))
+        self.assertEqual(
+            gp.keyword(raw_text), ColorFmt("BLUE", bold=True)(raw_text),
+            "these are the defaults specified in ColorsConfig.BUILT_IN_CONFIG"
+        )
+
+    def test_global_palette_after_new_global_config_is_set(self):
+        """Test global_palette after new global_config is set."""
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        raw_text = "test"
+
+        # reset global config to the default state
+        set_global_colors_config(None)
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        self.assertEqual(gp.keyword(raw_text), ColorFmt("BLUE", bold=True)(raw_text))
+        self.assertEqual(gp.name(raw_text), ColorFmt("GREEN", bold=True)(raw_text))
+
+        # set new config
+        set_global_colors_config(self.TstColorsConfig())
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        # now all the colors should be taken from self.TstColorsConfig.BUILT_IN_CONFIG
+        self.assertEqual(gp.keyword(raw_text), ColorFmt(None)(raw_text))
+        self.assertEqual(gp.name(raw_text), ColorFmt("BLUE", bold=True)(raw_text))
+        self.assertEqual(gp["TABLE.BORDER"](raw_text), ColorFmt("RED")(raw_text))
+
+        # self.TstColorsConfig.BUILT_IN_CONFIG has no syntax "KEYWORD".
+        # let's register a Palette which has this syntax and will add info about
+        # it to the config
+        class MicroPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                'KEYWORD': "MAGENTA",
+            }
+            keyword = ConfColor('KEYWORD')
+
+        p = MicroPalette.make()
+        self.assertEqual(
+            p.keyword(raw_text), ColorFmt("MAGENTA")(raw_text),
+            "Before creation of the MicroPalette there was no 'KEYWORD' syntax "
+            "in the config. MicroPalette class specifies 'MAGENTA' default for "
+            "this syntax, so it is used"
+        )
+
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+
+        self.assertEqual(
+            gp.keyword(raw_text), ColorFmt("MAGENTA")(raw_text),
+            "after global config modification the global palette uses the "
+            "configuraion")
+
+        # set new config
+        set_global_colors_config(self.TstColorsConfig())
+        self.assertIs(gp, ak.color.global_palette, "it must always remain the same")
+        self.assertEqual(
+            gp.keyword(raw_text), ColorFmt(None)(raw_text),
+            "the new config has no data for 'KEYWORD' syntax; "
+            "check self.TstColorsConfig.BUILT_IN_CONFIG"
+        )
 
     def test_colors_config_use_defaults_only(self):
         """Test initialization of ColorsConfig with all defaults."""
