@@ -1306,7 +1306,7 @@ class ColorsConfig:
 
     def _make_palette(self):
         """!!!! """
-        return GlobalPalette.make(colors_conf=self)
+        return GlobalPalette(colors_conf=self)
 
 
 #    def _make_palette(self, group_name=None, **kwargs) -> 'Palette':
@@ -1431,6 +1431,31 @@ class ConfColor:
 
 class _PaletteMeta(type):
     # !!!
+    def __call__(palette_class, colors_conf=None, no_color=False, _local_colors=None):
+        """Intercept construction of the Palette object.
+
+        """
+        assert _local_colors is None, "!!!!!!"
+
+        if colors_conf is None:
+            colors_conf = get_global_colors_config()
+
+        existing_palette = palette_class._get_existing_palette(colors_conf, no_color)
+        if existing_palette is not None:
+            return existing_palette
+
+        _local_colors = palette_class._prepare_local_colors(colors_conf, no_color)
+
+        # there is no existing palette of this class. Need to create a new one
+        palette = palette_class.__new__(
+            palette_class, colors_conf, no_color, _local_colors)
+        palette_class.__init__(
+            palette, colors_conf, no_color, _local_colors)
+        
+        palette_class._store_palette_in_config(palette, colors_conf, no_color)
+
+        return palette
+
     def __new__(meta, classname, supers, classdict):
 
         # _LOCAL_SYNTAX - {local_synt_name: syntax_id_in_colors_conf}
@@ -1496,9 +1521,10 @@ class Palette(metaclass=_PaletteMeta):
     # !!!!!!! always available, plain text
     text = ConfColor(ColorsConfig.DFLT_SYNTAX_ID)
 
-    def __init__(self, local_colors, _no_color=None, _colors_conf=None):
+    def __init__(self, _colors_conf=None, _no_color=None, local_colors=None):
         """Constructor of Palette - for internal use.
 
+        !!!!!!!  need proper description here !!!!!!!
         Use the 'make' method instead.
 
         Argument:
@@ -1512,47 +1538,80 @@ class Palette(metaclass=_PaletteMeta):
             setattr(self, n, v[1])
 
     @classmethod
-    def make(
-        cls, colors_conf=None, no_color=None
-    ):
-        """Register cls in colors config and prepare the local palette.
-
-        Arguments:
-        - colors_conf: ColorsConfig object, by default the global one is used
-        !!!!
-        - no_color: if True prepares a local palette which does not add any
-            coloring effects to any text
-        !!!!!!
-        - alt_local_palette: {local_synt_id: alt_global_synt_id}. Contains
-            alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
-        """
-        assert cls._LOCAL_SYNTAX is not None, (
-            f"internal error: '_LOCAL_SYNTAX' is not present in "
-            f"Palette class {cls}")
-
-        if colors_conf is None:
-            colors_conf = get_global_colors_config()
-
-        cls.register_in_colors_conf(colors_conf)
-
-        # !!!!  need to cache this no_color_palette or what ???
+    def _get_existing_palette(cls, colors_conf, no_color):
+        # !!!!!
         if no_color:
-            if cls._PALETTE_NO_COLOR is None:
-                cls._PALETTE_NO_COLOR = cls({
-                        local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
-                        for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
-                    }, no_color, colors_conf)
-            return cls._PALETTE_NO_COLOR
+            cls.register_in_colors_conf(colors_conf)  # descr why always register
+            if cls._PALETTE_NO_COLOR is not None:
+                return cls._PALETTE_NO_COLOR
+        else:
+            return colors_conf.get_cached_obj(cls)
 
-        local_palette = colors_conf.get_cached_obj(cls)
-        if local_palette is None:
-            local_palette = cls({
-                    local_synt_id: (synt_id, colors_conf.get_color(synt_id))
-                    for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
-                }, no_color, colors_conf)
-            colors_conf.put_into_cache(cls, local_palette)
+    @classmethod
+    def _prepare_local_colors(cls, colors_conf, no_color):
+        # !!!!!
+        if no_color:
+            return {
+                local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
+                for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+            }
+        else:
+            cls.register_in_colors_conf(colors_conf)
+            return {
+                local_synt_id: (synt_id, colors_conf.get_color(synt_id))
+                for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+            }
 
-        return local_palette
+    @classmethod
+    def _store_palette_in_config(cls, palette, colors_conf, no_color):
+        # !!!!!
+        if no_color:
+            cls._PALETTE_NO_COLOR = palette
+        else:
+            colors_conf.put_into_cache(cls, palette)
+
+#    @classmethod
+#    def make_killme(  # !!!!! kill this method
+#        cls, colors_conf=None, no_color=None
+#    ):
+#        """Register cls in colors config and prepare the local palette.
+#
+#        Arguments:
+#        - colors_conf: ColorsConfig object, by default the global one is used
+#        !!!!
+#        - no_color: if True prepares a local palette which does not add any
+#            coloring effects to any text
+#        !!!!!!
+#        - alt_local_palette: {local_synt_id: alt_global_synt_id}. Contains
+#            alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
+#        """
+#        assert cls._LOCAL_SYNTAX is not None, (
+#            f"internal error: '_LOCAL_SYNTAX' is not present in "
+#            f"Palette class {cls}")
+#
+#        if colors_conf is None:
+#            colors_conf = get_global_colors_config()
+#
+#        cls.register_in_colors_conf(colors_conf)
+#
+#        # !!!!  need to cache this no_color_palette or what ???
+#        if no_color:
+#            if cls._PALETTE_NO_COLOR is None:
+#                cls._PALETTE_NO_COLOR = cls({
+#                        local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
+#                        for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+#                    }, no_color, colors_conf)
+#            return cls._PALETTE_NO_COLOR
+#
+#        local_palette = colors_conf.get_cached_obj(cls)
+#        if local_palette is None:
+#            local_palette = cls({
+#                    local_synt_id: (synt_id, colors_conf.get_color(synt_id))
+#                    for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+#                }, no_color, colors_conf)
+#            colors_conf.put_into_cache(cls, local_palette)
+#
+#        return local_palette
 
     def get_color(self, local_synt_id) -> ColorFmt:
         """!!!"""
@@ -1561,10 +1620,10 @@ class Palette(metaclass=_PaletteMeta):
             return self.text
         return x[1]
 
-    @classmethod
-    def get_no_color_palette(cls):
-        """!!!"""
-        return cls.make(None, True)
+#    @classmethod
+#    def get_no_color_palette(cls):
+#        """!!!"""
+#        return cls.make(None, True)
 
     @classmethod
     def register_in_colors_conf(cls, colors_conf):
@@ -1592,8 +1651,8 @@ class CompoundPalette(Palette):
     """ """
     SUB_PALETTES_MAP = None  # {(Palette, "modifier name"): AltLocalPalette}
 
-    def __init__(self, local_colors, no_color, colors_conf):
-        super().__init__(local_colors, no_color, colors_conf)
+    def __init__(self, colors_conf, no_color, local_colors):
+        super().__init__(colors_conf, no_color, local_colors)
         self._no_color = no_color
         self.colors_conf = colors_conf
         self._sub_palettes = {}
@@ -1606,7 +1665,7 @@ class CompoundPalette(Palette):
         if result is None:
             actual_palette_class = self.SUB_PALETTES_MAP.get(
                 palette_class, palette_class)
-            result = actual_palette_class.make(self.colors_conf, self._no_color)
+            result = actual_palette_class(self.colors_conf, self._no_color)
             self._sub_palettes[key] = result
         return result
 
@@ -1632,9 +1691,10 @@ class GlobalPalette(Palette):
         "error": "ERROR",
     }
 
-    def __init__(self, local_colors, _no_color=None, _colors_conf=None):
+    def __init__(self, _colors_conf=None, _no_color=None, local_colors=None):
         """ !!!"""
-        super().__init__(local_colors, _no_color, _colors_conf)
+        # !!! make sure '_' is consistent in arguments
+        super().__init__(_colors_conf, _no_color, local_colors)
         self._colors_conf = _colors_conf
 
     def get_color(self, syntax_name) -> ColorFmt:
@@ -1707,7 +1767,7 @@ class LocalPaletteUser:
         if colors_conf is None:
             colors_conf = get_global_colors_config()
 
-        return palette_class.make(colors_conf, no_color)
+        return palette_class(colors_conf, no_color)
 
 
 #def sh_fmt(arg, *, palette=None) -> CHText:
@@ -1789,7 +1849,7 @@ class LocalPaletteUser:
 #_GLOBAL_PALETTE = None
 
 # !!! good comment here !!!!
-global_palette = GlobalPalette.make(ColorsConfig())
+global_palette = GlobalPalette(ColorsConfig())
 
 
 # !!!!! remove all mentions of it. Probably do not need it at all

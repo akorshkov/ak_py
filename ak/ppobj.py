@@ -335,18 +335,22 @@ class PPObj(_PPObjBase):
     """
 
     def ch_text(
+        # !!!!  WTF, no colors_context!
+        # !!!! remove alt_local_palette completely !!!!
         self, *, colors_context=None, no_color=False, alt_local_palette=None,
     ) -> CHText:
         """!!!"""
-        return self.make_ch_text(
-            self._mk_local_palette(colors_context, no_color, alt_local_palette))
+        return self.make_ch_text(self.PALETTE_CLASS(colors_context, no_color))
+#        return self.make_ch_text(
+#            self._mk_local_palette(colors_context, no_color, alt_local_palette))
 
     def ch_lines(
         self, *, colors_context=None, no_color=False, alt_local_palette=None,
     ) -> CHText:
         """ !!! """
-        yield from self.gen_ch_lines(
-            self._mk_local_palette(colors_context, no_color, alt_local_palette))
+        yield from self.gen_ch_lines(self.PALETTE_CLASS(colors_context, no_color))
+#        yield from self.gen_ch_lines(
+#            self._mk_local_palette(colors_context, no_color, alt_local_palette))
 
     def make_ch_text(self, local_palette) -> CHText:
         """ """
@@ -668,7 +672,7 @@ class PPTableFieldType(LocalPaletteUser):
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_text(
             value, fmt_modifier,
-            self.PALETTE_CLASS.get_no_color_palette())
+            self.PALETTE_CLASS(None, False))  #.get_no_color_palette()) !!!!!
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def get_title_cell_text_len(self, value, fmt_modifier) -> int:

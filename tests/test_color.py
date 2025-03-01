@@ -860,7 +860,7 @@ class TestColorsConfigAndGlobalPalette(unittest.TestCase):
             }
             keyword = ConfColor('KEYWORD')
 
-        p = MicroPalette.make()
+        p = MicroPalette()
         self.assertEqual(
             p.keyword(raw_text), ColorFmt("MAGENTA")(raw_text),
             "Before creation of the MicroPalette there was no 'KEYWORD' syntax "
@@ -1195,7 +1195,7 @@ class TestColorsConfigAndGlobalPalette(unittest.TestCase):
         # Rule for 'SYNT_1' can be resolved now.
 
         # this affected the colors_conf
-        _ = MyPalette.make(colors_conf)
+        _ = MyPalette(colors_conf)
 
         report = colors_conf.make_report()
         # print(report)
@@ -1334,7 +1334,7 @@ class TestPalete(unittest.TestCase):
 
         # 1. create the local_palette object from the global colors config
         # and check it works
-        local_palette = self.MyPalette.make()
+        local_palette = self.MyPalette()
 
         sample_text = "sample text"
         color_text_0 = CHText(local_palette.ctxt(sample_text))
@@ -1347,7 +1347,7 @@ class TestPalete(unittest.TestCase):
 
         # 1.1. subsequent creations of the palette from the same class should
         # return the same object
-        same_palette = self.MyPalette.make()
+        same_palette = self.MyPalette()
         self.assertIs(local_palette, same_palette)
 
         # 2. but after update of the global config new palette object should
@@ -1362,8 +1362,8 @@ class TestPalete(unittest.TestCase):
         # - by direct regigistration of a Palette class
         # 2.1. after the first registration of DummyPalette new MyPalette
         # should be created
-        _ = DummyPalette.make()
-        new_local_palette = self.MyPalette.make()
+        _ = DummyPalette()
+        new_local_palette = self.MyPalette()
         self.assertIsNot(
             local_palette, new_local_palette,
             "creation of a palette of DummyPalette class has updated global config. "
@@ -1371,7 +1371,7 @@ class TestPalete(unittest.TestCase):
         local_palette = new_local_palette
 
         self.assertIs(
-            self.MyPalette.make(), local_palette,
+            self.MyPalette(), local_palette,
             "new new palette classes registered in the config, "
             "same palette object is expected")
 
@@ -1379,19 +1379,19 @@ class TestPalete(unittest.TestCase):
         # cached palettes
         DummyPalette.register_in_colors_conf(get_global_colors_config())
         self.assertIs(
-            self.MyPalette.make(), local_palette,
+            self.MyPalette(), local_palette,
             "new new palette classes registered in the config, "
             "same palette object is expected")
 
         # 3. similar to 2., but trying different methods of palette class registration
         set_global_colors_config(None)
-        palette_0 = self.MyPalette.make()
+        palette_0 = self.MyPalette()
 
         DummyPalette.register_in_colors_conf(get_global_colors_config())
-        palette_1 = self.MyPalette.make()
+        palette_1 = self.MyPalette()
 
-        _ = DummyPalette.make()
-        palette_2 = self.MyPalette.make()
+        _ = DummyPalette()
+        palette_2 = self.MyPalette()
 
         self.assertIsNot(palette_0, palette_1)
         self.assertIs(palette_1, palette_2)
@@ -1407,8 +1407,8 @@ class TestPalete(unittest.TestCase):
         class DerivedPalette(self.MyPalette):
             pass
 
-        parent_palette = self.MyPalette.make()
-        derived_palette = DerivedPalette.make()
+        parent_palette = self.MyPalette()
+        derived_palette = DerivedPalette()
 
         sample_text = "sample text"
 
@@ -1434,8 +1434,8 @@ class TestPalete(unittest.TestCase):
             ctxt = ConfColor("TBL.ALT_TEXT")
             new_synt = ConfColor("TBL.WARN")
 
-        parent_palette = self.MyPalette.make()
-        derived_palette = DerivedPalette.make()
+        parent_palette = self.MyPalette()
+        derived_palette = DerivedPalette()
         # print(global_conf.make_report())
 
         sample_text = "sample text"
@@ -1500,8 +1500,8 @@ class TestPalete(unittest.TestCase):
         global_conf = self.TstColorsConfig()
         set_global_colors_config(global_conf)
 
-        local_palette = self.MyPalette.make()
-        no_color_palette = self.MyPalette.make(no_color=True)
+        local_palette = self.MyPalette()
+        no_color_palette = self.MyPalette(no_color=True)
 
         # check local_palette produces colored text and no_color_palette - plain text
         sample_text = "sample text"
@@ -1519,8 +1519,8 @@ class TestPalete(unittest.TestCase):
         # cached objects expected on subsequent creations as there were no
         # modifications to the config
 
-        local_palette_1 = self.MyPalette.make()
-        no_color_palette_1 = self.MyPalette.make(no_color=True)
+        local_palette_1 = self.MyPalette()
+        no_color_palette_1 = self.MyPalette(no_color=True)
 
         self.assertIs(local_palette, local_palette_1)
         self.assertIs(no_color_palette, no_color_palette_1)
@@ -1541,8 +1541,8 @@ class TestPalete(unittest.TestCase):
             ctxt = ConfColor("TBL.ALT_TEXT")
             new_synt = ConfColor("TBL.WARN")
 
-        parent_palette = self.MyPalette.make()
-        derived_palette = DerivedPalette.make()
+        parent_palette = self.MyPalette()
+        derived_palette = DerivedPalette()
 
         # print(parent_palette.make_report())
         # print(derived_palette.make_report())
