@@ -60,11 +60,132 @@ from typing import Iterator
 
 
 #########################
-# Color printer
+# low-level implementation of colored text
+
+class _ColorSequences:
+    # Constructor of color escape sequences
+
+    _COLORS = {
+        'BLACK'  : "0",
+        'RED'    : "1",
+        'GREEN'  : "2",
+        'YELLOW' : "3",
+        'BLUE'   : "4",
+        'MAGENTA': "5",
+        'CYAN'   : "6",
+        'WHITE'  : "7",
+    }
+
+    @classmethod
+    def make(cls, color, bg_color=None,
+             bold=None, faint=None, underline=None, blink=None, crossed=None,
+             no_color=False, make_bytes=False):
+        # Make prefix and suffix to decorate text with specified effects.
+        #
+        # Check ColorFmt doc for arguments description
+
+        color_codes = []
+        if not no_color:
+            if color is not None:
+                color_codes.append(cls._make_seq_element(color, False))
+
+            if bg_color is not None:
+                color_codes.append(cls._make_seq_element(bg_color, True))
+
+            if bold:
+                color_codes.append("1")
+
+            if faint:
+                color_codes.append("2")
+
+            if underline:
+                color_codes.append("4")
+
+            if blink:
+                color_codes.append("5")
+
+            if crossed:
+                color_codes.append("9")
+
+        if color_codes:
+            color_prefix = "\033[" + ";".join(c for c in color_codes) + "m"
+            color_suffix = "\033[0m"
+        else:
+            color_prefix = ""
+            color_suffix = ""
+
+        if make_bytes:
+            color_prefix = color_prefix.encode()
+            color_suffix = color_suffix.encode()
+
+        return color_prefix, color_suffix
+
+    @classmethod
+    def _make_seq_element(cls, color, is_bg=False):
+        # create a part of the color escape sequence, the part which defines color
+
+        fg_bg_id = "4" if is_bg else "3"
+        param_name = "bg_color" if is_bg else "color"
+
+        # case 1: 'color' is a name of color
+        if color in _ColorSequences._COLORS:
+            return fg_bg_id + _ColorSequences._COLORS[color]
+
+        # case 2: 'color' is an (r, g, b) tuple, each compnent in range(5)
+        if isinstance(color, (list, tuple)):
+            if len(color) != 3 or any(c < 0 or c > 5 for c in color):
+                raise ValueError(
+                    f"Invalid {param_name} description tuple {color}. "
+                    f"Valid color description tuple should have 3 elements "
+                    f"each in range(5)")
+            # tuple corresponds to an int color, will be handled in case 4.
+            r, g, b = color
+            color = 16 + r * 36 + g * 6 + b
+
+        # case 3: color specifies shade of gray
+        if isinstance(color, str):
+            if color.startswith('g'):
+                try:
+                    shade = int(color[1:])
+                except ValueError:
+                    shade = -1
+                if shade < 0 or shade > 24:
+                    raise ValueError(
+                        f"Invalid 'shade of gray' color description '{color}'. "
+                        f"It is supposed to be in form 'g0' - 'g23'")
+                color = 232 + shade
+            else:
+                raise ValueError(
+                    f"Invalid {param_name} name '{color}'. "
+                    f"Should be one of {list(cls._COLORS.keys())} "
+                    f"or in form 'g0' - 'g23' for shades of gray")
+
+        # case 4: 'color' is an int id of color
+        if isinstance(color, int):
+            if color < 0 or color > 255:
+                raise ValueError(
+                    f"Invalid int {param_name} id {color}. Valid int color id "
+                    f"should be in range(256)")
+            return f"{fg_bg_id}8:5:{color}"
+
+        raise ValueError(f"Invalid {param_name} object: {type(color)}: {color!r}")
+
+
+#########################
+# CHText - colored text
 
 @dataclass(frozen=True)
 class _CHTextChunk:
-    # !!!!!
+    # Colored Text is stored not as string, but as a list of chunks. Each chunk
+    # contains actual text (printable characters) and control sequences (prefix
+    # and suffix). This class represents a single chunk.
+    #
+    # See description of CHText class for more information.
+    #
+    # _CHTextChunk is simply a part of CHText. It implements almost all the methods
+    # of the CHText because for performance reasons some methods
+    # of this module may produce _CHTextChunk instead of the CHText objects.
+
     c_prefix: str
     text: str
     c_suffix: str
@@ -148,42 +269,6 @@ class _CHTextChunk:
 
     def __format__(self, format_spec):
         return CHText(self).__format__(format_spec)
-
-
-#class _CTText:
-#    # 'Chunked Typed Text' - text, consisting of chunks with
-#    # different properties
-#
-#
-#    @dataclass(frozen=True)
-#    class Chunk:
-#        # chunk of text with a specified property
-#        syntax: str
-#        text: str
-#
-#        @classmethod
-#        def make_plain(cls, text):
-#            """chunk of plain text - no property is associated with it"""
-#            return cls("", text)
-#
-#        def is_plain(self) -> bool:
-#            """if chunk corresponds to 'plain' text"""
-#            return not self.syntax
-#
-#        def clone(self, new_text):
-#            """create new chunk with same type but different text"""
-#            return type(self)(self.syntax, new_text)
-#
-#        def has_same_type(self, other) -> bool:
-#            """if other chunk has same type"""
-#            return self.syntax == other.syntax
-#
-#    def __str__(self):
-#        # defaults implementation just concatenates text of all parts.
-#        # derived classes should produce rich text if there is enouth information
-#        # for it
-#        return self.plain_text()
-
 
 
 #class SHText(_CTText):
@@ -527,12 +612,6 @@ class CHText:
         result.append(cls.Chunk.make_plain(" "*remaining_len))
         return result
 
-
-    @classmethod
-    def _make_chunk(cls, color_prefix, text, color_suffix):
-        # Construct 'single-chunk' CHText with explicit escape sequences.
-        return cls.Chunk(color_prefix, text, color_suffix)
-
     @classmethod
     def _merge_chunks(cls, chunks_list):
         # merge Chunk objects having the same 'syntax'.
@@ -585,113 +664,6 @@ class CHText:
         self.scrlen += len(chunk.text)
 
 
-class _ColorSequences:
-    # Constructor of color escape sequences
-
-    _COLORS = {
-        'BLACK'  : "0",
-        'RED'    : "1",
-        'GREEN'  : "2",
-        'YELLOW' : "3",
-        'BLUE'   : "4",
-        'MAGENTA': "5",
-        'CYAN'   : "6",
-        'WHITE'  : "7",
-    }
-
-    @classmethod
-    def make(cls, color, bg_color=None,
-             bold=None, faint=None, underline=None, blink=None, crossed=None,
-             no_color=False, make_bytes=False):
-        # Make prefix and suffix to decorate text with specified effects.
-        #
-        # Check ColorFmt doc for arguments description
-
-        color_codes = []
-        if not no_color:
-            if color is not None:
-                color_codes.append(cls._make_seq_element(color, False))
-
-            if bg_color is not None:
-                color_codes.append(cls._make_seq_element(bg_color, True))
-
-            if bold:
-                color_codes.append("1")
-
-            if faint:
-                color_codes.append("2")
-
-            if underline:
-                color_codes.append("4")
-
-            if blink:
-                color_codes.append("5")
-
-            if crossed:
-                color_codes.append("9")
-
-        if color_codes:
-            color_prefix = "\033[" + ";".join(c for c in color_codes) + "m"
-            color_suffix = "\033[0m"
-        else:
-            color_prefix = ""
-            color_suffix = ""
-
-        if make_bytes:
-            color_prefix = color_prefix.encode()
-            color_suffix = color_suffix.encode()
-
-        return color_prefix, color_suffix
-
-    @classmethod
-    def _make_seq_element(cls, color, is_bg=False):
-        # create a part of the color escape sequence, the part which defines color
-
-        fg_bg_id = "4" if is_bg else "3"
-        param_name = "bg_color" if is_bg else "color"
-
-        # case 1: 'color' is a name of color
-        if color in _ColorSequences._COLORS:
-            return fg_bg_id + _ColorSequences._COLORS[color]
-
-        # case 2: 'color' is an (r, g, b) tuple, each compnent in range(5)
-        if isinstance(color, (list, tuple)):
-            if len(color) != 3 or any(c < 0 or c > 5 for c in color):
-                raise ValueError(
-                    f"Invalid {param_name} description tuple {color}. "
-                    f"Valid color description tuple should have 3 elements "
-                    f"each in range(5)")
-            # tuple corresponds to an int color, will be handled in case 4.
-            r, g, b = color
-            color = 16 + r * 36 + g * 6 + b
-
-        # case 3: color specifies shade of gray
-        if isinstance(color, str):
-            if color.startswith('g'):
-                try:
-                    shade = int(color[1:])
-                except ValueError:
-                    shade = -1
-                if shade < 0 or shade > 24:
-                    raise ValueError(
-                        f"Invalid 'shade of gray' color description '{color}'. "
-                        f"It is supposed to be in form 'g0' - 'g23'")
-                color = 232 + shade
-            else:
-                raise ValueError(
-                    f"Invalid {param_name} name '{color}'. "
-                    f"Should be one of {list(cls._COLORS.keys())} "
-                    f"or in form 'g0' - 'g23' for shades of gray")
-
-        # case 4: 'color' is an int id of color
-        if isinstance(color, int):
-            if color < 0 or color > 255:
-                raise ValueError(
-                    f"Invalid int {param_name} id {color}. Valid int color id "
-                    f"should be in range(256)")
-            return f"{fg_bg_id}8:5:{color}"
-
-        raise ValueError(f"Invalid {param_name} object: {type(color)}: {color!r}")
 
 
 class ColorFmt:
@@ -733,11 +705,8 @@ class ColorFmt:
 
     def __call__(self, text) -> CHText.Chunk:
         """text -> colored text (CHText object)."""
-        return self.ch_chunk(text)
+        return _CHTextChunk(self._color_prefix, text, self._color_suffix)
 
-    def ch_chunk(self, text) -> CHText.Chunk:
-        """ !!! """
-        return CHText._make_chunk(self._color_prefix, text, self._color_suffix)
 
 class ColorBytes:
     """Objects of this class produce bytes with color sequences."""
@@ -766,15 +735,18 @@ class ColorBytes:
 #########################
 # GlobalPalette and ColorsConfig
 
+class _ColorConfColorDescr:
+    # Description of a color initialization rules used in ColorsConfig.
+    #
+    # The initialization rules may be self-sufficient or may refer to another
+    # _ColorConfColorDescr object. _ColorConfColorDescr object keeps info about
+    # the original description (init_str) and the final ColorFmt object.
+    #
+    # Format of the init string for _ColorConfColorDescr:
+    # - "COLOR/BG_COLOR:modifiers"
+    # - "OTHER_SYNTAX:modifiers"
+    # - "OTHER_SYNTAX:COLOR/BG_COLOR:modifiers"
 
-
-class SyntaxColor:
-    """Coloring of some syntax type.
-
-    The initialization rules may be self-sufficient or may refer to another
-    SyntaxColor object. SyntaxColor object keeps info about the original
-    description (init_str) and the final ColorFmt object.
-    """
     _MODIFIERS = {
         'bold': ('bold', True),
         'faint': ('faint', True),
@@ -802,10 +774,21 @@ class SyntaxColor:
         'color_fmt',
     )
 
-    def __init__(self, synt_id, init_str, src_obj, no_color=False):
+    def __init__(self, synt_id, init_str, src_obj_descr, no_color=False):
+        """Constructor of the _ColorConfColorDescr.
+
+        Arguments:
+        - synt_id: id of this syntax item. Example: "TBL.BORDER"
+        - init_str: initialization string. Examples:
+            "BLUE:bold"
+            "TBL.TEXT:RED/BLUE:no_blink"
+            (see detailed descr at ColorsConfig constructor doc string)
+        - src_obj_descr: description of the object which contains this syntax.
+            Usually such an object is Palette class.
+        """
         self.synt_id = synt_id
         self.init_str = init_str
-        self.src_obj_name = src_obj
+        self.src_obj_name = src_obj_descr
 
         self.color_fmt = None
 
@@ -828,12 +811,12 @@ class SyntaxColor:
     def resolve(self, parent, no_color):
         """Finish initialization: create self.color_fmt obeject.
 
-        It may be not possible to perform this operation in costructor in case the
-        SyntaxColor depends on another SyntaxColor.
+        It may be not possible to perform this operation in costructor in case this
+        color description depends on another color description.
 
         Arguments:
-        - parent: resolved SyntaxColor object referenced by self.parent_syntax_id.
-            (None if there is no parent_syntax_id)
+        - parent: resolved _ColorConfColorDescr object referenced
+            by self.parent_syntax_id. (None if there is no parent_syntax_id)
         - no_color: if True use dummy color_fmt which does not add any
             coloring effects to text
 
@@ -1206,7 +1189,7 @@ class ColorsConfig:
                 # properties of this syntax are defined already. Probably in
                 # config file.
                 continue
-            self.syntax_map[synt_id] = SyntaxColor(
+            self.syntax_map[synt_id] = _ColorConfColorDescr(
                 synt_id, init_str, src_obj_descr, self.no_color)
 
         # Information about new syntax items has been registered
@@ -1226,7 +1209,7 @@ class ColorsConfig:
             if syntax_color.color_fmt is None
         }
 
-        # id's of SyntaxColor items which definitely can't be resolved for now
+        # id's of _ColorConfColorDescr items which can't be resolved for now
         cant_resolve = set()
 
         while to_resolve:
@@ -1266,11 +1249,23 @@ class ColorsConfig:
             self.global_palette.set_colors_conf(self)
 
     def put_into_cache(self, cache_key, the_obj):
-        """!!!! """
+        """Put some object to the ColorsConfig cache.
+
+        Arguments:
+        - cache_key: usually Palette class
+        - the_obj: usually the corresponding palette object
+
+        ColorsConfig does not care what objects are stored in the cache.
+        Responsibility of the ColorsConfig is to reset the cache if the config's
+        data is updated.
+        """
         self._cache[cache_key] = the_obj
 
     def get_cached_obj(self, cache_key):
-        """!!! """
+        """Get object from ColorsConfig cache.
+
+        See 'put_into_cache' for more detailed description.
+        """
         return self._cache.get(cache_key)
 
     @classmethod
@@ -1301,42 +1296,8 @@ class ColorsConfig:
     def get_palette(self) -> 'GlobalPalette':
         """Get Palette which contains all the syntaxes in this ColorsConfig."""
         if self._cached_palette is None:
-            self._cached_palette = self._make_palette()
+            self._cached_palette = GlobalPalette(colors_conf=self)
         return self._cached_palette
-
-    def _make_palette(self):
-        """!!!! """
-        return GlobalPalette(colors_conf=self)
-
-
-#    def _make_palette(self, group_name=None, **kwargs) -> 'Palette':
-#        """Creates Palette object for a specified syntax group.
-#
-#        For example, for syntax group 'TABLE' the default ColorsConfig will produce
-#        Palette with following items:
-#            "BORDER", "COL_TITLE", "NUMBER", "KEYWORD", "WARN"
-#
-#        Additional amendments to palette colors may be specified in kwargs.
-#        kwargs format:
-#        "PALETTE_SYNTAX_NAME": "CONF_SYNTAX_NAME"
-#        """
-#        prefix = "" if group_name is None else group_name + "."
-#        prefix_len = len(prefix)
-#        palette_colors = {}
-#        for full_syntax_name, syntax_color in self.syntax_map.items():
-#            color_fmt = syntax_color.color_fmt
-#            if color_fmt is None:
-#                color_fmt = self._NO_EFFECTS_FMT
-#
-#            if not full_syntax_name.startswith(prefix):
-#                continue
-#            syntax_name = full_syntax_name[prefix_len:]
-#            palette_colors[syntax_name] = color_fmt
-#
-#        for syntax, conf_syntax in kwargs.items():
-#            palette_colors[syntax] = self.get_color(conf_syntax)
-#
-#        return Palette(palette_colors)
 
     def color_conf_component_is_registered(self, src_obj) -> bool:
         """Check if Palette object is registered in the ColorsConfig"""
@@ -1421,21 +1382,35 @@ class ColorsConfig:
 
 
 class ConfColor:
-    """!!! """
+    """Indicator of the color item to be used in Palette classes declarations."""
     def __init__(self, synt_id):
         self.synt_id = synt_id
 
     def __call__(self, text) -> CHText.Chunk:
+        """Just a trick to persuade IDE that an item is a callable.
+
+        It will be a callable after processing by _PaletteMeta.
+        """
         assert False
 
 
 class _PaletteMeta(type):
-    # !!!
+    # Meta class for Palette-derived classes.
+    #
+    # Palette-derived classes have two important features:
+    # 1. Constructor of Palette does not create a new palette object if the palette
+    #   of this class was already created using the given config
+    # 2. Substitutes ConfColor items in class declaration with callables which 
+    #   return corresponding ColorFmt objects.
     def __call__(palette_class, colors_conf=None, no_color=False, _local_colors=None):
         """Intercept construction of the Palette object.
 
+        Does not create a new object of palette_class if matching object already
+        exists in colors_conf cache.
         """
-        assert _local_colors is None, "!!!!!!"
+        assert _local_colors is None, (
+            f"Error calling constructor of {palette_class}. _local_colors "
+            f"argument must not be specified explicitely.")
 
         if colors_conf is None:
             colors_conf = get_global_colors_config()
@@ -1452,16 +1427,18 @@ class _PaletteMeta(type):
         palette_class.__init__(
             palette, colors_conf, no_color, _local_colors)
         
-        palette_class._store_palette_in_config(palette, colors_conf, no_color)
+        palette_class._store_palette_in_cache(palette, colors_conf, no_color)
 
         return palette
 
     def __new__(meta, classname, supers, classdict):
-
         # _LOCAL_SYNTAX - {local_synt_name: syntax_id_in_colors_conf}
         # contents of this dictionary is created based on 'ConfColor' items in
         # the classdict.
-        assert '_LOCAL_SYNTAX' not in classdict, "it should not be created explicitly"
+        assert '_LOCAL_SYNTAX' not in classdict, (
+            f"Error in {classname} class declaration. '_LOCAL_SYNTAX' must not "
+            f"be declared explicitly")
+
         local_syntax_map = {}
         # In order to implement inheritance it is necessary to combine this data
         # from base classes and current class
@@ -1481,31 +1458,34 @@ class _PaletteMeta(type):
 
 
 class Palette(metaclass=_PaletteMeta):
-    """Collection of color formatters to be used in some specific place.
+    """Collection of color formatters to be used by some application component.
 
-    For example we have a 'table' object which can be printed out using different
-    colors for different items of the table.
+    Any application component may create it's own Palette class, which contains
+    information about syntax names and color colors corresponding to these synatxes.
 
-    The Palette class used by the table:
-    - ptovides formatters to be used to produce text with 'border', 'title', etc.
-      colors
-    - creates these formatters using colors specified in the global colors config
-    - contains default colors, so that explicit global config is not required
-    - registers info about self in the global config (for reporting purposes)
+    Example:
 
-    !!!!!!!!!!!!!!!!!!!!
+    class EnumPalette(Palette):
+        
+        # These syntax names will be incorporated into the global colors config.
+        # Default colors are specified here, these colors may be overridden
+        # during ColorsConfig constraction.
+        SYNTAX_DEFAULTS = {
+            "ENUM.ID": "GREEN:bold",
+            "ENUM.NAME": "KEYWORD",
+        }
 
-    The color used to print table border may be configured in the application
-    config file, corresponding syntax id could be 'T.BORDER'.
-    The code which produces text representation of the 'table' object should not
-    use 'T.BORDER' constant to find the actual color as we may want to print the
-    same table in different colors.
+        # Declarations of the formatters present in this Palette
+        enum_id = ConfColor("ENUM.ID")
+        name = ConfColor("ENUM.NAME")
 
-    Palette is the object which is created when it's necessary to generate
-    colored text and contains {"internal syntax id" -> color} information.
+    ...
 
-    Class attributes describe default rules of fetching info from global colors
-    config and default colors to be used if the info was not found in the config.
+    cp = EnumPalette()
+    cp1 = EnumPalette()  # cp is cp1
+
+    cp.enum_id("42")     # produces CHText object representing green bold "42"
+    cp["ENUM.ID"]("42")  # the same
     """
     # List of other Palette classes this one depends on (uses syntaxes defined
     # in that classes)
@@ -1514,42 +1494,52 @@ class Palette(metaclass=_PaletteMeta):
     # init rules of the new global syntaxes introduced by this class
     SYNTAX_DEFAULTS = None  # {synt_id: default_color}
 
-    # ready to use palette objects
+    # cached 'no-color' palette object of this class
     _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
 
-    # no_color = ColorFmt.get_plaintext_fmt()
-    # !!!!!!! always available, plain text
+    # default syntax ID which is used for usual text not corresponding to any
+    # syntax id.
     text = ConfColor(ColorsConfig.DFLT_SYNTAX_ID)
 
-    def __init__(self, _colors_conf=None, _no_color=None, local_colors=None):
-        """Constructor of Palette - for internal use.
+    def __init__(self, colors_conf=None, no_color=False, _local_colors=None):
+        """Constructor of Palette.
 
-        !!!!!!!  need proper description here !!!!!!!
-        Use the 'make' method instead.
+        Arguments:
+        - colors_conf: ColorsConfig object. By default the global colors
+            config is used.
+        - no_color: if True creates a palette object which produces text without
+            any coloring effects.
+        - _local_colors: must never be specified explicitely (*).
 
-        Argument:
-        - local_colors: {local_synt_id: (synt_id, color_fmt)}
+        (*) Palette's meta-class intercepts the constructor call and prepares
+        arguments for the constructor. When the constructor is actually called
+        all it's arguments are specified.
         """
-        assert self._LOCAL_SYNTAX.keys() == local_colors.keys()
+        assert self._LOCAL_SYNTAX.keys() == _local_colors.keys()
 
-        self._local_colors = local_colors  # ????
+        self._local_colors = _local_colors
 
         for n, v in self._local_colors.items():
             setattr(self, n, v[1])
 
     @classmethod
     def _get_existing_palette(cls, colors_conf, no_color):
-        # !!!!!
+        # return cached palette object if one exists
+        # location of the cached palette depends on 'no_color' argument
         if no_color:
-            cls.register_in_colors_conf(colors_conf)  # descr why always register
-            if cls._PALETTE_NO_COLOR is not None:
-                return cls._PALETTE_NO_COLOR
+            # in this case palette does not actually depend on config. So
+            # the cached object is stored in the class.
+            # Still let's register the Palette class in config so that the
+            # syntaxes used in Palette be reported in the config
+            cls.register_in_colors_conf(colors_conf)
+            return cls._PALETTE_NO_COLOR
         else:
+            # colored palette may be cached in the config
             return colors_conf.get_cached_obj(cls)
 
     @classmethod
     def _prepare_local_colors(cls, colors_conf, no_color):
-        # !!!!!
+        # prepare the '_local_colors' argument for the Palette constructor
         if no_color:
             return {
                 local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
@@ -1563,67 +1553,25 @@ class Palette(metaclass=_PaletteMeta):
             }
 
     @classmethod
-    def _store_palette_in_config(cls, palette, colors_conf, no_color):
-        # !!!!!
+    def _store_palette_in_cache(cls, palette, colors_conf, no_color):
+        # store newly created palette object in cache. Location of cache
+        # depends on type of palette.
         if no_color:
             cls._PALETTE_NO_COLOR = palette
         else:
             colors_conf.put_into_cache(cls, palette)
 
-#    @classmethod
-#    def make_killme(  # !!!!! kill this method
-#        cls, colors_conf=None, no_color=None
-#    ):
-#        """Register cls in colors config and prepare the local palette.
-#
-#        Arguments:
-#        - colors_conf: ColorsConfig object, by default the global one is used
-#        !!!!
-#        - no_color: if True prepares a local palette which does not add any
-#            coloring effects to any text
-#        !!!!!!
-#        - alt_local_palette: {local_synt_id: alt_global_synt_id}. Contains
-#            alternative values for (some) local_synt_id's from cls.LOCAL_SYNTAX.
-#        """
-#        assert cls._LOCAL_SYNTAX is not None, (
-#            f"internal error: '_LOCAL_SYNTAX' is not present in "
-#            f"Palette class {cls}")
-#
-#        if colors_conf is None:
-#            colors_conf = get_global_colors_config()
-#
-#        cls.register_in_colors_conf(colors_conf)
-#
-#        # !!!!  need to cache this no_color_palette or what ???
-#        if no_color:
-#            if cls._PALETTE_NO_COLOR is None:
-#                cls._PALETTE_NO_COLOR = cls({
-#                        local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
-#                        for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
-#                    }, no_color, colors_conf)
-#            return cls._PALETTE_NO_COLOR
-#
-#        local_palette = colors_conf.get_cached_obj(cls)
-#        if local_palette is None:
-#            local_palette = cls({
-#                    local_synt_id: (synt_id, colors_conf.get_color(synt_id))
-#                    for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
-#                }, no_color, colors_conf)
-#            colors_conf.put_into_cache(cls, local_palette)
-#
-#        return local_palette
-
     def get_color(self, local_synt_id) -> ColorFmt:
-        """!!!"""
+        """Get ColorFmt stored in the palette.
+
+        Argument:
+        - local_synt_id: syntax id (as specified in ConfColor in Palette
+            class declaration)
+        """
         x = self._local_colors.get(local_synt_id)
         if x is None:
             return self.text
         return x[1]
-
-#    @classmethod
-#    def get_no_color_palette(cls):
-#        """!!!"""
-#        return cls.make(None, True)
 
     @classmethod
     def register_in_colors_conf(cls, colors_conf):
@@ -1651,8 +1599,8 @@ class CompoundPalette(Palette):
     """ """
     SUB_PALETTES_MAP = None  # {(Palette, "modifier name"): AltLocalPalette}
 
-    def __init__(self, colors_conf, no_color, local_colors):
-        super().__init__(colors_conf, no_color, local_colors)
+    def __init__(self, colors_conf, no_color, _local_colors):
+        super().__init__(colors_conf, no_color, _local_colors)
         self._no_color = no_color
         self.colors_conf = colors_conf
         self._sub_palettes = {}
@@ -1691,11 +1639,11 @@ class GlobalPalette(Palette):
         "error": "ERROR",
     }
 
-    def __init__(self, _colors_conf=None, _no_color=None, local_colors=None):
+    def __init__(self, colors_conf=None, no_color=None, _local_colors=None):
         """ !!!"""
         # !!! make sure '_' is consistent in arguments
-        super().__init__(_colors_conf, _no_color, local_colors)
-        self._colors_conf = _colors_conf
+        super().__init__(colors_conf, no_color, _local_colors)
+        self._colors_conf = colors_conf
 
     def get_color(self, syntax_name) -> ColorFmt:
         """syntax_name -> ColorFmt"""
