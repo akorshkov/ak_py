@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from typing import Iterator
 from numbers import Number
 from ak import utils
-from ak.color import CHText, Palette, CompoundPalette, LocalPaletteUser, ConfColor
+from ak.color import CHText, Palette, CompoundPalette, PaletteUser, ConfColor
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
 CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
@@ -20,7 +20,7 @@ CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
 #########################
 # generic pretty-printing
 
-class PrettyPrinter(LocalPaletteUser):
+class PrettyPrinter(PaletteUser):
     """Print json-like python objects with color highliting."""
 
     _CONSTANTS_LITERALS = (
@@ -55,11 +55,11 @@ class PrettyPrinter(LocalPaletteUser):
 
     def gen_pplines(
         self, obj_to_print,
-        colors_config=None, no_color=False, alt_local_palette=None,
+        colors_config=None, no_color=False, alt_palette_class=None,
     ) -> Iterator[CHText]:
         """Generate lines of colored text - pretty representation of the object."""
-        local_palette = self._mk_local_palette(
-            colors_config, no_color, alt_local_palette)
+        local_palette = self._mk_palette(
+            colors_config, no_color, alt_palette_class)
         yield from self._gen_ch_lines(local_palette, obj_to_print)
 
     def _gen_ch_lines(self, colors, obj_to_print) -> Iterator[CHText]:
@@ -268,7 +268,7 @@ class PrettyPrinter(LocalPaletteUser):
         return any(value is keyword for keyword in [True, False, None])
 
 
-class _PPObjBase(LocalPaletteUser):
+class _PPObjBase(PaletteUser):
     """Base class for pretty-printable objects.
 
     Object of PPObj class has a colored-text representation. For example we want to
@@ -291,7 +291,7 @@ class _PPObjBase(LocalPaletteUser):
     !!!!!!!!
 
     Arguments of these methods allow to get information about colors configuraions
-    from application config. Check LocalPaletteUser class for more information.
+    from application config. Check PaletteUser class for more information.
 
     Standard usage scenario:
     !!!!!!!
@@ -335,22 +335,18 @@ class PPObj(_PPObjBase):
     """
 
     def ch_text(
-        # !!!!  WTF, no colors_context!
-        # !!!! remove alt_local_palette completely !!!!
-        self, *, colors_context=None, no_color=False, alt_local_palette=None,
+        self, *, colors_conf=None, no_color=False, alt_plette_class=None,
     ) -> CHText:
         """!!!"""
-        return self.make_ch_text(self.PALETTE_CLASS(colors_context, no_color))
-#        return self.make_ch_text(
-#            self._mk_local_palette(colors_context, no_color, alt_local_palette))
+        return self.make_ch_text(
+            self._mk_palette(colors_conf, no_color, alt_plette_class))
 
     def ch_lines(
-        self, *, colors_context=None, no_color=False, alt_local_palette=None,
+        self, *, colors_conf=None, no_color=False, alt_plette_class=None,
     ) -> CHText:
         """ !!! """
-        yield from self.gen_ch_lines(self.PALETTE_CLASS(colors_context, no_color))
-#        yield from self.gen_ch_lines(
-#            self._mk_local_palette(colors_context, no_color, alt_local_palette))
+        yield from self.gen_ch_lines(
+            self._mk_palette(colors_conf, no_color, alt_plette_class))
 
     def make_ch_text(self, local_palette) -> CHText:
         """ """
@@ -407,20 +403,16 @@ class PPWrap(PPObj):
         return ""
 
     def ch_text( # !!!!!!
-        self, colors_context=None, no_color=False, alt_local_palette=None,
+        self, colors_conf=None, no_color=False, alt_palette_class=None,
     ) -> CHText:
         return CHText("\n").join(self.ch_lines(
-            colors_context, no_color, alt_local_palette))
+            colors_conf, no_color, alt_palette_class))
 
     def ch_lines(
-        self, colors_config=None, no_color=False, alt_local_palette=None,
+        self, colors_config=None, no_color=False, alt_palette_class=None,
     ) -> CHText:
         yield from self._PPRINTER.gen_pplines(
-            self.r,
-            colors_config=colors_config,
-            no_color=no_color,
-            alt_local_palette=alt_local_palette,
-        )
+            self.r, colors_config, no_color, alt_palette_class)
 
 
 #########################
@@ -615,9 +607,6 @@ class PPTable(PPObj):
         if delimiter is not None:
             assert False, "not implemented"
 
-        # !!!!!!
-        # local_palette = self._mk_local_palette(None, no_color, None)
-
         if all(x is None for x in (fmt, limits, skip_columns, no_color)):
             for line in self._default_pptable_printer.ch_lines(
                 None, local_palette, None,
@@ -641,7 +630,7 @@ class PPTable(PPObj):
             print(str(line), file=file)
 
 
-class PPTableFieldType(LocalPaletteUser):
+class PPTableFieldType(PaletteUser):
     """Describe specific field in table records.
 
     Actual column of of PPTable corresponds to a records field, (f.e. some
@@ -681,18 +670,6 @@ class PPTableFieldType(LocalPaletteUser):
         #    value, fmt_modifier, self._DUMMY_NO_COLOR_LOCAL_PALETTE)
         #return CHText.calc_chunks_len(text_items)
         return len(str(value))
-
-#    # !!!! rename! it's not about row_type. cell_type in arg is enough
-#    def make_desired_sh_text_for_row_type(
-#        self, value, fmt_modifier, cell_type, _c,
-#    ) -> ([CHText.Chunk], int):
-#        """value -> desired CHText and alignment for table row of specified type."""
-#        if cell_type == CELL_TYPE_TITLE:
-#            _c = PPTable._mk_local_palette(colors_context, None, None)
-#            return self.make_desired_title_cell_text(value, fmt_modifier, _c)
-#
-#        _c = self._mk_local_palette(colors_context, None, None)
-#        return self.make_desired_text(value, fmt_modifier, _c)
 
     def make_desired_cell_ch_text(
         self, value, fmt_modifier, field_local_palette,

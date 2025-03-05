@@ -15,13 +15,13 @@ python's concole scope.
 import inspect
 from typing import Iterator
 
-from ak.color import Palette, LocalPaletteUser, CHText, ConfColor
+from ak.color import Palette, PaletteUser, CHText, ConfColor
 
 
 #########################
 # 'll'-command specific classes
 
-class LLImpl(LocalPaletteUser):
+class LLImpl(PaletteUser):
     """Implementation of 'll' command.
 
     Usage:
@@ -49,7 +49,7 @@ class LLImpl(LocalPaletteUser):
         - locals_dict: dictionary of console's locals
         """
         self.locals_dict = locals_dict
-        self._c = self._mk_local_palette(None, None, None)
+        self._c = self._mk_palette(None, None, None)
 
     # !!! rename
     def gen_sh_lines(self) -> Iterator[CHText]:
@@ -138,7 +138,7 @@ class LLImpl(LocalPaletteUser):
 #########################
 # 'h'-command specific classes
 
-class HCommand(LocalPaletteUser):
+class HCommand(PaletteUser):
     """Implementation of 'h' command.
 
     h(obj) prints some text related to the 'obj'. The text is produced by
@@ -166,7 +166,7 @@ class HCommand(LocalPaletteUser):
 
     def __init__(self, dets_level=_LEVEL_H):
         self.dets_level = dets_level
-        self._c = self._mk_local_palette(None, None, None)
+        self._c = self._mk_palette(None, None, None)
 
     def __call__(self, obj, filt=_DFLT_FILT_ARG):
         # this method does not return the help text, but prints it

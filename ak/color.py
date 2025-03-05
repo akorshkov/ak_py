@@ -8,15 +8,10 @@ CHText - objects of this class are string-like objects, which can be
     specifier when formatting such strings.
     CHText objects can be printed using format specifiers.
 
-SHText - source data for CHText construction, it doesn't know
-    actual color of parts of text, but only names of syntaxes.
-    Preferred way to create CHText is to create SHText and
-    convert it to CHText using Palette.
+ColorFmt - produces CHText.Chunk object - optimized for a single color version
+    of CHText.
 
-ColorFmt - produces simple (mono-colored) CHText objects.  !!!!
-
-Palette - contains mapping {'syntax_type': ColorFmt} and produces
-    CHText objects from SHText.
+Palette - contains mapping {'syntax_type': ColorFmt}
 
 ColorsConfig - supposed to contain global colors configuration for the whole
     application (so that it would be possible to configure all coloring in
@@ -24,11 +19,10 @@ ColorsConfig - supposed to contain global colors configuration for the whole
     config; it is available by ak.color.get_global_colors_config().
     Default ColorsConfig contains common syntax names used in ak package,
     check it out:
-    print(ak.color.get_global_colors_config().c_fmt())
+    print(ak.color.get_global_colors_config().make_report())
 
 PaletteUser - may be used as a base for classes which create own Palette
-    from global ColorsConfig (helps to postpone Palette creation until
-    after the global ColorsConfig is initialized)
+    from global ColorsConfig.
 
 ColorBytes - analog of ColorFmt, but for bytes.
     Both ColorFmt and ColorBytes produce a single mono-colored chunk, but
@@ -37,8 +31,8 @@ ColorBytes - analog of ColorFmt, but for bytes.
     - ColorBytes produces simple bytes.
 
 Example of usage:
-    green_printer = ColorFmt('GREEN')  # check doc for more options
-    t = green_printer("some green text") + " and normal text "
+    green_fmt = ColorFmt('GREEN')  # check doc for more options
+    t = green_fmt("some green text") + " and normal text "
     t += [" and ", ColorFmt('RED')("some red text")]
 
     # produce string with color excape sequences
@@ -208,14 +202,17 @@ class _CHTextChunk:
         return self.c_prefix == other.c_prefix
 
     def add_chunks_same_type(self, other):
-        """ !!! """
+        """Add chunks of the same type.
+
+        Chunks are merged and a single chunk is returned.
+        """
         assert self.has_same_type(other)
         return type(self)(self.c_prefix, self.text + other.text, self.c_suffix)
 
     # Methods which make _CHTextChunk behavior similar to CHText
     def __str__(self):
         # produce colored text
-        return f"{self.c_prefix}{self.text}{self.c_suffix}" 
+        return f"{self.c_prefix}{self.text}{self.c_suffix}"
 
     def plain_text(self):
         return self.text
@@ -231,7 +228,7 @@ class _CHTextChunk:
     def __eq__(self, other):
         if self is other:
             return True
-        
+
         if isinstance(other, type(self)):
             return (
                 self.c_prefix == other.c_prefix
@@ -697,7 +694,7 @@ class ColorFmt:
             no_color)
 
     @classmethod
-    def get_plaintext_fmt(cls):
+    def get_plaintext_fmt(cls) -> 'ColorFmt':
         """Get dummy ColorFmt object (it produces text w/o any effects)."""
         if cls._NO_COLOR is None:
             cls._NO_COLOR = cls(None)
@@ -1066,14 +1063,11 @@ class ColorsConfig:
     groups and then use this report as a starting point for colors configuration
     in the application config file.
 
-    ColorsConfig creates Palette objects to be used by misc pretty-printers
-    for producing colored text.
+    Palette objects are created using the data from the global ColorsConfig (by
+    default).
 
-    !!!!!!! no get_global_colors_config !!!!!
-
-    Global ColorsConfig object is ak.color._COLORS_CONFIG. Use
-    ak.color.get_global_colors_config() and ak.color.set_global_colors_config()
-    to access this object.
+    Use ak.color.get_global_colors_config() to get information about current state
+    of the global ColorsConf.
     """
 
     _NO_EFFECTS_FMT = ColorFmt.get_plaintext_fmt()
@@ -1092,7 +1086,7 @@ class ColorsConfig:
     __slots__ = (
         'syntax_map',
         'registered_sources',
-        'no_color', # !!!!! remove it!
+        'no_color',
         'global_palette',
         '_cached_palette',
         '_cache',
@@ -1220,7 +1214,7 @@ class ColorsConfig:
                 path = []
                 while True:
                     if syntax_color.synt_id in path:
-                        assert False, f"circular dependency detected. Fix me. !!!"
+                        assert False, f"circular dependency detected. Fix me."
                     if syntax_color.color_fmt is not None:
                         # all the syntaxes accumulated in path may be resolved now
                         parent_syntax_color = syntax_color
@@ -1400,7 +1394,7 @@ class _PaletteMeta(type):
     # Palette-derived classes have two important features:
     # 1. Constructor of Palette does not create a new palette object if the palette
     #   of this class was already created using the given config
-    # 2. Substitutes ConfColor items in class declaration with callables which 
+    # 2. Substitutes ConfColor items in class declaration with callables which
     #   return corresponding ColorFmt objects.
     def __call__(palette_class, colors_conf=None, no_color=False, _local_colors=None):
         """Intercept construction of the Palette object.
@@ -1426,7 +1420,7 @@ class _PaletteMeta(type):
             palette_class, colors_conf, no_color, _local_colors)
         palette_class.__init__(
             palette, colors_conf, no_color, _local_colors)
-        
+
         palette_class._store_palette_in_cache(palette, colors_conf, no_color)
 
         return palette
@@ -1466,7 +1460,7 @@ class Palette(metaclass=_PaletteMeta):
     Example:
 
     class EnumPalette(Palette):
-        
+
         # These syntax names will be incorporated into the global colors config.
         # Default colors are specified here, these colors may be overridden
         # during ColorsConfig constraction.
@@ -1515,6 +1509,7 @@ class Palette(metaclass=_PaletteMeta):
         arguments for the constructor. When the constructor is actually called
         all it's arguments are specified.
         """
+        # pylint: disable=unused-argument
         assert self._LOCAL_SYNTAX.keys() == _local_colors.keys()
 
         self._local_colors = _local_colors
@@ -1542,14 +1537,14 @@ class Palette(metaclass=_PaletteMeta):
         # prepare the '_local_colors' argument for the Palette constructor
         if no_color:
             return {
-                local_synt_id: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
-                for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+                accessor_name: (synt_id, ColorsConfig._NO_EFFECTS_FMT)
+                for accessor_name, synt_id in cls._LOCAL_SYNTAX.items()
             }
         else:
             cls.register_in_colors_conf(colors_conf)
             return {
-                local_synt_id: (synt_id, colors_conf.get_color(synt_id))
-                for local_synt_id, synt_id in cls._LOCAL_SYNTAX.items()
+                accessor_name: (synt_id, colors_conf.get_color(synt_id))
+                for accessor_name, synt_id in cls._LOCAL_SYNTAX.items()
             }
 
     @classmethod
@@ -1561,24 +1556,30 @@ class Palette(metaclass=_PaletteMeta):
         else:
             colors_conf.put_into_cache(cls, palette)
 
-    def get_color(self, local_synt_id) -> ColorFmt:
+    def get_color(self, synt_id) -> ColorFmt:
         """Get ColorFmt stored in the palette.
 
         Argument:
-        - local_synt_id: syntax id (as specified in ConfColor in Palette
+        - synt_id: syntax id (as specified in ConfColor in Palette
             class declaration)
         """
-        x = self._local_colors.get(local_synt_id)
+        x = self._local_colors.get(synt_id)
         if x is None:
             return self.text
         return x[1]
 
     @classmethod
     def register_in_colors_conf(cls, colors_conf):
-        # !!! doc string
-        # Register cls in the colors_conf as color config component
+        """Register Palette class in the Colors Config.
+
+        Registration process merges syntaxes declared in cls.SYNTAX_DEFAULTS to
+        the config. Thus Colors Config Report reports all the syntaxes/colors
+        used in the system, even if some of these syntaxes are not configued
+        in the config explicitely.
+        """
         if colors_conf.color_conf_component_is_registered(cls):
             return
+
         if cls.PARENT_PALETTES is not None:
             for p_cls in cls.PARENT_PALETTES:
                 p_cls.register_in_colors_conf(colors_conf)
@@ -1596,7 +1597,37 @@ class Palette(metaclass=_PaletteMeta):
 
 
 class CompoundPalette(Palette):
-    """ """
+    """Extension of the Palette class to be used in more complex cases.
+
+    An example is palette required to print a table. The palette may contain
+    colors for table border, table title, etc. But the table may contain enum
+    values - which uses it's own palette.
+
+    In order to create a palette which customizes colors of the table and colors of
+    the enum values in this table one should derive a new class from TablePalette
+    class. The following example is artificial:
+
+    class CustomizedTablePalette(TablePalette):
+        border = ConfColor("RED")  # overrides table border color
+
+        SUB_PALETTES_MAP = {
+            (EnumPalette, "context"): CustomizedEnumPaletteClass
+        }
+
+    table_object.ch_text(alt_local_palette=CustomizedTablePalette)
+
+    Note, that Table class does not know about enums and it's palettes.
+    When the table produces the text for a cell it sees that the the cell
+    uses EnumPalette class by default. But instead of EnumPalette class the
+    CustomizedEnumPaletteClass will be used because of SUB_PALETTES_MAP
+    configuration.
+
+    The second element of the key in SUB_PALETTES_MAP can be used if the enums
+    may appear in different parts of the table and we want to customize these
+    cells differently. Interpretation the "context" item is done by the class
+    which uses the palette, actual Table class does not uses it and expects
+    this element to be None).
+    """
     SUB_PALETTES_MAP = None  # {(Palette, "modifier name"): AltLocalPalette}
 
     def __init__(self, colors_conf, no_color, _local_colors):
@@ -1619,9 +1650,24 @@ class CompoundPalette(Palette):
 
 
 class GlobalPalette(Palette):
-    """!!!!"""
+    """Object of this class provides access to all the colors in the global config.
 
-    # !!!! comment
+    The idea is that it is possible to 
+
+        import ak.color.global_palette as gp
+
+    even before colors are configured. The imported 'gp' object would provide
+    access to the current global config.
+
+    There are two ways to get color formatters:
+
+        gp["TABLE.BORDER"]     # returns ColorFmt corresponging to "TABLE.BORDER"
+                               # element in the config
+        gp.keyword             # same as gp["KEYWORD"], shortcat for standard
+                               # syntaxes
+    """
+
+    # access to standard syntaxes
     text = ConfColor("TEXT")
     name = ConfColor("NAME")
     keyword = ConfColor("KEYWORD")
@@ -1629,7 +1675,8 @@ class GlobalPalette(Palette):
     warn = ConfColor("WARN")
     error = ConfColor("ERROR")
 
-    # !!!! comment
+    # correspondence of the standard syntaxes accessors names to syntax names in
+    # the config
     BUILTIN_ATTRS_MAP = {
         "text": "TEXT",
         "name": "NAME",
@@ -1640,196 +1687,80 @@ class GlobalPalette(Palette):
     }
 
     def __init__(self, colors_conf=None, no_color=None, _local_colors=None):
-        """ !!!"""
-        # !!! make sure '_' is consistent in arguments
+        """Constructor of CompoundPalette.
+
+        Arguments are the same as arguments of Palette.
+        """
         super().__init__(colors_conf, no_color, _local_colors)
         self._colors_conf = colors_conf
 
-    def get_color(self, syntax_name) -> ColorFmt:
-        """syntax_name -> ColorFmt"""
-        return self._colors_conf.get_color(syntax_name)
+    def get_color(self, synt_id) -> ColorFmt:
+        """synt_id -> ColorFmt"""
+        return self._colors_conf.get_color(synt_id)
 
     def __getitem__(self, index):
         """same behavior as get_color method"""
         return self.get_color(index)
 
     def set_colors_conf(self, colors_conf):
-        """ """
+        """Update the global palette after the global colors config changed."""
         self._colors_conf = colors_conf
         for attr_name, synt_id in self.BUILTIN_ATTRS_MAP.items():
             setattr(self, attr_name, colors_conf.get_color(synt_id))
 
 
-#    def __call__(self, *items) -> CHText:
-#        """Produce multi-colored CHText.
-#
-#        Arguments:
-#        - items: each item me be
-#          - plain text
-#          - ('syntax_name', 'text')  !!!!! ??????
-#          - CHText
-#          - CHText.Chunk
-#        """
-#        result = ColorFmt.get_plaintext_fmt()('')
-#        for item in items:
-#            result += self._item_to_colored_text(item)
-#        return result
-#
-#    def _item_to_colored_text(self, item):
-#        # process single item of __call__
-#        # produce item, which can be used to construct CHText
-#        if isinstance(item, (CHText, CHText.Chunk)):
-#            return item
-#        # if isinstance(item, SHText):  - removing the SHText
-#        #     return [
-#        #         self.get_color(chunk.syntax)(chunk.text)
-#        #         for chunk in item.chunks]
-#        # elif isinstance(item, (list, tuple)):
-#        if isinstance(item, (list, tuple)):
-#            if len(item) != 2:
-#                raise ValueError(
-#                    f"invalid syntax text item {item}. "
-#                    f"expected pair ('syntax_name', 'text')")
-#            syntax_name, text = item
-#            return self.get_color(syntax_name)(text)
-#
-#        return ColorFmt.get_plaintext_fmt()(item)
+class PaletteUser:
+    """Mixin which implememts a helper method which constructs palette object.
 
-
-
-class LocalPaletteUser:
-    """Class which use Palette to produce colored text.
-
-    Functionality if this mixin helps to get the palette informatin from
-    colors context.
+    Usage of this mixin is optional.
     """
 
     PALETTE_CLASS = None
 
     @classmethod
-    def _mk_local_palette(cls, colors_conf, no_color, alt_local_palette):
-        # !!!!!
+    def _mk_palette(cls, colors_conf, no_color, alt_palette_class):
+        # methods which produce colored text should accept three optional
+        # agruments which control the colors of the result:
+        # - colors_conf: global colors config is used by default
+        # - no_color: instructs to produce text without color exxects,
+        #   False by default
+        # - alt_palette_class: alternative Palette class to be used
+        #
+        # This method provides standard way to create a palette object from
+        # these arguments.
+
         assert cls.PALETTE_CLASS is not None, (
             f"'PALETTE_CLASS' is not implemented in {str(cls)}")
-        palette_class = alt_local_palette or cls.PALETTE_CLASS
+        palette_class = alt_palette_class or cls.PALETTE_CLASS
         if colors_conf is None:
             colors_conf = get_global_colors_config()
 
         return palette_class(colors_conf, no_color)
 
 
-#def sh_fmt(arg, *, palette=None) -> CHText:
-#    """Convert an argument to CHText using global colors config.
-#
-#    Arguments:
-#    - arg: can be either
-#      - SHText
-#      - an object with 'sh_text' method
-#      - any object, that can be converted to string. Trivial formating is
-#        used in this case and so that no color sequences would be included
-#        into the final text.
-#    - palette: specify this argument if you want to use not the default palette
-#    """
-#    if palette is None:
-#        palette = get_global_palette()
-#    sh_text_attr = getattr(arg, 'sh_text', None)
-#    if sh_text_attr is not None:
-#        return palette(sh_text_attr())
-#    if isinstance(arg, SHText):
-#        return palette(arg)
-#    return palette(str(arg))
-#
-#
-#def sh_lines_fmt(sh_lines, palette=None) -> Iterator[CHText]:
-#    """Convert multiple SHText into CHText objects using global colors config."""
-#    if palette is None:
-#        palette = get_global_palette()
-#    for sh_text in sh_lines:
-#        yield palette(sh_text)
-
-
-#def sh_print(*args, palette=None, sep=' ', end='\n', file=None, flush=False):
-#    """Print colored text using global color config.
-#
-#    Main purpose of the method is to print SHText or objects, that generate
-#    SHText (that is objects which have 'gen_sh_lines' or 'sh_text' methods)
-#
-#    As the number of SHText lines generated by arg.gen_sh_lines() may be large
-#    this method prints each line as soon as it receives it.
-#
-#    It prints all other objects the same way the standard 'print' does.
-#    """
-#    if palette is None:
-#        palette = get_global_palette()
-#
-#    def _obj_to_print_items(obj):
-#        # do convert the argument to lines of colored text if possible
-#        sh_lines_attr = getattr(arg, 'gen_sh_lines', None)
-#        if sh_lines_attr is not None:
-#            for sh_text in sh_lines_attr():
-#                yield palette(sh_text)
-#            return
-#        sh_text_attr = getattr(arg, 'sh_text', None)
-#        if sh_text_attr is not None:
-#            yield sh_text_attr()
-#            return
-#        #if isinstance(obj, SHText):
-#        #    yield palette(obj)
-#        #    return
-#        yield obj
-#
-#    cur_line_args = []
-#    for arg in args:
-#        start_new_line = False
-#        for colored_text in _obj_to_print_items(arg):
-#            if start_new_line:
-#                print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
-#                cur_line_args = []
-#            cur_line_args.append(colored_text)
-#            start_new_line = True
-#    if cur_line_args:
-#        print(*cur_line_args, sep=sep, end=end, file=file, flush=flush)
-
-
-
-
-#_COLORS_CONFIG = None  # initialized on-demand ColorsConfig-derived object
-#_GLOBAL_PALETTE = None
-
-# !!! good comment here !!!!
+# global_palette is a palette object which provides color formatters bases
+# on a current state of the global config. (This is unlike usual palette objects
+# which are constructed based on config and do not change it's behavior after that).
+# The global_palette object may be imported from ak.color during module
+# initialization, that is even before the global colors config is initialized.
 global_palette = GlobalPalette(ColorsConfig())
 
 
-# !!!!! remove all mentions of it. Probably do not need it at all
 def get_global_colors_config():
-    """Get global ColorsConfig"""
-    global global_palette
+    """Get global ColorsConfig.
+
+    You may want to get the colors config to prepare a report of syntaxes and
+    corresponding colors used in the program:
+
+        print(get_global_colors_config().make_report())
+    """
     return global_palette._colors_conf
-    #global _COLORS_CONFIG
-    #if _COLORS_CONFIG is None:
-    #    _COLORS_CONFIG = ColorsConfig({})  # all defaults
-    #return _COLORS_CONFIG
 
 
-def set_global_colors_config(colors_config, no_color=False):
-    """Set global ColorsConfig !!!!! """
-    global global_palette
-    # !!!!! no_color - how to process ???
+def set_global_colors_config(colors_config):
+    """Set global ColorsConfig"""
     if colors_config is None:
         colors_config = ColorsConfig()
 
     global_palette.set_colors_conf(colors_config)
     colors_config.global_palette = global_palette
-
-
-## !!!! looks like it's not required. Or is it?
-#def get_global_palette():
-#    """Get the Palette corresponding to the global colors config."""
-#    global _GLOBAL_PALETTE
-#    if _GLOBAL_PALETTE is None:
-#        _GLOBAL_PALETTE = get_global_colors_config().get_palette()
-#    return _GLOBAL_PALETTE
-
-
-
-
