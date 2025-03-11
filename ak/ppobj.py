@@ -1,12 +1,11 @@
 """Methods for pretty-printing tables and json-like python objects.
 
 Classes provided by this module:
-- PPObj - pretty-printable json-like python structures
+- PrettyPrinter - pretty-printer of json-like python structures
+- PPObj - base class for objects which have colored text representation
 - PPTable - pretty-printable 2-D tables
+- PPEnumFieldType - to be used by PPTable for enum fields
 """
-
-import sys
-from collections.abc import Iterable
 
 from typing import Iterator
 from numbers import Number
@@ -85,30 +84,30 @@ class PrettyPrinter(PaletteUser):
         return "\n".join(self.gen_pplines(obj_to_print))
 
     def _gen_ch_chunks_for_obj(
-        self, _c: PPPalette, obj_to_print, offset=0,
+        self, cp: PPPalette, obj_to_print, offset=0,
     ) -> Iterator[CHText.Chunk]:
         # generate parts for colored text result
 
         if self._value_is_simple(obj_to_print):
-            yield self._simple_val_to_ch_chunk(_c, obj_to_print)
+            yield self._simple_val_to_ch_chunk(cp, obj_to_print)
         elif isinstance(obj_to_print, dict):
             sorted_keys = sorted(
                 obj_to_print.keys(), key=self._mk_type_sort_value
             )
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print object in one line
-                chunks = [_c.text("{")]
+                chunks = [cp.text("{")]
                 is_first = True
                 for key in sorted_keys:
                     if not is_first:
-                        chunks.append(_c.text(", "))
+                        chunks.append(cp.text(", "))
                     else:
                         is_first = False
-                    chunks.append(self._dict_key_to_sc_chunk(_c, key))
-                    chunks.append(_c.text(": "))
+                    chunks.append(self._dict_key_to_sc_chunk(cp, key))
+                    chunks.append(cp.text(": "))
                     chunks.append(self._simple_val_to_ch_chunk(
-                        _c, obj_to_print[key]))
-                chunks.append(_c.text("}"))
+                        cp, obj_to_print[key]))
+                chunks.append(cp.text("}"))
                 scr_len = CHText.calc_chunks_len(chunks)
 
                 oneline_fmt = offset + scr_len < 200  # not exactly correct, ok
@@ -117,27 +116,27 @@ class PrettyPrinter(PaletteUser):
                     return
 
             # print object in multiple lines
-            yield _c.text("{")
-            prefix = _c.text(" " * (offset + 2))
+            yield cp.text("{")
+            prefix = cp.text(" " * (offset + 2))
             is_first = True
             for key in sorted_keys:
                 if is_first:
                     is_first = False
                 else:
-                    yield _c.text(",")
+                    yield cp.text(",")
                 yield None
                 yield prefix
-                yield self._dict_key_to_sc_chunk(_c, key)
-                yield _c.text(": ")
+                yield self._dict_key_to_sc_chunk(cp, key)
+                yield cp.text(": ")
                 yield from self._gen_ch_chunks_for_obj(
-                    _c, obj_to_print[key], offset+2)
+                    cp, obj_to_print[key], offset+2)
             yield None
-            yield _c.text(" " * offset + "}")
+            yield cp.text(" " * offset + "}")
         elif isinstance(obj_to_print, list):
             if self._all_values_are_simple(obj_to_print):
                 # check if it is possible to print values in one line
                 items_chunks = [
-                    self._simple_val_to_ch_chunk(_c, item)
+                    self._simple_val_to_ch_chunk(cp, item)
                     for item in obj_to_print
                 ]
                 scr_len = (
@@ -145,21 +144,21 @@ class PrettyPrinter(PaletteUser):
                 oneline_fmt = not items_chunks or offset + scr_len < 200
                 if oneline_fmt:
                     # print the list in one line
-                    yield _c.text("[")
+                    yield cp.text("[")
                     is_first = True
                     for item_chunk in items_chunks:
                         if is_first:
                             is_first = False
                         else:
-                            yield _c.text(", ")
+                            yield cp.text(", ")
                         yield item_chunk
-                    yield _c.text("]")
+                    yield cp.text("]")
                 else:
                     # print the list in several lines (but each line may
                     # contain several values)
-                    yield _c.text("[")
+                    yield cp.text("[")
                     yield None
-                    prefix = _c.text(" " * (offset + 2))
+                    prefix = cp.text(" " * (offset + 2))
                     len_yielded = 0
                     is_first_in_line = True
                     for i, item_chunk in enumerate(items_chunks):
@@ -167,7 +166,7 @@ class PrettyPrinter(PaletteUser):
                         need_new_line = len_yielded + cur_chunk_len > 150
 
                         if need_new_line and not is_first_in_line:
-                            yield _c.text(",")
+                            yield cp.text(",")
                             yield None
                             len_yielded = 0
                             is_first_in_line = True
@@ -176,7 +175,7 @@ class PrettyPrinter(PaletteUser):
                             yield prefix
                             len_yielded = offset + 2
                         else:
-                            yield _c.text(", ")
+                            yield cp.text(", ")
                             len_yielded += 2
                         yield item_chunk
                         len_yielded += cur_chunk_len
@@ -187,24 +186,24 @@ class PrettyPrinter(PaletteUser):
                             yield None
                             break
                     # all items printed, new line started
-                    yield _c.text(" " * offset + "]")
+                    yield cp.text(" " * offset + "]")
             # print object in multiple lines
             else:
-                prefix = _c.text(" " * (offset + 2))
-                yield _c.text("[")
+                prefix = cp.text(" " * (offset + 2))
+                yield cp.text("[")
                 is_first = True
                 for item in obj_to_print:
                     if is_first:
                         is_first = False
                     else:
-                        yield _c.text(",")
+                        yield cp.text(",")
                     yield None
                     yield prefix
-                    yield from self._gen_ch_chunks_for_obj(_c, item, offset+2)
+                    yield from self._gen_ch_chunks_for_obj(cp, item, offset+2)
                 yield None
-                yield _c.text(" " * offset + "]")
+                yield cp.text(" " * offset + "]")
         else:
-            yield _c.text(str(obj_to_print))
+            yield cp.text(str(obj_to_print))
 
     @classmethod
     def _all_values_are_simple(cls, obj_to_print) -> bool:
@@ -223,26 +222,26 @@ class PrettyPrinter(PaletteUser):
             return False
         return True
 
-    def _simple_val_to_ch_chunk(self, _c: PPPalette, value) -> CHText.Chunk:
+    def _simple_val_to_ch_chunk(self, cp: PPPalette, value) -> CHText.Chunk:
         # simple value (number, string, built-in constant) -> CHText.Chunk
         if isinstance(value, str):
-            return _c.text('"' + value + '"')
+            return cp.text('"' + value + '"')
         elif self.is_keyword_value(value):
-            return _c.keyword(self._consts[value])
+            return cp.keyword(self._consts[value])
         elif isinstance(value, Number):
-            return _c.number(str(value))
+            return cp.number(str(value))
         elif isinstance(value, dict):
             assert not value
-            return _c.text("{}")
+            return cp.text("{}")
         elif isinstance(value, (list, tuple)):
             assert not value
-            return _c.text("[]")
+            return cp.text("[]")
         assert False, f"value {value} is not simple"
 
-    def _dict_key_to_sc_chunk(self, _c: PPPalette, key) -> CHText.Chunk:
-        # !!!
+    def _dict_key_to_sc_chunk(self, cp: PPPalette, key) -> CHText.Chunk:
+        # create colored text corresponding to a dictionary key
         key_str = '"' + key + '"' if isinstance(key, str) else str(key)
-        return _c.name(key_str)
+        return cp.name(key_str)
 
     @classmethod
     def _mk_type_sort_value(cls, value):
@@ -268,7 +267,7 @@ class PrettyPrinter(PaletteUser):
         return any(value is keyword for keyword in [True, False, None])
 
 
-class _PPObjBase(PaletteUser):
+class PPObj(PaletteUser):
     """Base class for pretty-printable objects.
 
     Object of PPObj class has a colored-text representation. For example we want to
@@ -280,7 +279,7 @@ class _PPObjBase(PaletteUser):
     work with: the length of the string is not equal to the number of printable
     characters.
 
-    PPObj should implement two methods:
+    PPObj implements two methods:
         - ch_text  - returns ak.color.CHText object
         - ch_lines - generates ak.color.CHText objects
 
@@ -288,70 +287,47 @@ class _PPObjBase(PaletteUser):
     characters, so that it is possible to use it in f-strings with width format
     specifiers.
 
-    !!!!!!!!
+    Default implementtion of 'ch_text' and 'ch_lines' methods create a Palette
+    object and call 'make_ch_text' and 'gen_ch_lines' methods, which should be
+    implemented in the derived class.
 
-    Arguments of these methods allow to get information about colors configuraions
-    from application config. Check PaletteUser class for more information.
-
-    Standard usage scenario:
-    !!!!!!!
+    (See PaletteUser class documentation for more details).
     """
 
     def __str__(self):
         return str(self.ch_text())
 
     def ch_text(
-        self, *, colors_context=None, no_color=False, alt_local_palette=None,
+        self, colors_conf=None, no_color=False, alt_palette_class=None,
     ) -> CHText:
-        """Return CHText - colored representation of self."""
-        raise NotImplementedError(
-            f"'ch_text' not implemented in '{type(self)}'. "
-            f"Looks like the class is derived from _PPObjBase. Derive "
-            f"the class from PPObj or PPObjDeep."
-        )
+        """Return CHText - colored representation of self.
 
-    def ch_lines(
-        self, *, colors_context=None, no_color=False, alt_local_palette=None,
-    ) -> Iterator[CHText]:
-        """Generates CHText objects - colored representation of self."""
-        yield from []
-        raise NotImplementedError(
-            f"'ch_lines' not implemented in '{type(self)}'. "
-            f"Looks like the class is derived from _PPObjBase. Derive "
-            f"the class from PPObj or PPObjDeep."
-        )
-
-
-class PPObj(_PPObjBase):
-    """Implementation of a 'simple' PPObj.
-
-    'simple' here means that all the coloring information required for
-    'ch_text' and 'ch_lines' is located in an instance of Palette-derived class.
-    Implementation of 'ch_text' and 'ch_lines' methods provided in this class
-    fetches corresponding local palette from context and calls 'make_ch_text'
-    or 'gen_ch_lines' methods with the local palette argument.
-
-    'gen_ch_lines' method should be implemented in the derived class.
-    """
-
-    def ch_text(
-        self, *, colors_conf=None, no_color=False, alt_plette_class=None,
-    ) -> CHText:
-        """!!!"""
+        Arguments:
+        - colors_conf: ak.color.ColorsConfig object, global congig is used by default
+        - no_color: instructs to produce text without color effects, False by default
+        - alt_palette_class: Palette class to be used instead of the default
+            palette class (specified in cls.PALETTE_CLASS)
+        """
         return self.make_ch_text(
-            self._mk_palette(colors_conf, no_color, alt_plette_class))
+            self._mk_palette(colors_conf, no_color, alt_palette_class))
 
     def ch_lines(
-        self, *, colors_conf=None, no_color=False, alt_plette_class=None,
-    ) -> CHText:
-        """ !!! """
-        yield from self.gen_ch_lines(
-            self._mk_palette(colors_conf, no_color, alt_plette_class))
+        self, colors_conf=None, no_color=False, alt_palette_class=None,
+    ) -> Iterator[CHText]:
+        """Generates CHText objects - colored representation of self.
 
-    def make_ch_text(self, local_palette) -> CHText:
-        """ """
+        This method should produce CHText objects corresponding to the separate
+        lines of CHText produced by 'ch_text'.
+
+        Arguments: see arguments description of 'ch_text' method
+        """
+        yield from self.gen_ch_lines(
+            self._mk_palette(colors_conf, no_color, alt_palette_class))
+
+    def make_ch_text(self, cp: Palette) -> CHText:
+        """Return CHText - colored representation of self"""
         try:
-            lines = self.gen_ch_lines(local_palette)
+            lines = self.gen_ch_lines(cp)
             return CHText("\n").join(lines)
         except NotImplementedError as err:
             if 'gen_ch_lines' not in str(err):
@@ -359,10 +335,12 @@ class PPObj(_PPObjBase):
 
         raise NotImplementedError(f"'make_ch_text' not implemented in '{type(self)}'")
 
-    def gen_ch_lines(self, local_palette) -> Iterator[CHText]:
-        """!!!"""
+    def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
+        """Generates CHText objects - colored representation of self"""
         yield from []
+        _ = cp
         raise NotImplementedError(f"'gen_ch_lines' not implemented in '{type(self)}'")
+
 
 # ready to use PrettyPrinter with default configuration
 pp = PrettyPrinter()
@@ -402,17 +380,19 @@ class PPWrap(PPObj):
         print(str(self))
         return ""
 
-    def ch_text( # !!!!!!
+    def ch_text(
         self, colors_conf=None, no_color=False, alt_palette_class=None,
     ) -> CHText:
+        """Return CHText - colored representation of self"""
         return CHText("\n").join(self.ch_lines(
             colors_conf, no_color, alt_palette_class))
 
     def ch_lines(
-        self, colors_config=None, no_color=False, alt_palette_class=None,
-    ) -> CHText:
+        self, colors_conf=None, no_color=False, alt_palette_class=None,
+    ) -> Iterator[CHText]:
+        """Generates CHText objects - colored representation of self"""
         yield from self._PPRINTER.gen_pplines(
-            self.r, colors_config, no_color, alt_palette_class)
+            self.r, colors_conf, no_color, alt_palette_class)
 
 
 #########################
@@ -426,6 +406,7 @@ class PPTable(PPObj):
     """
 
     class TablePalette(CompoundPalette):
+        """Palette to be used to print PPTable."""
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'TABLE.BORDER': "GREEN",
@@ -456,7 +437,6 @@ class PPTable(PPObj):
             fields=None,
             title_records=None,
             fields_types=None,
-            no_color=False,
     ):
         """Constructor of PPTable object - this object prints table.
 
@@ -484,7 +464,6 @@ class PPTable(PPObj):
             elements of 'records' argument, but contain information for
             multi-line titles
         - fields_types: (optional) dictionary {field_name: PPTableFieldType}.
-        - no_color: do not use colors when printing the table
 
         Combinations of arguments used in common scenarios:
 
@@ -560,74 +539,9 @@ class PPTable(PPObj):
         """
         self._default_pptable_printer.remove_columns(columns_names)
 
-    def gen_ch_lines(self, local_palette) -> Iterator[CHText]:
+    def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
         # implementation of PrettyPrinter functionality
-        yield from self._default_pptable_printer.gen_ch_lines(local_palette)
-
-    def print(
-            self, *,
-            file=sys.stdout,
-            delimiter=None,
-            fmt=None,
-            limits=None,
-            skip_columns=None,
-            skip_header=None,
-            additional_columns=None,
-            no_color=None):
-        """Print contents of the table to specified destination.
-
-        This is more flexible and efficient alternative to print(pptable).
-        This method of printing table is preferrable because it is possible to
-        specify additional parameters when calling this method and because
-        this method can produce output line by line.
-
-        If no additional arguments are specified the produced output is identical
-        to output of print(pptable).
-
-        Arguments (all are optional):
-        - delimiter: produce delimited text (with specified delimiter)
-        - no_color: if True - prints result w/o color formatting. Otherwise
-            print results using default color settings (depending on these settings
-            the result may be not colored as well)
-        - fmt: string, describing columns of the table. Check PPTableFormat doc for
-            more details.
-        - limits: override default or specified in fmt numbers of printable records.
-            Check PPTable constructor doc for more details.
-            Does not affect the 'delimited' format becase with 'delimited' format
-            all records are always printed.
-        - skip_columns: list of names of columns which should not be printed.
-            (overrides value of 'fmt' argument)
-        - skip_header: do not print the header (names of columns). Affects
-            'delimited' format only
-        - additional_columns: [(column_name, value), ] Values for 'additional'
-            columns. Can be used when several tables are printed into the same file
-            to indicate the source table for each record. Affects only 'delimited'
-            format.
-        """
-        if delimiter is not None:
-            assert False, "not implemented"
-
-        if all(x is None for x in (fmt, limits, skip_columns, no_color)):
-            for line in self._default_pptable_printer.ch_lines(
-                None, local_palette, None,
-            ):
-                print(str(line), file=file)
-            return
-
-        # create one-time PPTableFormat to be used for this print
-        fmt_obj = PPTableFormat.mk_by_other(
-            fmt, self._default_pptable_printer._ppt_fmt)
-
-        if limits is not None:
-            fmt_obj.set_limits(limits)
-
-        if skip_columns:
-            fmt_obj.remove_columns(skip_columns)
-
-        cur_pptable_printer = _PPTableImpl(self.r, local_palette, fmt_obj=fmt_obj)
-
-        for line in cur_pptable_printer.ch_lines(None, no_color, None):
-            print(str(line), file=file)
+        yield from self._default_pptable_printer.gen_ch_lines(cp)
 
 
 class PPTableFieldType(PaletteUser):
@@ -637,11 +551,9 @@ class PPTableFieldType(PaletteUser):
     column displays 'name' of records), the way information is displayed
     depends on PPTableFieldType associated with this field.
     """
-    # _DUMMY_SYNTAX_NAMES = {}  # used in default get_cell_text_len  !!! ???
 
-    # !!! default field uses same palette as table
+    # default field uses same palette as table
     PALETTE_CLASS = PPTable.TablePalette
-    # _DUMMY_NO_COLOR_LOCAL_PALETTE = PALETTE_CLASS.make(None, False, None)
 
     def __init__(self, min_width=1, max_width=999):
         self.min_width = min_width
@@ -661,18 +573,17 @@ class PPTableFieldType(PaletteUser):
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_text(
             value, fmt_modifier,
-            self.PALETTE_CLASS(None, False))  #.get_no_color_palette()) !!!!!
+            self.PALETTE_CLASS(no_color=True))
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def get_title_cell_text_len(self, value, fmt_modifier) -> int:
         """Calculate len of the title of a table column."""
-        #text_items, _ = self.make_desired_title_cell_text(
-        #    value, fmt_modifier, self._DUMMY_NO_COLOR_LOCAL_PALETTE)
-        #return CHText.calc_chunks_len(text_items)
+        # Default implementation does not use fmt_modifier argument
+        # pylint: disable=unused-argument
         return len(str(value))
 
     def make_desired_cell_ch_text(
-        self, value, fmt_modifier, field_local_palette,
+        self, value, fmt_modifier, field_palette,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
 
@@ -681,24 +592,24 @@ class PPTableFieldType(PaletteUser):
         Implementation for general field type: value printed almost as is.
         To be overiden in derived classes.
         """
-        _c = field_local_palette
+        cp = field_palette
         if fmt_modifier is not None:
             raise ValueError(
                 f"{type(self)} field type does not support format modifiers. "
                 f"Specified fmt_modifier: '{fmt_modifier}'")
         if PrettyPrinter.is_keyword_value(value):
-            color_fmt = _c.keyword
+            color_fmt = cp.keyword
             align = ALIGN_RIGHT
         elif isinstance(value, Number):
-            color_fmt = _c.number
+            color_fmt = cp.number
             align = ALIGN_RIGHT
         else:
-            color_fmt = _c.text
+            color_fmt = cp.text
             align = ALIGN_LEFT
         return [color_fmt(str(value))], align
 
     def make_desired_title_cell_text(
-        self, value, _fmt_modifier, _c,
+        self, value, _fmt_modifier, cp,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for title table row."""
 
@@ -707,23 +618,23 @@ class PPTableFieldType(PaletteUser):
         # but these values supposed to be just strings, that is some description of
         # column. It is not a enum or uuid - it makes no need to format these values
         # using fmt_modifier.
-        return [_c.col_title(str(value) if value else "")], ALIGN_CENTER
+        return [cp.col_title(str(value) if value else "")], ALIGN_CENTER
 
-    def make_title_cell_ch_text(self, value, width, table_local_palette):
-        """!!!"""
-        title_ch_chunks = [table_local_palette.col_title(str(value))]
+    def make_title_cell_ch_text(self, value, width, table_palette) -> [CHText.Chunk]:
+        """Prepare list of CHText.Chunk for table title cell."""
+        title_ch_chunks = [table_palette.col_title(str(value))]
         return self.fit_to_width(
-            title_ch_chunks, width, ALIGN_LEFT, table_local_palette)
+            title_ch_chunks, width, ALIGN_LEFT, table_palette)
 
     def make_cell_ch_text(
         self, value, fmt_modifier, width,
-        field_local_palette, table_local_palette,
+        field_palette, table_palette,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
         text, align = self.make_desired_cell_ch_text(
-            value, fmt_modifier, field_local_palette)
+            value, fmt_modifier, field_palette)
 
-        return self.fit_to_width(text, width, align, table_local_palette)
+        return self.fit_to_width(text, width, align, table_palette)
 
     def _verify_fmt_modifier(self, fmt_modifier):
         # Raise exc if 'fmt_modifier' is not compatible with this field type.
@@ -744,7 +655,7 @@ class PPTableFieldType(PaletteUser):
             f"(specified format modifier: '{fmt_modifier}')")
 
     @staticmethod
-    def fit_to_width(ch_chunks, width, align, _c) -> [CHText.Chunk]:
+    def fit_to_width(ch_chunks, width, align, cp) -> [CHText.Chunk]:
         """[CHText.Chunk] -> [CHText.Chunk] of exactly specified length.
 
         Arguments:
@@ -767,11 +678,11 @@ class PPTableFieldType(PaletteUser):
             if align == ALIGN_CENTER:
                 left_filer_len = filler_len // 2
                 right_filler_len = filler_len - left_filer_len
-                result = [_c.text(' '*left_filer_len)]
+                result = [cp.text(' '*left_filer_len)]
                 result.extend(ch_chunks)
-                result.append(_c.text(' '*right_filler_len))
+                result.append(cp.text(' '*right_filler_len))
                 return result
-            filler = _c.text(' '*filler_len)
+            filler = cp.text(' '*filler_len)
             if align == ALIGN_LEFT:
                 return ch_chunks + [filler, ]
             assert align == ALIGN_RIGHT
@@ -784,7 +695,7 @@ class PPTableFieldType(PaletteUser):
         visible_text_len = width - dots_len
 
         result = CHText.resize_chunks_list(ch_chunks, visible_text_len)
-        result.append(_c.warn('.'*dots_len))
+        result.append(cp.warn('.'*dots_len))
 
         return result
 
@@ -1148,25 +1059,27 @@ class PPTableColumn:
             value, self.fmt_modifier, cell_type)
 
     def make_cell_ch_text(
-        self, record, cell_type, field_local_palette, table_local_palette,
+        self, record, cell_type, field_palette, table_palette,
     ) -> [CHText.Chunk]:
-        """Fetch value from record and make text for a cell.
+        """Fetch value from record and make colored text for a cell.
 
         Length of created text is exactly self.width.
         """
         value = self.field.fetch_value(record)
         if cell_type == CELL_TYPE_TITLE:
-            return self.make_title_cell_ch_text_by_value(value, table_local_palette)
+            return self.make_title_cell_ch_text_by_value(value, table_palette)
 
         return self.field.field_type.make_cell_ch_text(
             value, self.fmt_modifier, self.width,
-            field_local_palette, table_local_palette,
+            field_palette, table_palette,
         )
 
-    def make_title_cell_ch_text_by_value(self, value, table_local_palette):
-        """!!!"""
+    def make_title_cell_ch_text_by_value(
+        self, value, table_palette,
+    ) -> [CHText.Chunk]:
+        """Prepare list of CHText.Chunk for table title cell."""
         return self.field.field_type.make_title_cell_ch_text(
-            value, self.width, table_local_palette)
+            value, self.width, table_palette)
 
     def to_fmt_str(self):
         """Create fmt string - human readable and editable descr of self."""
@@ -1614,14 +1527,14 @@ class _PPTableImpl:
         """Remove columns from table."""
         self._ppt_fmt.remove_columns(columns_names)
 
-    def gen_ch_lines(self, _c: PPTable.TablePalette) -> Iterator[CHText]:
+    def gen_ch_lines(self, cp: PPTable.TablePalette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""
 
         columns = self._ppt_fmt.columns
         record_fields_palettes = [
-            _c.get_sub_palette(col.field.field_type.PALETTE_CLASS)
+            cp.get_sub_palette(col.field.field_type.PALETTE_CLASS)
             for col in columns]
-        title_fields_palettes = [_c for col in columns]
+        title_fields_palettes = [cp for col in columns]
 
         # prepare list of table lines. Table line may correspond to a record
         # or to a special markup lines
@@ -1683,31 +1596,31 @@ class _PPTableImpl:
 
         table_width = sum(col.width for col in columns) + len(columns) + 1
 
-        sep = _c.border('|')
+        sep = cp.border('|')
 
         # contents of service lines can be created now
         break_line.ch_text = CHText(sep, " "*(table_width - 2), sep)
         skipped_line_contents = PPTableFieldType.fit_to_width(
             [
-                _c.warn("... "),
-                _c.text(f"{n_skipped} records skipped"),
+                cp.warn("... "),
+                cp.text(f"{n_skipped} records skipped"),
             ],
             table_width - 2,
             ALIGN_LEFT,
-            _c)
+            cp)
         skipped_line_contents.insert(0, sep)
         skipped_line_contents.append(sep)
         skipped_recs_line.ch_text = CHText.make(skipped_line_contents)
 
         # 1. make first border line
         border_line = CHText.make([
-            _c.border("".join("+" + "-"*col.width for col in columns) + '+')])
+            cp.border("".join("+" + "-"*col.width for col in columns) + '+')])
         yield border_line
 
         # 2. table header (name)
         if self.header:
             line = PPTableFieldType.fit_to_width(
-                [_c.col_title(self.header)], table_width - 2, ALIGN_LEFT, _c)
+                [cp.col_title(self.header)], table_width - 2, ALIGN_LEFT, cp)
             line.insert(0, sep)
             line.append(sep)
             yield CHText.make(line)
@@ -1732,7 +1645,7 @@ class _PPTableImpl:
             else:
                 line.append(sep)
             line.extend(
-                col.make_title_cell_ch_text_by_value(col.name, _c))
+                col.make_title_cell_ch_text_by_value(col.name, cp))
 
         line.append(sep)
         yield CHText.make(line)
@@ -1741,7 +1654,7 @@ class _PPTableImpl:
         cols_and_palettes = list(zip(columns, title_fields_palettes))
         for title_rec in self.title_records:
             yield CHText.make(self._make_table_line(
-                title_rec, cols_and_palettes, sep, CELL_TYPE_TITLE, _c))
+                title_rec, cols_and_palettes, sep, CELL_TYPE_TITLE, cp))
 
         # 4. one more border_line
         yield border_line
@@ -1753,7 +1666,7 @@ class _PPTableImpl:
                 yield tl.ch_text
             else:
                 yield CHText.make(self._make_table_line(
-                    tl, cols_and_palettes, sep, CELL_TYPE_BODY, _c))
+                    tl, cols_and_palettes, sep, CELL_TYPE_BODY, cp))
 
         # 6. final border line
         yield border_line
@@ -1761,10 +1674,10 @@ class _PPTableImpl:
         # 7. summary line
         if self.footer:
             yield CHText.make(PPTableFieldType.fit_to_width(
-                [_c.text(self.footer)], table_width, ALIGN_LEFT, _c))
+                [cp.text(self.footer)], table_width, ALIGN_LEFT, cp))
 
     def _make_table_line(
-        self, record, cols_and_palettes, sep, cell_type, table_local_palette,
+        self, record, cols_and_palettes, sep, cell_type, cp,
     ) -> [CHText.Chunk]:
         # create CHText chunks - representaion of a single record in table
         line = [sep]
@@ -1774,8 +1687,7 @@ class _PPTableImpl:
                 is_first = False
             else:
                 line.append(sep)
-            line.extend(col.make_cell_ch_text(
-                record, cell_type, field_palette, table_local_palette))
+            line.extend(col.make_cell_ch_text(record, cell_type, field_palette, cp))
         line.append(sep)
         return line
 
@@ -1789,6 +1701,7 @@ class PPEnumFieldType(PPTableFieldType):
     Generates values for PPTable cells, f.e.: "10 Active"
     """
     class EnumPalette(PPTableFieldType.PALETTE_CLASS):
+        """Palette to be used for enum fields"""
         PARENT_PALETTES = [PPTableFieldType.PALETTE_CLASS, ]
 
         value = ConfColor('')
@@ -1843,11 +1756,12 @@ class PPEnumFieldType(PPTableFieldType):
         return self.enum_values.get(value, self.enum_missing_value)[0]
 
     def make_desired_cell_ch_text(
-        self, value, fmt_modifier, _c,
+        self, value, fmt_modifier, field_palette,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment"""
 
-        cache_key = id(_c) # !!!!
+        cache_key = id(field_palette)  # need to maintain separate caches
+                            # enum_value -> CTHText for different palettes
         # prepare and cache cell text for a enum value
         # cache is prepared for all supported format modifiers
         try:
@@ -1867,11 +1781,11 @@ class PPEnumFieldType(PPTableFieldType):
 
         if value not in by_value_cache:
             self._make_text_cache_for_val(
-                value, _c, by_fmt_cache)
+                value, field_palette, by_fmt_cache)
 
         return by_value_cache[value]
 
-    def _make_text_cache_for_val(self, value, _c, by_fmt_cache) -> None:
+    def _make_text_cache_for_val(self, value, cp, by_fmt_cache) -> None:
         # populate self._cache for value
         # ('by_fmt_cache' is part of self._cache)
         try:
@@ -1881,7 +1795,8 @@ class PPEnumFieldType(PPTableFieldType):
             if value is None:
                 # special case: cell will not contain enum's value and name,
                 # but a single None
-                text_and_alignment = super().make_desired_cell_ch_text(value, None, _c)
+                text_and_alignment = super().make_desired_cell_ch_text(
+                    value, None, cp)
                 by_fmt_cache['val'][value] = text_and_alignment
                 by_fmt_cache['name'][value] = text_and_alignment
                 by_fmt_cache['full'][value] = text_and_alignment
@@ -1889,10 +1804,10 @@ class PPEnumFieldType(PPTableFieldType):
             name, syntax_name = self.enum_missing_value
             val_len = max(self.max_val_len, len(str(value)))
 
-        color_fmt = _c.get_color(syntax_name)
+        color_fmt = cp.get_color(syntax_name)
 
         # 'val' format
-        val_text_items, align = super().make_desired_cell_ch_text(value, None, _c)
+        val_text_items, align = super().make_desired_cell_ch_text(value, None, cp)
         by_fmt_cache['val'][value] = (val_text_items, align)
 
         # 'name' format
@@ -1903,9 +1818,9 @@ class PPEnumFieldType(PPTableFieldType):
         pad_len = val_len - CHText.calc_chunks_len(val_text_items)
         if pad_len > 0:
             # align 'value' portion of the text to right
-            full_text_items.append(_c.text(" " * pad_len))
+            full_text_items.append(cp.text(" " * pad_len))
         full_text_items.extend(val_text_items)
-        full_text_items.append(_c.text(" "))
+        full_text_items.append(cp.text(" "))
         full_text_items.append(color_fmt(name))
         by_fmt_cache['full'][value] = (full_text_items, ALIGN_LEFT)
 

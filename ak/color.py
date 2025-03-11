@@ -1630,7 +1630,7 @@ class CompoundPalette(Palette):
     """
     SUB_PALETTES_MAP = None  # {(Palette, "modifier name"): AltLocalPalette}
 
-    def __init__(self, colors_conf, no_color, _local_colors):
+    def __init__(self, colors_conf=None, no_color=False, _local_colors=None):
         super().__init__(colors_conf, no_color, _local_colors)
         self._no_color = no_color
         self.colors_conf = colors_conf
@@ -1722,7 +1722,7 @@ class PaletteUser:
         # methods which produce colored text should accept three optional
         # agruments which control the colors of the result:
         # - colors_conf: global colors config is used by default
-        # - no_color: instructs to produce text without color exxects,
+        # - no_color: instructs to produce text without color effects,
         #   False by default
         # - alt_palette_class: alternative Palette class to be used
         #
