@@ -4,9 +4,9 @@ import unittest
 import io
 from collections import namedtuple
 
-from ak.color import CHText
+from ak.color import CHText, ConfColor, ColorFmt
 from ak import ppobj
-from ak.ppobj import PrettyPrinter, pp
+from ak.ppobj import CHTextResult, PrettyPrinter, pp
 from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
 
 
@@ -151,23 +151,159 @@ class TestPrettyPrinter(unittest.TestCase):
             3: None
         }
 
-        pp_obj = pp(obj_to_print)
+        ch_result = pp(obj_to_print)
 
         # 1. converting pp(...) result to str.
         # new-line symbol is appended because other methods append this symbol
-        converted_result = str(pp_obj) + "\n"
+        converted_result = str(ch_result) + "\n"
         # print(converted_result)
 
         with io.StringIO() as output:
-            print(pp_obj, file=output)
+            print(ch_result, file=output)
             print_result = output.getvalue()
 
         with io.StringIO() as output:
-            print(pp_obj, file=output)
-            sh_print_result = output.getvalue()
+            for ch_line in ch_result:
+                print(ch_line, file=output)
+            by_line_print_result = output.getvalue()
 
         self.assertEqual(converted_result, print_result)
-        self.assertEqual(converted_result, sh_print_result)
+        self.assertEqual(converted_result, by_line_print_result)
+
+
+class TestCHTextResult(unittest.TestCase):
+    """Test behavior of CHTextResult object.
+
+    It should be very similar to CHText.
+    """
+    def test_fetch_ch_text(self):
+        """Test fetching CHText object from CHTextResult."""
+        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        self.assertIsInstance(ch_text_result, CHTextResult)
+
+        ch_text = ch_text_result.get_ch_text()
+        self.assertIsInstance(ch_text, CHText)
+
+        ch_text_1 = ch_text_result.get_ch_text()
+        self.assertIsNot(ch_text, ch_text_1)
+
+    def test_printing(self):
+        """Test printing of CHTextResult object."""
+
+        # small CHTextResult object, consists of one line only.
+        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+
+        # colored string '{"a": None, "b": 17, "c": "d"}' is expected
+        colored_str = str(ch_text_result)
+
+        # 1. it should be possible just to print it
+        with io.StringIO() as output:
+            print(ch_text_result, file=output)
+            print_result = output.getvalue()
+            self.assertGreater(len(print_result), 0)
+            assert print_result[-1] == "\n"
+            print_result = print_result[:-1]
+
+        self.assertEqual(print_result, colored_str)
+
+        plain_text = CHText.strip_colors(print_result)
+        self.assertNotEqual(plain_text, print_result)
+        self.assertIn("None", plain_text)
+
+    def test_iterating(self):
+        """It should also be possible to iterate the result line by line.
+
+        Even though the rusult consists of a single line.
+        """
+        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        colored_str = str(ch_text_result)
+
+        s = str(CHText("\n").join(l for l in ch_text_result))
+        self.assertEqual(s, colored_str)
+
+    def test_concatenation(self):
+        """Test concatenation operations"""
+        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        colored_str = str(ch_text_result)
+
+        t = "text " + ch_text_result
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(str(t)[:5], "text ")
+
+        t = ColorFmt("GREEN")("text ") + ch_text_result
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text()[:5], "text ")
+
+        t = CHText(ColorFmt("GREEN")("text ")) + ch_text_result
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text()[:5], "text ")
+
+        t = ch_text_result + " suffix"
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text()[-7:], " suffix")
+
+        t = ch_text_result + ColorFmt("GREEN")(" suffix")
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text()[-7:], " suffix")
+
+        t = ch_text_result + CHText(ColorFmt("GREEN")(" suffix"))
+        self.assertIsInstance(t, CHText)
+        self.assertEqual(t.plain_text()[-7:], " suffix")
+
+    def test_immutable(self):
+        """CHTextResult behaves as immutable object."""
+        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+
+        orig_ref = ch_text_result
+
+        ch_text_result += " some suffix"
+
+        self.assertNotIn("some suffix", str(orig_ref))
+
+    def test_slicing(self):
+        """Test slicing"""
+        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+
+        substring = ch_text_result[1:-1]
+        self.assertEqual(len(substring), len(ch_text_result) - 2)
+
+        substring_plain_text = substring.plain_text()
+        self.assertEqual(len(substring), len(substring_plain_text))
+
+    def test_formatting(self):
+        """Test string-formatting operations"""
+        t = pp([1234567890])  # colored "[1234567890]"
+
+        s1 = f"{t:10}"
+        self.assertEqual(
+            str(t), str(s1), "length is > 10, so 10 in f-string has no effect")
+
+        s1 = f"{t:~<30}" # "~~~~~~~~~~~~~~~~~~[1234567890]"
+        self.assertGreater(len(s1), 30, "s1 contains color sequences")
+
+        s1_stripped = CHText.strip_colors(s1)
+        self.assertEqual(len(s1_stripped), 30)
+
+    def test_fixed_len_method(self):
+        """Make sure CHTextResult.fixed_len method exists and works."""
+        t = pp([1234567890])  # colored "[1234567890]"
+
+        result = t.fixed_len(5)
+        self.assertEqual(len(result), 5)
+        self.assertEqual(result.plain_text(), "[1234")
+
+        result = t.fixed_len(15)
+        self.assertEqual(len(result), 15)
+        self.assertEqual(result.plain_text(), "[1234567890]   ")
+
+    def test_equality(self):
+        """Test equality checks."""
+        t1 = pp({"a": None, "b": 17, "c": "d"})
+        t2 = pp({"a": None, "b": 17, "c": "d"})
+
+        self.assertEqual(t1, t1)
+        self.assertEqual(t1, t2)
+
 
 
 #########################
@@ -189,7 +325,7 @@ def verify_table_format(
     Arguments:
     - table: either PPTable object or a sring
     Printed table looks like:
-    
+
     +--+-----+------+
     |some table     |
     |id|level|name  |
@@ -953,6 +1089,123 @@ class TestPPTable(unittest.TestCase):
                 "empty list of something",
             ],
         )
+
+
+class TestByLineTableOerations(unittest.TestCase):
+    """Test how colored text is generated for table in 'line-by-line' mode."""
+
+    def test_table_ch_lines_generation(self):
+        """Make sure 'by-lines' method has the same result."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table = PPTable(records, fields=['id', 'level', 'name'])
+
+        result_whole = str(table)
+
+        result_by_lines = str(CHText("\n").join(table.ch_text()))
+
+        self.assertEqual(result_whole, result_by_lines)
+
+    def test_concurrent_lines_generation(self):
+        """Test concurrent generation of lines of the same table."""
+
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table = PPTable(records, fields=['id', 'level', 'name'])
+
+        result = str(
+            CHText("\n").join(
+                t0_line + t1_line
+                for t0_line, t1_line in zip(table.ch_text(), table.ch_text())))
+
+        # print(result)
+        # It is expected to look like this:
+        # +--+-----+------++--+-----+------+
+        # |id|level|name  ||id|level|name  |
+        # +--+-----+------++--+-----+------+
+        # | 1|   10|Linus || 1|   10|Linus |
+        # | 2|   10|Arnold|| 2|   10|Arnold|
+        # | 3|   17|Jerry || 3|   17|Jerry |
+        # | 4|    7|Elizer|| 4|    7|Elizer|
+        # +--+-----+------++--+-----+------+
+        # Total 4 records  Total 4 records  <- trailing spaces here
+
+        result = CHText.strip_colors(result)
+        self.assertIn("|id|level|name  ||id|level|name  |", result)
+
+    def test_cuncurrent_using_different_palettes(self):
+        """Test concurrent lines generation using different palettes."""
+
+        class RedTablePalette(PPTable.TablePalette):
+            border = ConfColor('TABLE.WARN')
+
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table = PPTable(records, fields=['id', 'level', 'name'])
+
+        # two green tables side-by-side
+        result_0 = str(
+            CHText("\n").join(
+                t0_line + t1_line
+                for t0_line, t1_line in zip(
+                    table.ch_text(alt_palette_class=RedTablePalette),
+                    table.ch_text(),
+                )))
+        print(result_0)
+
+        # red and green tables side-by-side
+        result_1 = str(
+            CHText("\n").join(
+                t0_line + t1_line
+                for t0_line, t1_line in zip(
+                    table.ch_text(alt_palette_class=RedTablePalette),
+                    table.ch_text(),
+                )))
+        print(result_1)
+
+        # use palette object instead of palette class
+        red_palette = RedTablePalette()
+        result_2 = str(
+            CHText("\n").join(
+                t0_line + t1_line
+                for t0_line, t1_line in zip(
+                    table.ch_text(),
+                    table.ch_text(palette=red_palette),
+                )))
+        print(result_2)
+
+        # not colored tables
+        result_3 = str(
+            CHText("\n").join(
+                t0_line + t1_line
+                for t0_line, t1_line in zip(
+                    table.ch_text(no_color=True),
+                    table.ch_text(no_color=True),
+                )))
+        print(result_3)
+
+        result_0 = CHText.strip_colors(result_0)
+        result_1 = CHText.strip_colors(result_1)
+        result_2 = CHText.strip_colors(result_2)
+
+        self.assertEqual(result_1, result_0)
+        self.assertEqual(result_2, result_0)
+        self.assertEqual(result_3, result_0)
 
 
 class TestEnhancedPPTable(unittest.TestCase):

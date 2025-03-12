@@ -179,7 +179,7 @@ class TestCHTextProperties(unittest.TestCase):
         self.assertEqual("aaa", str(t))
 
     def test_making_copies(self):
-        """Make sure operations with the copy no not affect original."""
+        """Make sure operations with the copy does not affect the original."""
         raw_text = "some_text"
         orig = self._mk_chtext('GREEN', raw_text)
 
@@ -198,6 +198,19 @@ class TestCHTextProperties(unittest.TestCase):
         t = CHText(orig)
         t += other_t
         self.assertEqual(raw_text, orig.plain_text())
+
+    def test_in_place_modifications(self):
+        """Make sure '+=' modifies existing object."""
+        raw_text = "some_text"
+        orig = self._mk_chtext('GREEN', raw_text)
+
+        orig_ref = orig
+
+        orig += "some additional text"
+        self.assertIs(orig, orig_ref)
+
+        orig = orig + " and more text"
+        self.assertIsNot(orig, orig_ref)
 
     def test_equality_check(self):
         """CHText objects are equal if have same text and same color.

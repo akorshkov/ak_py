@@ -16,6 +16,90 @@ ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
 CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
 
 
+class CHTextResult:
+    """CHTextResult can be used as usual CHText object, or as iterator.
+
+    Single PPObj object can either produce a single CHText or generate multiple
+    CHText objects (usually corresponding to single lines of the multi-line text).
+    CHTextResult produced by PPObj may be used in both contexts.
+    """
+    __slots__ = 'ppobj', 'cp', '_ch_text'
+
+    def __init__(self, ppobj, cp):
+        self.ppobj = ppobj
+        self.cp = cp
+        self._ch_text = None
+
+    def __str__(self):
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return self._ch_text.__str__()
+
+    def plain_text(self) -> str:
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return self._ch_text.plain_text()
+
+    @classmethod
+    def strip_colors(cls, text: str) -> str:
+        """Colorer-formatted string -> same string w/o coloring."""
+        return CHText.strip_colors(text)
+
+    def get_ch_text(self) -> CHText:
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return CHText(self._ch_text)
+
+    def __len__(self):
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return len(self._ch_text)
+
+    def __eq__(self, other):
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+
+        return self._ch_text.__eq__(other)
+
+    def __iadd__(self, other) -> CHText:
+        return self + other
+
+    def __add__(self, other) -> CHText:
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return self._ch_text + other
+
+    def __radd__(self, other) -> CHText:
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return other + self._ch_text
+
+    def __getitem__(self, index) -> CHText:
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return self._ch_text.__getitem__(index)
+
+    def fixed_len(self, desired_len) -> CHText:
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return self._ch_text.fixed_len(desired_len)
+
+    def __format__(self, format_spec):
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        return self._ch_text.__format__(format_spec)
+
+    def __eq__(self, other):
+        if self._ch_text is None:
+            self._ch_text = self.ppobj.make_ch_text(self.cp)
+        if isinstance(other, CHTextResult):
+            other = other.get_ch_text()
+        return self._ch_text.__eq__(other)
+
+    def __iter__(self):
+        return self.ppobj.gen_ch_lines(self.cp)
+
+
 #########################
 # generic pretty-printing
 
@@ -44,31 +128,35 @@ class PrettyPrinter(PaletteUser):
         """
         self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
 
-    def __call__(self, obj_to_print) -> CHText:
+    def __call__(self, obj_to_print) -> CHTextResult:
         """obj_to_print -> Pretty-Printable object.
 
         The result can be converted to string or printed using standard 'print'
         or ak.color.sh_print methods.
         """
-        return CHText("\n").join(self.gen_pplines(obj_to_print))
+        # palette = self._mk_palette(
+        #     colors_config, no_color, alt_palette_class)
+        palette = self._mk_palette(None, False, None)
+        ppobj = _PrettyPrinterTextGen(self, obj_to_print)
+        return CHTextResult(ppobj, palette)
 
     def gen_pplines(
         self, obj_to_print,
         colors_config=None, no_color=False, alt_palette_class=None,
     ) -> Iterator[CHText]:
         """Generate lines of colored text - pretty representation of the object."""
-        local_palette = self._mk_palette(
+        palette = self._mk_palette(
             colors_config, no_color, alt_palette_class)
-        yield from self._gen_ch_lines(local_palette, obj_to_print)
+        yield from self._gen_ch_lines(palette, obj_to_print)
 
-    def _gen_ch_lines(self, colors, obj_to_print) -> Iterator[CHText]:
+    def _gen_ch_lines(self, cp, obj_to_print) -> Iterator[CHText]:
         """obj_to_print -> CHText objects.
 
         Each CHText corresponds to one line of the result.
         """
         line_chunks = []
 
-        for chunk in self._gen_ch_chunks_for_obj(colors, obj_to_print, offset=0):
+        for chunk in self._gen_ch_chunks_for_obj(cp, obj_to_print, offset=0):
             if chunk is None:
                 # indicator of the new line
                 yield CHText.make(line_chunks)
@@ -267,6 +355,20 @@ class PrettyPrinter(PaletteUser):
         return any(value is keyword for keyword in [True, False, None])
 
 
+class _PrettyPrinterTextGen:
+    # PPObj-looking object which produces pretty-print results
+    __slots__ = 'pretty_printer', 'obj_to_print'
+    def __init__(self, pretty_printer, obj_to_print):
+        self.pretty_printer = pretty_printer
+        self.obj_to_print = obj_to_print
+
+    def make_ch_text(self, cp):
+        return CHText("\n").join(self.gen_ch_lines(cp))
+
+    def gen_ch_lines(self, cp):
+        return self.pretty_printer._gen_ch_lines(cp, self.obj_to_print)
+
+
 class PPObj(PaletteUser):
     """Base class for pretty-printable objects.
 
@@ -299,8 +401,8 @@ class PPObj(PaletteUser):
 
     def ch_text(
         self, colors_conf=None, no_color=False, alt_palette_class=None,
-    ) -> CHText:
-        """Return CHText - colored representation of self.
+    ) -> CHTextResult:
+        """Return CHTextResult - colored representation of self.
 
         Arguments:
         - colors_conf: ak.color.ColorsConfig object, global congig is used by default
@@ -308,20 +410,8 @@ class PPObj(PaletteUser):
         - alt_palette_class: Palette class to be used instead of the default
             palette class (specified in cls.PALETTE_CLASS)
         """
-        return self.make_ch_text(
-            self._mk_palette(colors_conf, no_color, alt_palette_class))
-
-    def ch_lines(
-        self, colors_conf=None, no_color=False, alt_palette_class=None,
-    ) -> Iterator[CHText]:
-        """Generates CHText objects - colored representation of self.
-
-        This method should produce CHText objects corresponding to the separate
-        lines of CHText produced by 'ch_text'.
-
-        Arguments: see arguments description of 'ch_text' method
-        """
-        yield from self.gen_ch_lines(
+        return CHTextResult(
+            self,
             self._mk_palette(colors_conf, no_color, alt_palette_class))
 
     def make_ch_text(self, cp: Palette) -> CHText:

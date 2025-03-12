@@ -661,8 +661,6 @@ class CHText:
         self.scrlen += len(chunk.text)
 
 
-
-
 class ColorFmt:
     """Objects of this class produce text with specified color."""
 
