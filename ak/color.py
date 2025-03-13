@@ -268,6 +268,7 @@ class _CHTextChunk:
         return CHText(self).__format__(format_spec)
 
 
+# !!!! delete
 #class SHText(_CTText):
 #    """Syntax-Highlighted text.
 #
@@ -1716,22 +1717,37 @@ class PaletteUser:
     PALETTE_CLASS = None
 
     @classmethod
-    def _mk_palette(cls, colors_conf, no_color, alt_palette_class):
+    def _mk_palette(cls, palette, no_color, colors_conf):
         # methods which produce colored text should accept three optional
         # agruments which control the colors of the result:
-        # - colors_conf: global colors config is used by default
+        # - palette: either Palette-derived class or an object of such class
         # - no_color: instructs to produce text without color effects,
-        #   False by default
-        # - alt_palette_class: alternative Palette class to be used
+        #     False by default
+        # - colors_conf: global colors config is used by default. Explicitely
+        #     used for testing purposes only
         #
         # This method provides standard way to create a palette object from
         # these arguments.
 
+        if palette is not None:
+            if isinstance(palette, Palette):
+                # ready-to-use palette object is provided
+                assert colors_conf is None, (
+                    f"Error creating Palette object. Both ready to use palette "
+                    f"object {palette=} of type {type(palette)} and {colors_conf=} "
+                    f"arguments are provided")
+                if no_color:
+                    palette = type(palette)(no_color=True)
+                return palette
+            else:
+                assert isinstance(palette, type), (
+                    f"unexpected {palette=} argument. Expected either "
+                    f"Palette-derived class or an object of such class")
+
         assert cls.PALETTE_CLASS is not None, (
             f"'PALETTE_CLASS' is not implemented in {str(cls)}")
-        palette_class = alt_palette_class or cls.PALETTE_CLASS
-        if colors_conf is None:
-            colors_conf = get_global_colors_config()
+
+        palette_class = palette or cls.PALETTE_CLASS
 
         return palette_class(colors_conf, no_color)
 

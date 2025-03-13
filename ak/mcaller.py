@@ -17,6 +17,7 @@ console.
 import inspect
 import logging
 from functools import wraps
+from ak.color import CHText
 from ak.ppobj import PPWrap
 from ak.hdoc import h_doc, BoundMethodNotes
 
@@ -121,7 +122,6 @@ class _Meta_MethodsCaller(type):
 class PPMethod(PPWrap):
     """Pretty-printable object with custom pprint method.
 
-    !!!!!
     The _pprint method may be either a usual method or generator,
     which generates lines of pretty text.
     """
@@ -129,16 +129,12 @@ class PPMethod(PPWrap):
         self.r = obj_to_print
         self.pp_method = pp_method
 
-    # !!!!!
-    def ch_lines(
-        self, colors_config=None, no_color=False, alt_local_syntax=None,
-    ):
-        """Generate lines of pretty text."""
-        # !!! it returns usual str. not good!!!
+    def __str__(self):
         if inspect.isgeneratorfunction(self.pp_method):
-            yield from self.pp_method(self.r)
+            return str(
+                CHText("\n").join(self.pp_method(self.r)))
         else:
-            yield self.pp_method(self.r)
+            return str(self.pp_method(self.r))
 
 
 class MCallerMetaGeneral:

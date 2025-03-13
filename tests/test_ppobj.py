@@ -1163,20 +1163,20 @@ class TestByLineTableOerations(unittest.TestCase):
             CHText("\n").join(
                 t0_line + t1_line
                 for t0_line, t1_line in zip(
-                    table.ch_text(alt_palette_class=RedTablePalette),
+                    table.ch_text(palette=RedTablePalette),
                     table.ch_text(),
                 )))
-        print(result_0)
+        # print(result_0)
 
         # red and green tables side-by-side
         result_1 = str(
             CHText("\n").join(
                 t0_line + t1_line
                 for t0_line, t1_line in zip(
-                    table.ch_text(alt_palette_class=RedTablePalette),
+                    table.ch_text(palette=RedTablePalette),
                     table.ch_text(),
                 )))
-        print(result_1)
+        # print(result_1)
 
         # use palette object instead of palette class
         red_palette = RedTablePalette()
@@ -1187,7 +1187,7 @@ class TestByLineTableOerations(unittest.TestCase):
                     table.ch_text(),
                     table.ch_text(palette=red_palette),
                 )))
-        print(result_2)
+        # print(result_2)
 
         # not colored tables
         result_3 = str(
@@ -1197,7 +1197,7 @@ class TestByLineTableOerations(unittest.TestCase):
                     table.ch_text(no_color=True),
                     table.ch_text(no_color=True),
                 )))
-        print(result_3)
+        # print(result_3)
 
         result_0 = CHText.strip_colors(result_0)
         result_1 = CHText.strip_colors(result_1)

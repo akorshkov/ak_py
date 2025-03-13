@@ -104,7 +104,7 @@ class TestMCallerClass(unittest.TestCase):
         self.assertEqual(raw_result['auth'], "x3x")
 
         # make sure custom pprinter is used
-        repr_str = str(result.ch_text())
+        repr_str = str(result)
         self.assertEqual(repr_str, "self repr string")
 
         # 4. check get_mcaller_meta direct call
@@ -122,6 +122,5 @@ class TestMCallerClass(unittest.TestCase):
         # 6. method with generator pprint
         result = tst_obj.method_6(17)
 
-        # repr_str = result.get_pptext() !!!
         repr_str = str(result)
         self.assertEqual("line1\nline2", repr_str)

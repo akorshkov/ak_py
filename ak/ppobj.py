@@ -17,7 +17,7 @@ CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
 
 
 class CHTextResult:
-    """CHTextResult can be used as usual CHText object, or as iterator.
+    """CHTextResult can be used either as a usual CHText object, or as iterator.
 
     Single PPObj object can either produce a single CHText or generate multiple
     CHText objects (usually corresponding to single lines of the multi-line text).
@@ -128,26 +128,26 @@ class PrettyPrinter(PaletteUser):
         """
         self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
 
-    def __call__(self, obj_to_print) -> CHTextResult:
-        """obj_to_print -> Pretty-Printable object.
+    def __call__(
+        self, obj_to_print, *,
+        palette=None,
+        no_color=False,
+        colors_conf=None,
+    ) -> CHTextResult:
+        """obj_to_print -> pretty-printed colored text.
 
-        The result can be converted to string or printed using standard 'print'
-        or ak.color.sh_print methods.
+        Arguments:
+        - obj_to_print: object to print
+        - palette: optional PrettyPrinter.PPPalette-derived class or an object of
+            such class, contains colors to be used
+        - no_color: optional bool; True indicates that produced text will contain
+            no colors
+        - colors_conf: optional, global colors config. Is used for testing
+            purposes only
         """
-        # palette = self._mk_palette(
-        #     colors_config, no_color, alt_palette_class)
-        palette = self._mk_palette(None, False, None)
+        palette = self._mk_palette(palette, no_color, colors_conf)
         ppobj = _PrettyPrinterTextGen(self, obj_to_print)
         return CHTextResult(ppobj, palette)
-
-    def gen_pplines(
-        self, obj_to_print,
-        colors_config=None, no_color=False, alt_palette_class=None,
-    ) -> Iterator[CHText]:
-        """Generate lines of colored text - pretty representation of the object."""
-        palette = self._mk_palette(
-            colors_config, no_color, alt_palette_class)
-        yield from self._gen_ch_lines(palette, obj_to_print)
 
     def _gen_ch_lines(self, cp, obj_to_print) -> Iterator[CHText]:
         """obj_to_print -> CHText objects.
@@ -166,10 +166,6 @@ class PrettyPrinter(PaletteUser):
 
         if line_chunks:
             yield CHText.make(line_chunks)
-
-    def get_pptext(self, obj_to_print) -> str:
-        """obj_to_print -> pretty string."""
-        return "\n".join(self.gen_pplines(obj_to_print))
 
     def _gen_ch_chunks_for_obj(
         self, cp: PPPalette, obj_to_print, offset=0,
@@ -400,19 +396,20 @@ class PPObj(PaletteUser):
         return str(self.ch_text())
 
     def ch_text(
-        self, colors_conf=None, no_color=False, alt_palette_class=None,
+        self, *, palette=None, no_color=False, colors_conf=None,
     ) -> CHTextResult:
         """Return CHTextResult - colored representation of self.
 
         Arguments:
-        - colors_conf: ak.color.ColorsConfig object, global congig is used by default
-        - no_color: instructs to produce text without color effects, False by default
-        - alt_palette_class: Palette class to be used instead of the default
-            palette class (specified in cls.PALETTE_CLASS)
+        - palette: (optional) Either Palette-derived class or an object of such type
+        - no_color: instructs to produce text without color effects,
+            False by default
+        - colors_conf: global colors config is used by default. Explicitely
+            used for testing purposes only
         """
         return CHTextResult(
             self,
-            self._mk_palette(colors_conf, no_color, alt_palette_class))
+            self._mk_palette(palette, no_color, colors_conf))
 
     def make_ch_text(self, cp: Palette) -> CHText:
         """Return CHText - colored representation of self"""
@@ -439,7 +436,7 @@ pp = PrettyPrinter()
 #########################
 # pretty-printing json-like python objects
 
-class PPWrap(PPObj):
+class PPWrap:
     """Pretty-printable wrapper for python json-like structures.
 
     To be used in interactive console.
@@ -462,6 +459,9 @@ class PPWrap(PPObj):
     def __init__(self, obj_to_print):
         self.r = obj_to_print
 
+    def __str__(self):
+        return str(self._PPRINTER(self.r))
+
     def __repr__(self):
         # this method does not return text but prints it because the
         # text is supposed to be colored, and python console displays
@@ -469,20 +469,6 @@ class PPWrap(PPObj):
         # in this case) instead of the colored text.
         print(str(self))
         return ""
-
-    def ch_text(
-        self, colors_conf=None, no_color=False, alt_palette_class=None,
-    ) -> CHText:
-        """Return CHText - colored representation of self"""
-        return CHText("\n").join(self.ch_lines(
-            colors_conf, no_color, alt_palette_class))
-
-    def ch_lines(
-        self, colors_conf=None, no_color=False, alt_palette_class=None,
-    ) -> Iterator[CHText]:
-        """Generates CHText objects - colored representation of self"""
-        yield from self._PPRINTER.gen_pplines(
-            self.r, colors_conf, no_color, alt_palette_class)
 
 
 #########################
