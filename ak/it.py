@@ -10,13 +10,7 @@ from . import ppobj
 
 
 class _PPrintCommand:
-    """Pretty-print console command.
-
-    !!!!! there is no PPOBjBase any more !!!!
-    If object to print is pretty-printable (instance of ppobj.PPObjBase),
-    the object generates own description. For other objects generic
-    PrettyPrinter is used.
-    """
+    """Pretty-print console command."""
 
     # !!!! need tests
     _GLOBAL_PP = None

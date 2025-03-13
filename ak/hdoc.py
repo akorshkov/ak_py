@@ -51,7 +51,7 @@ class LLImpl(PaletteUser):
         self.locals_dict = locals_dict
         self._c = self._mk_palette(None, None, None)
 
-    # !!! rename
+    # !!! is not used anywhere. Need tests
     def gen_sh_lines(self) -> Iterator[CHText]:
         # generate lines (CHText values) which make a summary of
         # variables in self.locals_dict
@@ -180,11 +180,10 @@ class HCommand(PaletteUser):
         # It's a separate method to be used in tests.
         return "\n".join(
             str(colored_text)
-            for colored_text in self._gen_sh_lines(
+            for colored_text in self._gen_ch_lines(
                 obj, filt, dets_level=self.dets_level, fmt_oneline=False))
 
-    # rename !!!
-    def _gen_sh_lines(self, obj, filt, dets_level, fmt_oneline) -> Iterator[CHText]:
+    def _gen_ch_lines(self, obj, filt, dets_level, fmt_oneline) -> Iterator[CHText]:
         # generate lines of text which make output of 'h' command
 
         # Object is h-doc capable if it has '_h_doc' attribute.
@@ -597,7 +596,7 @@ class HDocItemCls(HDocItem):
         # generate description of attributes
         if hasattr(obj, '_HDOC_ATTRS'):
             is_class = inspect.isclass(obj)
-            attrs_hdocs = []  # [(attr_name, sh_descr), ]  !!! not sh!
+            attrs_hdocs = []  # [(attr_name, CHText), ]
             for attr_name, attr_descr in obj._HDOC_ATTRS:
                 include_attr = True
                 attr_is_available = True

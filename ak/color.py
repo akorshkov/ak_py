@@ -268,51 +268,6 @@ class _CHTextChunk:
         return CHText(self).__format__(format_spec)
 
 
-# !!!! delete
-#class SHText(_CTText):
-#    """Syntax-Highlighted text.
-#
-#    Direct creation of CHText in application code may be inconvenient
-#    bacause actual colors to be used depend on configuration and not
-#    not be easily available.
-#
-#    Low-level code creates text specifying not names of actual colors, but
-#    names on syntaxes.
-#
-#    sh_descr = SHText("Result is: ", ("OK", "success"), ". Grats!")
-#
-#    Later on use Palette object to produce colored text:
-#
-#    print(some_palette(sh_descr))
-#    """
-#    __slots__ = tuple()
-#
-#    def __init__(self, *parts):
-#        """Construct SHText.
-#
-#        Each arguments may be:
-#          - a simple string
-#          - another object of this class
-#          - (syntax_name, text) pair
-#        """
-#        super().__init__()
-#
-#        for part in parts:
-#            self += self._mk_init_item(part)
-#
-#    @classmethod
-#    def _mk_init_item(cls, part):
-#        # constructor helper
-#        if isinstance(part, (list, tuple)):
-#            # ("SYNTAX", "text") pair is expected
-#            if len(part) != 2:
-#                raise ValueError(
-#                    f'unexpected item: {part}. Expected ("SYNTAX", text) pair')
-#            syntax, text = part
-#            return cls.Chunk(syntax, text)
-#        return part
-
-
 class CHText:
     """Colored text. Consists of several mono-colored parts."""
 
