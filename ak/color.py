@@ -1613,7 +1613,7 @@ class CompoundPalette(Palette):
             (EnumPalette, "context"): CustomizedEnumPaletteClass
         }
 
-    table_object.ch_text(alt_local_palette=CustomizedTablePalette)
+    table_object.ch_fmt(palette=CustomizedTablePalette)
 
     Note, that Table class does not know about enums and it's palettes.
     When the table produces the text for a cell it sees that the the cell

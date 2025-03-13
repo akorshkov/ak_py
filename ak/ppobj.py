@@ -377,25 +377,25 @@ class PPObj(PaletteUser):
     work with: the length of the string is not equal to the number of printable
     characters.
 
-    PPObj implements two methods:
-        - ch_text  - returns ak.color.CHText object
-        - ch_lines - generates ak.color.CHText objects
+    In order to mae it possible to format colored text CHText is used.
+    CHText object keeps track of printable and not-printable characters, so that
+    it is possible to use it in f-strings with width format specifiers.
 
-    CHText object keeps track of printable and not-printable
-    characters, so that it is possible to use it in f-strings with width format
-    specifiers.
+    PPObj.ch_fmt() method returns ak.color.CHTextResult object. This object is
+    similar to CHText, but can be used as iterator of CHText objects (usualy
+    corresponding to the lines of multi-line text)
 
-    Default implementtion of 'ch_text' and 'ch_lines' methods create a Palette
-    object and call 'make_ch_text' and 'gen_ch_lines' methods, which should be
-    implemented in the derived class.
+    PPObj-derived class should implement at least one of the two methods:
+    - make_ch_text(cp: Palette) -> CHText
+    - gen_ch_lines(cp: Palette) -> Iterator[CHText]
 
     (See PaletteUser class documentation for more details).
     """
 
     def __str__(self):
-        return str(self.ch_text())
+        return str(self.ch_fmt())
 
-    def ch_text(
+    def ch_fmt(
         self, *, palette=None, no_color=False, colors_conf=None,
     ) -> CHTextResult:
         """Return CHTextResult - colored representation of self.

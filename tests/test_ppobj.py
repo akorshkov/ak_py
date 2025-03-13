@@ -1107,7 +1107,7 @@ class TestByLineTableOerations(unittest.TestCase):
 
         result_whole = str(table)
 
-        result_by_lines = str(CHText("\n").join(table.ch_text()))
+        result_by_lines = str(CHText("\n").join(table.ch_fmt()))
 
         self.assertEqual(result_whole, result_by_lines)
 
@@ -1126,7 +1126,7 @@ class TestByLineTableOerations(unittest.TestCase):
         result = str(
             CHText("\n").join(
                 t0_line + t1_line
-                for t0_line, t1_line in zip(table.ch_text(), table.ch_text())))
+                for t0_line, t1_line in zip(table.ch_fmt(), table.ch_fmt())))
 
         # print(result)
         # It is expected to look like this:
@@ -1163,8 +1163,8 @@ class TestByLineTableOerations(unittest.TestCase):
             CHText("\n").join(
                 t0_line + t1_line
                 for t0_line, t1_line in zip(
-                    table.ch_text(palette=RedTablePalette),
-                    table.ch_text(),
+                    table.ch_fmt(palette=RedTablePalette),
+                    table.ch_fmt(),
                 )))
         # print(result_0)
 
@@ -1173,8 +1173,8 @@ class TestByLineTableOerations(unittest.TestCase):
             CHText("\n").join(
                 t0_line + t1_line
                 for t0_line, t1_line in zip(
-                    table.ch_text(palette=RedTablePalette),
-                    table.ch_text(),
+                    table.ch_fmt(palette=RedTablePalette),
+                    table.ch_fmt(),
                 )))
         # print(result_1)
 
@@ -1184,8 +1184,8 @@ class TestByLineTableOerations(unittest.TestCase):
             CHText("\n").join(
                 t0_line + t1_line
                 for t0_line, t1_line in zip(
-                    table.ch_text(),
-                    table.ch_text(palette=red_palette),
+                    table.ch_fmt(),
+                    table.ch_fmt(palette=red_palette),
                 )))
         # print(result_2)
 
@@ -1194,8 +1194,8 @@ class TestByLineTableOerations(unittest.TestCase):
             CHText("\n").join(
                 t0_line + t1_line
                 for t0_line, t1_line in zip(
-                    table.ch_text(no_color=True),
-                    table.ch_text(no_color=True),
+                    table.ch_fmt(no_color=True),
+                    table.ch_fmt(no_color=True),
                 )))
         # print(result_3)
 
