@@ -1427,6 +1427,117 @@ class TestPalete(unittest.TestCase):
         # cleanup global config
         set_global_colors_config(None)
 
+    def test_synced_palettes(self):
+        """'synced' palettes - palettes which are always synced with global conf."""
+
+        # 0. prepare and set a minimal colors config
+        class MyMinorColorsConfig(ColorsConfig):
+            BUILT_IN_CONFIG = {
+                "SYNT_1": "SYNT_X_2",  # "SYNT_X_2" will be defined later
+                "SYNT_2": "YELLOW",
+                "SYNT_3": "BLUE",
+            }
+
+        colors_conf = MyMinorColorsConfig()
+
+        set_global_colors_config(colors_conf)
+
+        test_text = "test_text"
+
+        # 1. prepare palette class and objects
+        class TstPalette(Palette):
+            s1 = ConfColor("SYNT_1")
+            s2 = ConfColor("SYNT_2")
+            s3 = ConfColor("SYNT_3")
+
+        orig_palette = TstPalette()
+        synced_palette = TstPalette(synced=True)
+
+        self.assertIsNot(orig_palette, synced_palette)
+
+        # 2. both palettes are the same for now
+        self.assertEqual(orig_palette.s1(test_text), ColorFmt(None)(test_text))
+        self.assertEqual(orig_palette.s2(test_text), ColorFmt("YELLOW")(test_text))
+        self.assertEqual(orig_palette.s3(test_text), ColorFmt("BLUE")(test_text))
+
+        self.assertEqual(orig_palette.s1(test_text), synced_palette.s1(test_text))
+        self.assertEqual(orig_palette.s2(test_text), synced_palette.s2(test_text))
+        self.assertEqual(orig_palette.s3(test_text), synced_palette.s3(test_text))
+
+        # 3. make constructor returns cached palettes
+        new_orig_palette = TstPalette()
+        new_synced_palette = TstPalette(synced=True)
+
+        self.assertIs(new_orig_palette, orig_palette)
+        self.assertIs(new_synced_palette, synced_palette)
+
+        # 4. update the global config
+        # In order to update the config let's register another Palette class
+        class AnotherPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                'SYNT_X_2': 'RED'
+            }
+
+        _ = AnotherPalette()
+
+        # 5. as a result of config update now syntax 'SYNT_1' corresponds to the
+        # red color
+        self.assertEqual(
+            orig_palette.s1(test_text), ColorFmt(None)(test_text),
+            "usual palette is not updated when config changes"
+        )
+        self.assertEqual(
+            synced_palette.s1(test_text), ColorFmt("RED")(test_text),
+            "synced palette updates automatically when config changes"
+        )
+
+        # 6. check if cached palette objects are used after the config update
+        new_orig_palette = TstPalette()
+        new_synced_palette = TstPalette(synced=True)
+
+        self.assertIsNot(
+            new_orig_palette, orig_palette,
+            "different object is expected as the config changed"
+        )
+        self.assertIs(
+            new_synced_palette, synced_palette,
+            "synced palette is always the same object"
+        )
+
+        # 7. use different way to modify the global config. Set new one explicitely.
+        class DifferentConfigClass(ColorsConfig):
+            BUILT_IN_CONFIG = {
+                "SYNT_1": "GREEN",
+                "SYNT_2": "CYAN",
+                "SYNT_3": "MAGENTA",
+            }
+
+        colors_conf = DifferentConfigClass()
+
+        set_global_colors_config(colors_conf)
+
+        # 8. immediately after update synced palette should start using new colors
+        self.assertEqual(
+            synced_palette.s1(test_text), ColorFmt("GREEN")(test_text),
+            "synced palette updates automatically when config changes"
+        )
+
+        # 9. make sure cached object is used for synced palette
+        new_orig_palette = TstPalette()
+        new_synced_palette = TstPalette(synced=True)
+
+        self.assertIsNot(
+            new_orig_palette, orig_palette,
+            "different object is expected as the config changed"
+        )
+        self.assertIs(
+            new_synced_palette, synced_palette,
+            "synced palette is always the same object"
+        )
+
+        # cleanup global config
+        set_global_colors_config(None)
+
     def test_palette_report(self):
         """Test creation of palettes report."""
         global_conf = self.TstColorsConfig()
