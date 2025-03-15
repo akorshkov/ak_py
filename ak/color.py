@@ -1041,8 +1041,6 @@ class ColorsConfig:
         'syntax_map',
         'registered_sources',
         'no_color',
-        'global_palette',
-        '_cached_palette',
         '_cache',
     )
 
@@ -1096,8 +1094,6 @@ class ColorsConfig:
         if init_config is None:
             init_config = {}
         self.no_color = no_color
-        self.global_palette = None
-        self._cached_palette = None
 
         self._cache = {}
         self.registered_sources = set()
@@ -1127,7 +1123,7 @@ class ColorsConfig:
         if not new_items:
             return
 
-        self._cached_palette = None
+        any_modifications = False
 
         if any(synt_id not in self.syntax_map for synt_id in new_items):
             self._cache = {}
@@ -1139,6 +1135,7 @@ class ColorsConfig:
                 continue
             self.syntax_map[synt_id] = _ColorConfColorDescr(
                 synt_id, init_str, src_obj_descr, self.no_color)
+            any_modifications = True
 
         # Information about new syntax items has been registered
         # But construction of some syntax items may be not finished yet (items
@@ -1188,13 +1185,16 @@ class ColorsConfig:
                         break
                     path.append(syntax_color.synt_id)
                     syntax_color = self.syntax_map[syntax_color.parent_syntax_id]
-            if not new_resolved:
+            if new_resolved:
+                any_modifications = True
+            else:
                 # no more items can be resolved
                 break
 
-        if self.global_palette is not None:
-            # let the global palette reinitialize itself after the config updated
-            self.global_palette.set_colors_conf(self)
+        if any_modifications and self is _GLOBAL_COLORS_CONF:
+            # self is the global config, so it is necessary to update all the
+            # synced palette objects
+            set_global_colors_config(self)
 
     def put_into_cache(self, cache_key, the_obj):
         """Put some object to the ColorsConfig cache.
@@ -1243,9 +1243,7 @@ class ColorsConfig:
 
     def get_palette(self) -> 'GlobalPalette':
         """Get Palette which contains all the syntaxes in this ColorsConfig."""
-        if self._cached_palette is None:
-            self._cached_palette = GlobalPalette(colors_conf=self)
-        return self._cached_palette
+        return GlobalPalette(colors_conf=self)
 
     def color_conf_component_is_registered(self, src_obj) -> bool:
         """Check if Palette object is registered in the ColorsConfig"""
@@ -1350,7 +1348,10 @@ class _PaletteMeta(type):
     #   of this class was already created using the given config
     # 2. Substitutes ConfColor items in class declaration with callables which
     #   return corresponding ColorFmt objects.
-    def __call__(palette_class, colors_conf=None, no_color=False, _local_colors=None):
+    def __call__(
+        palette_class, colors_conf=None, no_color=False,
+        _local_colors=None, *, synced=False,
+    ):
         """Intercept construction of the Palette object.
 
         Does not create a new object of palette_class if matching object already
@@ -1359,23 +1360,39 @@ class _PaletteMeta(type):
         assert _local_colors is None, (
             f"Error calling constructor of {palette_class}. _local_colors "
             f"argument must not be specified explicitely.")
+        if synced:
+            assert colors_conf is None, (
+                f"Error calling constructor of {palette_class}. colors_conf "
+                f"argument must not be specified because synced=True and the "
+                f"palette will be constructed and always synced with the global "
+                f"colors config.")
+
+        if synced:
+            existing_synced_palette = _GSYNCED_PALETTES.get(palette_class)
+            if existing_synced_palette is not None:
+                return existing_synced_palette
 
         if colors_conf is None:
             colors_conf = get_global_colors_config()
 
-        existing_palette = palette_class._get_existing_palette(colors_conf, no_color)
-        if existing_palette is not None:
-            return existing_palette
+        if not synced:
+            existing_palette = palette_class._get_existing_palette(
+                colors_conf, no_color)
+            if existing_palette is not None:
+                return existing_palette
 
         _local_colors = palette_class._prepare_local_colors(colors_conf, no_color)
 
         # there is no existing palette of this class. Need to create a new one
         palette = palette_class.__new__(
-            palette_class, colors_conf, no_color, _local_colors)
+            palette_class, colors_conf, no_color, _local_colors, synced=synced)
         palette_class.__init__(
-            palette, colors_conf, no_color, _local_colors)
+            palette, colors_conf, no_color, _local_colors, synced=synced)
 
-        palette_class._store_palette_in_cache(palette, colors_conf, no_color)
+        if synced:
+            palette = _GSYNCED_PALETTES.setdefault(palette_class, palette)
+        else:
+            palette_class._store_palette_in_cache(palette, colors_conf, no_color)
 
         return palette
 
@@ -1383,9 +1400,10 @@ class _PaletteMeta(type):
         # _LOCAL_SYNTAX - {local_synt_name: syntax_id_in_colors_conf}
         # contents of this dictionary is created based on 'ConfColor' items in
         # the classdict.
-        assert '_LOCAL_SYNTAX' not in classdict, (
-            f"Error in {classname} class declaration. '_LOCAL_SYNTAX' must not "
-            f"be declared explicitly")
+        for attr in ['_LOCAL_SYNTAX', '_PALETTE_NO_COLOR']:
+            assert attr not in classdict, (
+                f"Error in {classname} class declaration. '{attr}' must not "
+                f"be declared explicitly")
 
         local_syntax_map = {}
         # In order to implement inheritance it is necessary to combine this data
@@ -1401,6 +1419,7 @@ class _PaletteMeta(type):
 
         classdict = {n: v for n, v in classdict.items() if n not in local_syntax_map}
         classdict['_LOCAL_SYNTAX'] = local_syntax_map
+        classdict['_PALETTE_NO_COLOR'] = None
 
         return type.__new__(meta, classname, supers, classdict)
 
@@ -1442,14 +1461,14 @@ class Palette(metaclass=_PaletteMeta):
     # init rules of the new global syntaxes introduced by this class
     SYNTAX_DEFAULTS = None  # {synt_id: default_color}
 
-    # cached 'no-color' palette object of this class
-    _PALETTE_NO_COLOR = None  # {local_synt_id: (synt_id, ColorFmt)}
-
     # default syntax ID which is used for usual text not corresponding to any
     # syntax id.
     text = ConfColor(ColorsConfig.DFLT_SYNTAX_ID)
 
-    def __init__(self, colors_conf=None, no_color=False, _local_colors=None):
+    def __init__(
+        self, colors_conf=None, no_color=False, _local_colors=None,
+        synced=False,
+    ):
         """Constructor of Palette.
 
         Arguments:
@@ -1466,6 +1485,7 @@ class Palette(metaclass=_PaletteMeta):
         # pylint: disable=unused-argument
         assert self._LOCAL_SYNTAX.keys() == _local_colors.keys()
 
+        self._synced = synced
         self._local_colors = _local_colors
 
         for n, v in self._local_colors.items():
@@ -1521,6 +1541,12 @@ class Palette(metaclass=_PaletteMeta):
         if x is None:
             return self.text
         return x[1]
+
+    def _sync_with_config(self, colors_conf):
+        # update self after the state of the global config has changed
+        assert self._synced
+        for accessor_name, synt_id in self._LOCAL_SYNTAX.items():
+            setattr(self, accessor_name, colors_conf.get_color(synt_id))
 
     @classmethod
     def register_in_colors_conf(cls, colors_conf):
@@ -1584,8 +1610,12 @@ class CompoundPalette(Palette):
     """
     SUB_PALETTES_MAP = None  # {(Palette, "modifier name"): AltLocalPalette}
 
-    def __init__(self, colors_conf=None, no_color=False, _local_colors=None):
-        super().__init__(colors_conf, no_color, _local_colors)
+    def __init__(
+        self, colors_conf=None, no_color=False, _local_colors=None,
+        synced=False,
+    ):
+        assert not synced, "synced CompoundPalette are not supported"
+        super().__init__(colors_conf, no_color, _local_colors, synced=synced)
         self._no_color = no_color
         self.colors_conf = colors_conf
         self._sub_palettes = {}
@@ -1606,7 +1636,8 @@ class CompoundPalette(Palette):
 class GlobalPalette(Palette):
     """Object of this class provides access to all the colors in the global config.
 
-    The idea is that it is possible to 
+    ak.color module contains a synced instance of this class, so that it
+    is possible to
 
         import ak.color.global_palette as gp
 
@@ -1629,23 +1660,14 @@ class GlobalPalette(Palette):
     warn = ConfColor("WARN")
     error = ConfColor("ERROR")
 
-    # correspondence of the standard syntaxes accessors names to syntax names in
-    # the config
-    BUILTIN_ATTRS_MAP = {
-        "text": "TEXT",
-        "name": "NAME",
-        "keyword": "KEYWORD",
-        "ok": "OK",
-        "warn": "WARN",
-        "error": "ERROR",
-    }
-
-    def __init__(self, colors_conf=None, no_color=None, _local_colors=None):
-        """Constructor of CompoundPalette.
+    def __init__(
+        self, colors_conf=None, no_color=None, _local_colors=None, synced=False
+    ):
+        """Constructor of GlobalPalette.
 
         Arguments are the same as arguments of Palette.
         """
-        super().__init__(colors_conf, no_color, _local_colors)
+        super().__init__(colors_conf, no_color, _local_colors, synced=synced)
         self._colors_conf = colors_conf
 
     def get_color(self, synt_id) -> ColorFmt:
@@ -1656,11 +1678,10 @@ class GlobalPalette(Palette):
         """same behavior as get_color method"""
         return self.get_color(index)
 
-    def set_colors_conf(self, colors_conf):
-        """Update the global palette after the global colors config changed."""
+    def _sync_with_config(self, colors_conf):
+        """Update the global palette after the global colors config has changed."""
         self._colors_conf = colors_conf
-        for attr_name, synt_id in self.BUILTIN_ATTRS_MAP.items():
-            setattr(self, attr_name, colors_conf.get_color(synt_id))
+        super()._sync_with_config(colors_conf)
 
 
 class PaletteUser:
@@ -1707,13 +1728,6 @@ class PaletteUser:
         return palette_class(colors_conf, no_color)
 
 
-# global_palette is a palette object which provides color formatters bases
-# on a current state of the global config. (This is unlike usual palette objects
-# which are constructed based on config and do not change it's behavior after that).
-# The global_palette object may be imported from ak.color during module
-# initialization, that is even before the global colors config is initialized.
-global_palette = GlobalPalette(ColorsConfig())
-
 
 def get_global_colors_config():
     """Get global ColorsConfig.
@@ -1723,13 +1737,27 @@ def get_global_colors_config():
 
         print(get_global_colors_config().make_report())
     """
-    return global_palette._colors_conf
+    global _GLOBAL_COLORS_CONF
+    if _GLOBAL_COLORS_CONF is None:
+        _GLOBAL_COLORS_CONF = ColorsConfig()
+    return _GLOBAL_COLORS_CONF
 
 
 def set_global_colors_config(colors_config):
     """Set global ColorsConfig"""
+    global _GLOBAL_COLORS_CONF
     if colors_config is None:
         colors_config = ColorsConfig()
+    _GLOBAL_COLORS_CONF = colors_config
 
-    global_palette.set_colors_conf(colors_config)
-    colors_config.global_palette = global_palette
+    for palette in _GSYNCED_PALETTES.values():
+        palette._sync_with_config(colors_config)
+
+
+_GLOBAL_COLORS_CONF = None
+_GSYNCED_PALETTES = {}
+
+
+# global_palette is a synced palette object which provides color formatters bases
+# on a current state of the global config
+global_palette = GlobalPalette(synced=True)
