@@ -1430,6 +1430,8 @@ class TestPalete(unittest.TestCase):
     def test_synced_palettes(self):
         """'synced' palettes - palettes which are always synced with global conf."""
 
+        test_text = "test_text"
+
         # 0. prepare and set a minimal colors config
         class MyMinorColorsConfig(ColorsConfig):
             BUILT_IN_CONFIG = {
@@ -1441,8 +1443,6 @@ class TestPalete(unittest.TestCase):
         colors_conf = MyMinorColorsConfig()
 
         set_global_colors_config(colors_conf)
-
-        test_text = "test_text"
 
         # 1. prepare palette class and objects
         class TstPalette(Palette):
@@ -1534,6 +1534,50 @@ class TestPalete(unittest.TestCase):
             new_synced_palette, synced_palette,
             "synced palette is always the same object"
         )
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+    def test_synced_palette_different_colors_conf(self):
+        """Make sure synced palette registers in global config."""
+
+        test_text = "test_text"
+
+        # 0. prepare and set minimal colors config
+        class MinimalColorsConfig(ColorsConfig):
+            BUILT_IN_CONFIG = {}
+
+        colors_conf = MinimalColorsConfig()
+
+        set_global_colors_config(colors_conf)
+
+        # 1. use a primitive palette
+        class PrimitivePalette(Palette):
+            SYNTAX_DEFAULTS = {
+                "SYNT_1": "GREEN",
+            }
+            s1 = ConfColor("SYNT_1")
+
+        palette = PrimitivePalette(synced=True)
+
+        # 2. even though originally there was no configuration for "SYNT_1" in
+        # the config, it should be there now (as palette has been registered in
+        # the config)
+        ct_0 = palette.s1(test_text)
+        ct_1 = colors_conf.get_color("SYNT_1")(test_text)
+        self.assertEqual(ct_0, ColorFmt("GREEN")(test_text))
+        self.assertEqual(ct_1, ColorFmt("GREEN")(test_text))
+
+        # 3. set different global config. Again it does not know about "SYNT_1"
+        colors_conf = MinimalColorsConfig()
+        set_global_colors_config(colors_conf)
+
+        # 4. make sure the palette class of the synced palette is automatically
+        # re-registered in the config.
+        ct_0 = palette.s1(test_text)
+        ct_1 = colors_conf.get_color("SYNT_1")(test_text)
+        self.assertEqual(ct_0, ColorFmt("GREEN")(test_text))
+        self.assertEqual(ct_1, ColorFmt("GREEN")(test_text))
 
         # cleanup global config
         set_global_colors_config(None)

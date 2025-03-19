@@ -1545,6 +1545,7 @@ class Palette(metaclass=_PaletteMeta):
     def _sync_with_config(self, colors_conf):
         # update self after the state of the global config has changed
         assert self._synced
+        self.register_in_colors_conf(colors_conf)
         for accessor_name, synt_id in self._LOCAL_SYNTAX.items():
             setattr(self, accessor_name, colors_conf.get_color(synt_id))
 
