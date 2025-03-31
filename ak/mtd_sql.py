@@ -25,13 +25,6 @@ logger = logging.getLogger(__name__)
 class SqlFilterCondition:
     """Contains information required to construct condition for WHERE clause"""
 
-    __slots__ = ('field_name', 'op', 'value')
-
-    SUPPORTED_OPS = [
-        '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE',
-        '>', '<', '>=', '<=',
-    ]
-
     PLACEHOLDER_TYPE_QUESTION, PLACEHOLDER_TYPE_PERCENT_S = 0, 1
 
     # to be used when constructing WHERE cluase
@@ -67,6 +60,66 @@ class SqlFilterCondition:
             '<=': ' <= %s',
         },
     }
+
+    @classmethod
+    def make(cls, src_obj):
+        """Create SqlFilterCondition - data for a single condition of a WHERE clause.
+
+        Argument:
+        - src_obj: may be:
+            - SqlFilterCondition: object will be returned as is
+            - ("table.column", operation, value): args for SqlFilterCondition
+                constructor
+            - ("table.column", value) - same as ("table.column", "=", value)
+            - "static condition" - f.e. "table1.id = table2.parent_id"
+        """
+        if isinstance(src_obj, SqlFilterCondition):
+            return src_obj
+        if isinstance(src_obj, str):
+            # static condition, f.e. "table1.id = table2.parent_id"
+            return SqlFieldValCondition(None, src_obj, None)
+        if not isinstance(src_obj, (list, tuple)):
+            raise ValueError(
+                f"bad argument of type '{type(src_obj)}': {src_obj}")
+        n_arg_items = len(src_obj)
+        if n_arg_items == 3:
+            field_name, op, value = src_obj
+        elif n_arg_items == 2:
+            field_name, value = src_obj
+            op = '='
+        else:
+            raise ValueError(f"Invalid argument '{type(src_obj)}': {src_obj}")
+
+        return SqlFieldValCondition(field_name, op, value)
+
+    def make_text_update_values(self, values_list, placeholders_type) -> str:
+        """Prepare the part of WHERE condition.
+
+        This method returns a string corresponding to the part of the WHERE clause
+        and appends corresponding condition values to the 'values_list' argument.
+
+        Arguments:
+        - values_list: the list to append actual arguments values to
+        - placeholders_type: one of
+            SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
+            SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
+
+        Returns sql clause string and appends arguments values to 'values_list'
+        """
+        assert False, (
+            f"Method {make_text_update_values}' not implemented in "
+            f"class {type(self)}")
+
+
+class SqlFieldValCondition(SqlFilterCondition):
+    """Sql condition based of a value of a single field."""
+
+    __slots__ = ('field_name', 'op', 'value')
+
+    SUPPORTED_OPS = [
+        '=', '!=', 'IN', 'NOT IN', 'IS NULL', 'IS NOT NULL', 'LIKE', 'NOT LIKE',
+        '>', '<', '>=', '<=',
+    ]
 
     def __init__(self, field_name, op, value):
         self.field_name = field_name
@@ -104,48 +157,7 @@ class SqlFilterCondition:
                 f"unsupported sql operation '{self.op}'. Supported operations "
                 f"are: {self.SUPPORTED_OPS}")
 
-    @classmethod
-    def make(cls, src_obj):
-        """Create SqlFilterCondition - data for a single condition of a WHERE clause.
-
-        Argument:
-        - src_obj: may be:
-            - SqlFilterCondition: object will be returned as is
-            - ("table.column", operation, value): args for SqlFilterCondition
-                constructor
-            - ("table.column", value) - same as ("table.column", "=", value)
-            - "static condition" - f.e. "table1.id = table2.parent_id"
-        """
-        if isinstance(src_obj, SqlFilterCondition):
-            return src_obj
-        if isinstance(src_obj, str):
-            # static condition, f.e. "table1.id = table2.parent_id"
-            return cls(None, src_obj, None)
-        if not isinstance(src_obj, (list, tuple)):
-            raise ValueError(
-                f"bad argument of type '{type(src_obj)}': {src_obj}")
-        n_arg_items = len(src_obj)
-        if n_arg_items == 3:
-            field_name, op, value = src_obj
-        elif n_arg_items == 2:
-            field_name, value = src_obj
-            op = '='
-        else:
-            raise ValueError(f"Invalid argument '{type(src_obj)}': {src_obj}")
-
-        return cls(field_name, op, value)
-
-    def make_text_update_values(self, values_list, placeholders_type):
-        """Prepare part of WHERE condition; append necessary values to the list.
-
-        Arguments:
-        - values_list: the list to append actual arguments values to
-        - placeholders_type: one of
-            SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
-            SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
-
-        Returns sql clause string and appends arguments values to 'values_list'
-        """
+    def make_text_update_values(self, values_list, placeholders_type) -> str:
         assert isinstance(values_list, list)
         sql_clauses = self._SQL_CLAUSES[placeholders_type]
         if self.field_name is None:
@@ -173,6 +185,26 @@ class SqlFilterCondition:
         return sql
 
 
+class SqlOrCondition(SqlFilterCondition):
+    """Several SqlFilterCondition objects combined with 'OR'."""
+    __slots__ = ('operands', )
+    def __init__(self, *args, **kwargs):
+        if kwargs:
+            args = list(args)
+            args.extend(sorted(kwargs.items()))
+        self.operands = [SqlFilterCondition.make(arg) for arg in args]
+
+    def make_text_update_values(self, values_list, placeholders_type) -> str:
+        if not self.operands:
+            return "FALSE"
+        result = "("
+        result += " OR ".join(
+            op.make_text_update_values(values_list, placeholders_type)
+            for op in self.operands)
+        result += ")"
+        return result
+
+
 class SqlMethod:
     """Python wrapper of sql request."""
 
@@ -184,6 +216,8 @@ class SqlMethod:
         'fields',
         'rec_type',
     )
+
+    _or = SqlOrCondition
 
     def __init__(self, sql_select_from, *,
                  order_by=None, record_name=None, as_scalars=False):
@@ -284,6 +318,9 @@ class SqlMethod:
 
         (*) filter condition may be:
             - SqlFilterCondition object
+            - SqlMethod._or(...) - several conditions combined by 'OR'; check
+                doc of 'SqlFilterCondition.make' method for description of possible
+                values
             - ("table.column", operation, value) - check doc of SqlFilterCondition
                 for more details
             - ("table.column", value) - same as ("table.column", "=", value)

@@ -6,6 +6,9 @@ import sqlite3
 
 from ak.mtd_sql import SqlMethod
 
+# import logging
+# logging.basicConfig(level=logging.DEBUG)
+
 
 class TestSQLMethod(unittest.TestCase):
     """Test SqlMethod class."""
@@ -241,8 +244,53 @@ class TestSQLMethod(unittest.TestCase):
         self.assertEqual({1, 2}, set(recs_ids))
 
         # 16. dummy filter (does not filter anything)
-        self.assertEqual(james_id, get_users_ids.one(db, None, ('name', '=', "James")))
+        self.assertEqual(
+            james_id, get_users_ids.one(db, None, ('name', '=', "James")))
         self.assertEqual(james_id, get_users_ids.one(db, None, name="James"))
+
+    def test_complex_conditions(self):
+        """Test SqlMethod._or condition."""
+
+        db = self._make_sample_db_users()
+
+        # for this test add several more users into the table
+        db.cursor().executemany(
+            "INSERT INTO users (id, name, account_id) VALUES (?, ?, ?)",
+            [#(1, "James", 1),   - inserted previously
+             #(2, "Arnold", 1),  - inserted previously
+             (3, "Chuck", 7),
+             (4, "Harry", 7),
+             (5, "Asimov", 7),
+            ])
+        db.commit()
+
+        get_users_ids = SqlMethod(
+            "SELECT id FROM users ",
+            record_name='user',
+            as_scalars=True,
+        )
+
+        # 0. verify db state
+        recs_ids = get_users_ids.list(db)
+        self.assertEqual({1, 2, 3, 4, 5}, set(recs_ids))
+
+        # 1. single simple 'or' condition
+        recs_ids = get_users_ids.list(db, SqlMethod._or(id=2, name="Chuck"))
+        self.assertEqual({2, 3}, set(recs_ids))
+
+        recs_ids = get_users_ids.list(db, SqlMethod._or())
+        self.assertEqual(
+            set(), set(recs_ids), "zero operands combined with 'OR' is FALSE")
+
+        recs_ids = get_users_ids.list(db, SqlMethod._or(name="Chuck"))
+        self.assertEqual({3}, set(recs_ids))
+
+        # 2. a little more complex condition
+        recs_ids = get_users_ids.list(
+            db, SqlMethod._or(name="Chuck", id=2), account_id=1)
+        self.assertEqual(
+            {2}, set(recs_ids),
+            "Condition is identical to 'account_id = 1 AND (name='Chuck' OR id=2'")
 
 
 class TestRecordsMMap(unittest.TestCase):
