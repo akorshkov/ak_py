@@ -13,8 +13,14 @@ from ak.mtd_sql import SqlMethod
 class TestSQLMethod(unittest.TestCase):
     """Test SqlMethod class."""
 
-    def _make_sample_db_accounts(self):
+    def _make_sample_db_accounts(self, records=None):
         # create and populate sample sqlite db to use in tests
+        if records is None:
+            records = [
+                (1, "MI6", 7),
+                (2, "MathLab", 42),
+            ]
+
         db = sqlite3.connect(":memory:")
         cur = db.cursor()
         cur.execute(
@@ -23,15 +29,20 @@ class TestSQLMethod(unittest.TestCase):
             """)
         cur.executemany(
             "INSERT INTO accounts (id, name, status) VALUES (?, ?, ?)",
-            [(1, "MI6", 7),
-             (2, "MathLab", 42),
-            ])
+            records,
+            )
         db.commit()
 
         return db
 
-    def _make_sample_db_users(self):
+    def _make_sample_db_users(self, records=None):
         # create and populate sample sqlite db to use in tests
+        if records is None:
+            records = [
+                (1, "James", 1),
+                (2, "Arnold", 1),
+            ]
+
         db = sqlite3.connect(":memory:")
         cur = db.cursor()
         cur.execute(
@@ -40,9 +51,8 @@ class TestSQLMethod(unittest.TestCase):
             """)
         cur.executemany(
             "INSERT INTO users (id, name, account_id) VALUES (?, ?, ?)",
-            [(1, "James", 1),
-             (2, "Arnold", 1),
-            ])
+            records,
+            )
         db.commit()
 
         return db
@@ -251,18 +261,14 @@ class TestSQLMethod(unittest.TestCase):
     def test_complex_conditions(self):
         """Test SqlMethod._or condition."""
 
-        db = self._make_sample_db_users()
-
-        # for this test add several more users into the table
-        db.cursor().executemany(
-            "INSERT INTO users (id, name, account_id) VALUES (?, ?, ?)",
-            [#(1, "James", 1),   - inserted previously
-             #(2, "Arnold", 1),  - inserted previously
-             (3, "Chuck", 7),
-             (4, "Harry", 7),
-             (5, "Asimov", 7),
+        db = self._make_sample_db_users(
+            [
+                (1, "James", 1),
+                (2, "Arnold", 1),
+                (3, "Chuck", 7),
+                (4, "Harry", 7),
+                (5, "Asimov", 7),
             ])
-        db.commit()
 
         get_users_ids = SqlMethod(
             "SELECT id FROM users ",
@@ -291,6 +297,39 @@ class TestSQLMethod(unittest.TestCase):
         self.assertEqual(
             {2}, set(recs_ids),
             "Condition is identical to 'account_id = 1 AND (name='Chuck' OR id=2'")
+
+    def test_aggregation(self):
+        """Test requests with 'GROUP BY' clause."""
+
+        db = self._make_sample_db_users(
+            [
+                (1, "James", 1),
+                (2, "Arnold", 1),
+                (3, "Chuck", 7),
+                (4, "Harry", 7),
+                (5, "Asimov", 7),
+            ])
+
+        mtd = SqlMethod(
+            "SELECT SUM(id) AS sid, account_id FROM users",
+            group_by='account_id',
+        )
+
+        # 1. do the test call
+        # expected result: [
+        #   (sid=3, account_id=1),
+        #   (sid=8, account_id=7),
+        # ]
+        recs = mtd.list(
+            db, ('name', '!=', 'Harry'),
+            _order_by='sid',
+        )
+
+        self.assertEqual(len(recs), 2)
+        self.assertEqual(recs[0].sid, 3, f"{recs[0]}")
+        self.assertEqual(recs[0].account_id, 1, f"{recs[0]}")
+        self.assertEqual(recs[1].sid, 8, f"{recs[1]}")
+        self.assertEqual(recs[1].account_id, 7, f"{recs[1]}")
 
 
 class TestRecordsMMap(unittest.TestCase):

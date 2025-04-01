@@ -210,6 +210,7 @@ class SqlMethod:
 
     __slots__ = (
         'sql_select_from',
+        'group_by',
         'default_order_by',
         'default_as_scalars',
         'record_name',
@@ -220,11 +221,12 @@ class SqlMethod:
     _or = SqlOrCondition
 
     def __init__(self, sql_select_from, *,
-                 order_by=None, record_name=None, as_scalars=False):
+                 group_by=None, order_by=None, record_name=None, as_scalars=False):
         """Create SqlMethod object.
 
         Arguments:
         - sql_select_from: "SELECT ... FROM ..." part of the sql request string
+        - group_by: string, to be specified if aggregation is used in the request
         - order_by: default value of "ORDER BY ..." part of sql request string.
             (it may be overridden when executing this method)
         - record_name: optional name of a namedtuple type of records returned by
@@ -233,9 +235,10 @@ class SqlMethod:
             namedtuples), overwise - first elements of these records.
             (it may be overridden when executing this method)
 
-        Note: selects with GROUP BY are not supported yet
+        Note: selects with HAVING are not supported yet
         """
         self.sql_select_from = sql_select_from
+        self.group_by = group_by
         self.default_order_by = order_by
         self.default_as_scalars = as_scalars
         self.record_name = record_name if record_name is not None else 'record'
@@ -274,6 +277,8 @@ class SqlMethod:
             sql += " WHERE " + " AND ".join(
                 f.make_text_update_values(req_params, placeholders_type)
                 for f in filters)
+        if self.group_by:
+            sql += " GROUP BY " + self.group_by
         if order_by_clause is not None:
             sql += " ORDER BY " + order_by_clause
 
