@@ -7,7 +7,7 @@ import sqlite3
 from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
 from ak import ppobj
-from ak.ppobj import PPTableFieldType, PPTable
+from ak.ppobj import FieldType, PPTable
 
 from .test_ppobj import verify_table_format
 
@@ -120,7 +120,7 @@ class TestMCallerSQL(unittest.TestCase):
         """Test behavior SqlMethodT with not-default format."""
 
         # 0. prepare custom field type
-        class CustomFieldType(PPTableFieldType):
+        class CustomFieldType(FieldType):
             """Produce some text, which is not just str(value)"""
             def make_desired_cell_ch_text(
                 self, value, fmt_modifier, _c,

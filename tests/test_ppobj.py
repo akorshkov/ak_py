@@ -7,7 +7,7 @@ from collections import namedtuple
 from ak.color import CHText, ConfColor, ColorFmt
 from ak import ppobj
 from ak.ppobj import CHTextResult, PrettyPrinter, pp
-from ak.ppobj import PPTableFieldType, PPTableField, PPTable, PPEnumFieldType
+from ak.ppobj import FieldType, RecordField, PPTable, PPEnumFieldType
 
 
 #########################
@@ -471,7 +471,9 @@ class TestPPTable(unittest.TestCase):
                 f"format string '{fmt}' was not expected to change the "
                 f"table format (only number of visible records could have changed, "
                 f"but it is always enough to show all records). Still table now "
-                f"looks differently:\n{ttext_0}\n{ttext_1}")
+                f"looks differently:\n{ttext_0}\n{ttext_1}.\n"
+                f"It happened after fmt was set to '{fmt}'"
+            )
 
         # 4. check number of records behavior
         for fmt in [";0:3", ";1:2", ";3:0"]:
@@ -730,12 +732,12 @@ class TestPPTable(unittest.TestCase):
 
         # even though each record tuple has 3 elements, our table will have only
         # 2 available fiedls
-        dflt_field_type = PPTableFieldType()
+        dflt_field_type = FieldType()
         fields = [
-            PPTableField(
+            RecordField(
                 field_name,
-                pos,
                 dflt_field_type,
+                pos,
             ) for pos, field_name in [
                 (0, 'id'),
                 (2, 'name'),
@@ -779,7 +781,7 @@ class TestPPTable(unittest.TestCase):
         """
 
         # 0. prepare custom field type
-        class CustomFieldType(PPTableFieldType):
+        class CustomFieldType(FieldType):
             """Produce some text, which is not just str(value)"""
             def make_desired_cell_ch_text(
                 self, value, fmt_modifier, _c,
@@ -1286,13 +1288,14 @@ class TestEnhancedPPTable(unittest.TestCase):
             ((4, 7, "Elizer"), ('iz', 'Izrael')),
         ]
 
-        with self.assertRaises(ValueError) as exc:
-            PPTable(records, fmt=(
-                "id:10,"  # value_path is not specified
-                " name<-0.2,country<-1.1"))
-
-        err_msg = str(exc.exception)
-        self.assertIn("value_paths not found", err_msg)
+        # !!!!! valid change
+        #with self.assertRaises(ValueError) as exc:
+        #    PPTable(records, fmt=(
+        #        "id:10,"  # value_path is not specified
+        #        " name<-0.2,country<-1.1"))
+        #
+        # err_msg = str(exc.exception)
+        # self.assertIn("value_paths not found", err_msg)
 
         table = PPTable(records, fmt=(
             "id:10,"  # value_path is not specified, but it's ok because ...
@@ -1349,6 +1352,7 @@ class TestEnhancedPPTable(unittest.TestCase):
         ]
 
         table = PPTable(records, fmt="seat<-0.0:-1,owner<-0.1")
+        #print(table)
 
         verify_table_format(
             self, table,

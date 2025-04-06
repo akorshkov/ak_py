@@ -159,7 +159,11 @@ class SqlMethodT:
             # construct default header
             self._ppt_header = f"{self._record_name} table"
 
-        self._ppt_format = PPTableFormat.mk_by_fields_names(
+        # !!!!!
+#        record_structure, repr_columns = ReprStructure.create_record_structure(
+#            self._ppt_fmt, self.field_names, self._ppt_fields_types, None)
+
+        self._ppt_format = PPTableFormat.make(
             self._ppt_fmt, self.field_names, self._ppt_fields_types)
 
     @staticmethod

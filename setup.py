@@ -9,5 +9,6 @@ setup(
     author_email="akorshkov@gmail.com",
     description="Some python modules I use in my projects",
     packages=['ak'],
+    scripts=['bin/colors_demo.py'],
     python_requires=">=3.6",
 )
