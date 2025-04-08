@@ -1729,7 +1729,6 @@ class PaletteUser:
         return palette_class(colors_conf, no_color)
 
 
-
 def get_global_colors_config():
     """Get global ColorsConfig.
 

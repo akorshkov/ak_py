@@ -7,7 +7,7 @@ from collections import namedtuple
 from ak.color import CHText, ConfColor, ColorFmt
 from ak import ppobj
 from ak.ppobj import CHTextResult, PrettyPrinter, pp
-from ak.ppobj import FieldType, RecordField, PPTable, PPEnumFieldType
+from ak.ppobj import FieldType, RecordField, PPTable, PPEnumFieldType, PPRecordFmt
 
 
 #########################
@@ -1369,3 +1369,32 @@ class TestEnhancedPPTable(unittest.TestCase):
             n_body_lines=3,
             cols_widths=[len('seat'), len("Arnold")],
         )
+
+
+class TestPPRecordFormatter(unittest.TestCase):
+    """Test PPRecordFmt class"""
+
+    def test_simple_case(self):
+        """Test PPRecordFmt usage when record is a simple tuple."""
+        rec_fmt = PPRecordFmt(
+            "id, name, age",
+            fields=["id", "name", "age"],
+        )
+
+        r = rec_fmt((10, "John", 42))
+
+        #print(r)
+        #print(r.cols_by_name["id"])
+        #print("--".join(str(c) for c in r.columns))
+
+    def test_record_fmt_named_tuple(self):
+        """Test PPRecordFmt usage when record is a named tuple."""
+
+        tupletype = namedtuple("SomeRecord", ["id", "description", "department"])
+        record = tupletype(10, "short", 245)
+
+        #print(dir(record))
+        #print(dir(record._fields))
+
+        rec_fmt = PPRecordFmt("id:7,description:7,department:17")
+        #print(rec_fmt(record))

@@ -372,7 +372,7 @@ class PPObj(PaletteUser):
     work with: the length of the string is not equal to the number of printable
     characters.
 
-    In order to mae it possible to format colored text CHText is used.
+    In order to make it possible to format colored text CHText is used.
     CHText object keeps track of printable and not-printable characters, so that
     it is possible to use it in f-strings with width format specifiers.
 
@@ -476,7 +476,6 @@ class PPWrap:
 # processing records and presenting data from the records on screen.
 #
 # class FieldType
-
 
 class FieldType(PaletteUser):
     """Describe properties of a field (in a record).
@@ -759,6 +758,11 @@ class ReprColumn:
     (for example a table) contains of columns. Each column corresponds to some
     field, any number of columns may correspond to a given field.
     """
+
+    __slots__ = (
+        'field', 'name', 'fmt_modifier', 'break_by',
+        'min_width', 'max_width', 'width',
+    )
 
     def __init__(self, field, fmt_modifier=None, break_by=False,
                  min_width=None, max_width=None):
@@ -1150,6 +1154,34 @@ class ReprStructure:
             repr_columns = [ReprColumn(field) for field in record_structure.fields]
 
         return cls(record_structure, repr_columns)
+
+    def col_widths_finalized(self) -> bool:
+        """Check if actual widths of columns are already known."""
+        return all(col.width is not None for col in self.columns)
+
+    def detect_actual_columns_widths(
+            self, title_records, body_records, *,
+            _account_columns_names=True):
+        """Calculate actual widths of columns using the actual records."""
+        for col in self.columns:
+            col.width = (
+                min(col.max_width, max(col.min_width, len(col.name)))
+                if _account_columns_names
+                else col.min_width)
+
+        for cell_type, recs_generator in [
+            (CELL_TYPE_TITLE, title_records),
+            (CELL_TYPE_BODY, body_records),
+        ]:
+            for rec in recs_generator:
+                for col in self.columns:
+                    if col.width < col.max_width:
+                        col.width = max(
+                            col.width,
+                            min(col.max_width, col.get_cell_text_len(rec, cell_type))
+                        )
+                if all(col.width == col.max_width for col in self.columns):
+                    break
 
     def remove_columns(self, columns_names):
         """Remove specified column from self"""
@@ -1702,25 +1734,14 @@ class _PPTableImpl:
         self._ppt_fmt.any_lines_skipped = n_skipped > 0
 
         # calculate actual widths of table columns (col.width)
-        for col in columns:
-            col.width = min(col.max_width, max(col.min_width, len(col.name)))
-
-        for cell_type, recs_generator in [
-            (CELL_TYPE_TITLE, self.title_records),
-            (CELL_TYPE_BODY, (
-                rec for rec in table_lines
-                if not isinstance(rec, self._ServiceLine)
-            )),
-        ]:
-            for rec in recs_generator:
-                for col in columns:
-                    if col.width < col.max_width:
-                        col.width = max(
-                            col.width,
-                            min(col.max_width, col.get_cell_text_len(rec, cell_type))
-                        )
-                if all(col.width == col.max_width for col in columns):
-                    break
+        if not self._ppt_fmt.repr_structure.col_widths_finalized():
+            self._ppt_fmt.repr_structure.detect_actual_columns_widths(
+                self.title_records,
+                (
+                    rec for rec in table_lines
+                    if not isinstance(rec, self._ServiceLine)
+                )
+            )
 
         table_width = sum(col.width for col in columns) + len(columns) + 1
 
@@ -1818,6 +1839,54 @@ class _PPTableImpl:
             line.extend(col.make_cell_ch_text(record, cell_type, field_palette, cp))
         line.append(sep)
         return line
+
+
+#########################
+# PPRecord
+
+class _PPRecordData:
+    # result produced by PPRecordFmt.
+
+    def __init__(self, cols_names, cols_ch_texts):
+        self.columns = cols_ch_texts
+        self.cols_by_name = dict(zip(cols_names, self.columns))
+
+    def __str__(self):
+        return " ".join(str(c) for c in self.columns)
+
+
+class PPRecordFmt(PaletteUser):
+    """Object of this class prints records in specified format."""
+
+    class PPRecordPalette(CompoundPalette, FieldType.RecordPalette):
+        SUB_PALETTES_MAP = {}
+
+    PALETTE_CLASS = PPRecordPalette
+
+    def __init__(self, fmt, fields=None, fields_types=None, sample_record=None):
+        self.repr_structure = ReprStructure.make(
+            fmt, fields, fields_types, sample_record)
+
+    def __call__(self, rec_obj, *, palette=None, no_color=None, colors_conf=None):
+
+        cp = self._mk_palette(palette, no_color, colors_conf)
+
+        if not self.repr_structure.col_widths_finalized():
+            self.repr_structure.detect_actual_columns_widths(
+                [], [rec_obj],
+                _account_columns_names=False,
+            )
+
+        cols_names = []
+        cols_ch_texts = []
+
+        for col in self.repr_structure.columns:
+            field_palette = cp.get_sub_palette(col.field.field_type.PALETTE_CLASS)
+            cols_names.append(col.name)
+            cols_ch_texts.append(CHText(
+                col.make_cell_ch_text(rec_obj, CELL_TYPE_BODY, field_palette, cp)))
+
+        return _PPRecordData(cols_names, cols_ch_texts)
 
 
 #########################
