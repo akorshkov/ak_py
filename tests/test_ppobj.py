@@ -344,10 +344,10 @@ def verify_table_format(
         table_is_colored = ttext != orig_ttext
         if is_colored:
             testcase.assertTrue(
-                table_is_colored, "table is not colored:\n{table}")
+                table_is_colored, "table is not colored:\n{orig_ttext}")
         else:
             testcase.assertFalse(
-                table_is_colored, "table is colored:\n{table}")
+                table_is_colored, "table is colored:\n{orig_ttext}")
 
     text_lines = ttext.split('\n')
 
@@ -358,11 +358,11 @@ def verify_table_format(
 
     testcase.assertEqual(
         3, len(separator_lines_ids),
-        f"table is expected to contain 3 separator lines:\n{table}")
+        f"table is expected to contain 3 separator lines:\n{orig_ttext}")
 
     testcase.assertEqual(
         0, separator_lines_ids[0],
-        f"first line of a table should be a separator line::\n{table}")
+        f"first line of a table should be a separator line::\n{orig_ttext}")
 
     header_part = text_lines[separator_lines_ids[0]+1:separator_lines_ids[1]]
     col_names_line_id = 1 if has_header else 0
@@ -386,20 +386,20 @@ def verify_table_format(
                 x.strip() for x in column_names_line[1:-1].split('|')]
         testcase.assertEqual(
             actual_col_names, cols_names,
-            f"unexpected column names in table:\n{table}")
+            f"unexpected column names in table:\n{orig_ttext}")
 
     # 2. verify number of lines
     if n_body_lines is not None:
         testcase.assertEqual(
             actual_n_body_lines, n_body_lines,
-            f"unexpected number of body lines in table:\n{table}")
+            f"unexpected number of body lines in table:\n{orig_ttext}")
 
     # 3. verify columns widths
     if cols_widths is not None:
         actual_col_widths = [len(x) for x in text_lines[0][1:-1].split('+')]
         testcase.assertEqual(
             cols_widths, actual_col_widths,
-            f"unexpected column widths in table:\n{table}")
+            f"unexpected column widths in table:\n{orig_ttext}")
 
     # 4. verify contains specified text
     if contains_text is not None:
@@ -407,7 +407,7 @@ def verify_table_format(
             contains_text = [contains_text, ]
         for t in contains_text:
             testcase.assertIn(
-                t, ttext, f"table doesn't contain text '{t}':\n{table}")
+                t, ttext, f"table doesn't contain text '{t}':\n{orig_ttext}")
 
     # 5. verify does not contain specified text
     if not_contains_text is not None:
@@ -415,14 +415,14 @@ def verify_table_format(
             not_contains_text = [not_contains_text, ]
         for t in not_contains_text:
             testcase.assertNotIn(
-                t, ttext, f"table unexpectedly contains text '{t}':\n{table}")
+                t, ttext, f"table unexpectedly contains text '{t}':\n{orig_ttext}")
 
     # verify all lines has same length
     for i, line in enumerate(text_lines):
         testcase.assertEqual(
             table_width, len(line),
             f"length of line #{i} = {len(line)}:\n{line}\nis different from "
-            f"lengths of other lines. Table\n{table}")
+            f"lengths of other lines. Table\n{orig_ttext}")
 
 
 class TestPPTable(unittest.TestCase):
