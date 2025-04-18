@@ -383,7 +383,7 @@ class PPObj(PaletteUser):
     CHText object keeps track of printable and not-printable characters, so that
     it is possible to use it in f-strings with width format specifiers.
 
-    PPObj.ch_fmt() method returns ak.color.CHTextResult object. This object is
+    PPObj.ch_text() method returns ak.color.CHTextResult object. This object is
     similar to CHText, but can be used as iterator of CHText objects (usualy
     corresponding to the lines of multi-line text)
 
@@ -395,9 +395,9 @@ class PPObj(PaletteUser):
     """
 
     def __str__(self):
-        return str(self.ch_fmt())
+        return str(self.ch_text())
 
-    def ch_fmt(
+    def ch_text(
         self, *, palette=None, no_color=False, colors_conf=None,
     ) -> CHTextResult:
         """Return CHTextResult - colored representation of self.
