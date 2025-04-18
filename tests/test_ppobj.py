@@ -1377,15 +1377,23 @@ class TestPPRecordFormatter(unittest.TestCase):
         r = rec_fmt((10, "John", 42))
 
         s = str(r)
+        plain = CHText.strip_colors(s)
+        self.assertNotEqual(s, plain)
+        self.assertEqual(plain, "10 John 42")
+
         ch = r.ch_text()
+        self.assertIsInstance(ch, CHText)
 
-        #print(r)
-        #print(s)
+        # check values of individual columns
+        id_ch_text = r.cols_by_name['id']
+        self.assertIsInstance(id_ch_text, CHText)
+        id_text = CHText.strip_colors(str(id_ch_text))
+        self.assertEqual(id_text, "10")
 
-        #print(r.cols_by_name["id"])
-        #print("--".join(str(c) for c in r.columns))
-
-        #print(rec_fmt((10, "John", 42), no_color=True))
+        # check 'no_color' option
+        self.assertEqual(
+            str(rec_fmt((10, "John", 42), no_color=True)),
+            "10 John 42")
 
     def test_record_fmt_named_tuple(self):
         """Test PPRecordFmt usage when record is a named tuple."""
@@ -1393,8 +1401,21 @@ class TestPPRecordFormatter(unittest.TestCase):
         tupletype = namedtuple("SomeRecord", ["id", "description", "department"])
         record = tupletype(10, "short", 245)
 
-        #print(dir(record))
-        #print(dir(record._fields))
+        # 1. Standard construction: using 'fmt' string
+        rec_fmt = PPRecordFmt("id:7,description:7,department:9")
 
-        rec_fmt = PPRecordFmt("id:7,description:7,department:17")
-        #print(rec_fmt(record))
+        s = CHText.strip_colors(str(rec_fmt(record)))
+        # Expected result: 3 fields having widths 7 7 9 separated by space:
+        #                    0123456 0123456 012345678"
+        self.assertEqual(s, "     10 short         245")
+
+        # 2. Create formatter by sample record
+        rec_fmt = PPRecordFmt(None, sample_record=record)
+
+        rec_repr = rec_fmt(record)
+        s = CHText.strip_colors(str(rec_repr))
+        # Expected result: 3 fields separated by space:
+        self.assertEqual(s, "10 short 245")
+
+        dep_ch_text = rec_repr.cols_by_name['department']
+        self.assertEqual(dep_ch_text.plain_text(), "245")
