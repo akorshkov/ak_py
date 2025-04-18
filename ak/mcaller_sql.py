@@ -159,12 +159,8 @@ class SqlMethodT:
             # construct default header
             self._ppt_header = f"{self._record_name} table"
 
-        # !!!!!
-#        record_structure, repr_columns = ReprStructure.create_record_structure(
-#            self._ppt_fmt, self.field_names, self._ppt_fields_types, None)
-
         self._ppt_format = PPTableFormat.make(
-            self._ppt_fmt, self.field_names, self._ppt_fields_types)
+            self._ppt_fmt, self.field_names, self._ppt_fields_types, None)
 
     @staticmethod
     def _make_unique_names_list(names_list):

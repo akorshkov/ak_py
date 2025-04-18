@@ -3,9 +3,17 @@
 Classes provided by this module:
 - PrettyPrinter - pretty-printer of json-like python structures
 - PPObj - base class for objects which have colored text representation
+- PPWrap - Pretty-printable wrapper to be used in interactive console
 - PPTable - pretty-printable 2-D tables
 - PPEnumFieldType - to be used by PPTable for enum fields
 """
+
+# - FieldType       - general properties of a field
+# - RecordField     - field type and it's location in a record
+# - RecordStructure - all the fields in a record
+# - ReprColumn      - field, widths, fmt_modifier
+# - ReprStructure   - RecordStructure + columns. Described by 'fmt'
+
 
 from typing import Iterator
 from numbers import Number
@@ -14,7 +22,6 @@ from ak import utils
 from ak.color import CHText, Palette, CompoundPalette, PaletteUser, ConfColor
 
 ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
-CELL_TYPE_TITLE, CELL_TYPE_BODY = 11, 22
 
 
 class CHTextResult:
@@ -470,8 +477,12 @@ class PPWrap:
 # Records
 #
 # Term "records" is used for a set of objects having similar structure.
-# In simple cases the structure of the record may be a tuple (as records fetched
-# from database).
+# In simple cases the structure of the record may be a tuple of simple values (for
+# example for records fetched from database).
+#
+# In more complicated cases it may be a composition of tuples, lists, dictionaries
+# and other python objects.
+#
 # The purpose of the following record-related classes is to facilitate
 # processing records and presenting data from the records on screen.
 #
@@ -489,25 +500,18 @@ class FieldType(PaletteUser):
         """Palette used for field values of standard types."""
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
-            'TABLE.NUMBER': "NUMBER",
-            'TABLE.KEYWORD': "KEYWORD",
-            'TABLE.WARN': "WARN",
+            'RECORD.NUMBER': "NUMBER",
+            'RECORD.KEYWORD': "KEYWORD",
         }
 
-        number = ConfColor('TABLE.NUMBER')
-        keyword = ConfColor('TABLE.KEYWORD')
-        warn = ConfColor('TABLE.WARN')
+        number = ConfColor('RECORD.NUMBER')
+        keyword = ConfColor('RECORD.KEYWORD')
 
     PALETTE_CLASS = RecordPalette
 
     def __init__(self, min_width=1, max_width=999):
         self.min_width = min_width
         self.max_width = max_width
-
-    def get_cell_text_len_for_row_type(self, value, fmt_modifier, cell_type) -> int:
-        if cell_type == CELL_TYPE_TITLE:
-            return self.get_title_cell_text_len(value, fmt_modifier)
-        return self.get_cell_text_len(value, fmt_modifier)
 
     def get_cell_text_len(self, value, fmt_modifier) -> int:
         """Calculate length of text representation of the value (for usual cell)
@@ -516,7 +520,7 @@ class FieldType(PaletteUser):
         derived classes to avoid construction of syntax items objects - usually
         it is not required to find out text length.
         """
-        ch_text_chunks, _ = self.make_desired_cell_ch_text(
+        ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
             value, fmt_modifier,
             self.PALETTE_CLASS(no_color=True))
         return CHText.calc_chunks_len(ch_text_chunks)
@@ -525,9 +529,9 @@ class FieldType(PaletteUser):
         """Calculate len of the title of a table column."""
         # Default implementation does not use fmt_modifier argument
         # pylint: disable=unused-argument
-        return len(str(value))
+        return max(len(str(l)) for l in self.title_lines)
 
-    def make_desired_cell_ch_text(
+    def make_desired_cell_ch_chunks(
         self, value, fmt_modifier, field_palette,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
@@ -553,33 +557,15 @@ class FieldType(PaletteUser):
             align = ALIGN_LEFT
         return [color_fmt(str(value))], align
 
-    def make_desired_title_cell_text(
-        self, value, _fmt_modifier, cp,
-    ) -> ([CHText.Chunk], int):
-        """value -> desired text and alignment for title table row."""
-
-        # values for column title cells are fetched from so called title records
-        # which have same structure as usual records.
-        # but these values supposed to be just strings, that is some description of
-        # column. It is not a enum or uuid - it makes no need to format these values
-        # using fmt_modifier.
-        return [cp.col_title(str(value) if value else "")], ALIGN_CENTER
-
-    def make_title_cell_ch_text(self, value, width, table_palette) -> [CHText.Chunk]:
-        """Prepare list of CHText.Chunk for table title cell."""
-        title_ch_chunks = [table_palette.col_title(str(value))]
-        return self.fit_to_width(
-            title_ch_chunks, width, ALIGN_LEFT, table_palette)
-
-    def make_cell_ch_text(
+    def make_cell_ch_chunks(
         self, value, fmt_modifier, width,
-        field_palette, table_palette,
+        field_palette, record_palette,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
-        text, align = self.make_desired_cell_ch_text(
+        text, align = self.make_desired_cell_ch_chunks(
             value, fmt_modifier, field_palette)
 
-        return self.fit_to_width(text, width, align, table_palette)
+        return self.fit_to_width(text, width, align, record_palette)
 
     def _verify_fmt_modifier(self, fmt_modifier):
         # Raise exc if 'fmt_modifier' is not compatible with this field type.
@@ -604,17 +590,29 @@ class FieldType(PaletteUser):
         """[CHText.Chunk] -> [CHText.Chunk] of exactly specified length.
 
         Arguments:
-        - ch_chunks: list of CHText.Chunk objects
+        - ch_chunks: may be one of:
+            - list of CHText.Chunk objects
+            - single CHText.Chunk
+            - CHText
         - width: desired width of result
         - align: pbobj.ALIGN_LEFT or pbobj.ALIGN_CENTER or pbobj.ALIGN_RIGHT
         - warn_syntax_name: in case the text does not fit into width
             it is not simply truncated, but modified - warn_syntax_name is required
             to get a color to be used to indicate modifications
 
+        Return value:
+        Method always returns [CHText.Chunk].
+
         Examples:
         'short'            -> colored 'short    '  or '    short'
         'very long text'   -> colored 'very l...'
         """
+        if not isinstance(ch_chunks, list):
+            if isinstance(ch_chunks, CHText.Chunk):
+                ch_chunks = [ch_chunks]
+            elif isinstance(ch_chunks, CHText):
+                ch_chunks = ch_chunks.chunks.copy()
+
         assert width >= 0
         filler_len = width - CHText.calc_chunks_len(ch_chunks)
         if filler_len == 0:
@@ -655,19 +653,54 @@ class _DefaultFieldType(FieldType):
         return len(str(value))
 
 
+class _DefaultTitleFieldType(_DefaultFieldType):
+    # Default field type which produces content for titles (for example for
+    # title cells of a table)
+
+    class TitlePalette(FieldType.PALETTE_CLASS):
+        SYNTAX_DEFAULTS = {
+            # synt_id: default_color
+            'RECORD.TITLE': "GREEN:bold",
+            'RECORD.COL_TITLE': "GREEN:bold",
+        }
+
+        title = ConfColor('RECORD.TITLE')
+        col_title = ConfColor('RECORD.COL_TITLE')
+
+    PALETTE_CLASS = TitlePalette
+
+    def make_desired_cell_ch_chunks(
+        self, value, fmt_modifier, field_palette,
+    ) -> ([CHText.Chunk], int):
+        """Make desired content for title."""
+        if isinstance(value, str) and fmt_modifier is None:
+            return field_palette.col_title(value), ALIGN_LEFT
+        return super().make_desired_cell_ch_chunks(value, fmt_modifier, field_palette)
+
+
 class RecordField:
     """Describes a field in a record.
 
     Keeps information about the type of the field and it's location in the record.
     """
 
-    __slots__ = 'name', 'field_type', 'value_path'
+    __slots__ = 'name', 'field_type', 'value_path', 'title_lines'
 
-    def __init__(self, name, field_type, value_path):
-        """RecordField constructor."""
+    def __init__(self, name, field_type, value_path, title):
+        """RecordField constructor.
+
+        Arguments:
+        - name: str, field name. Human-readable unique identifier of the field.
+        - field_type: FieldType
+        - value_path: str, desribes location of the field value in the record object
+        - title: str|list, title of the field. If it is a list or if it is a string
+            containing new-line characters, it is interpreted as a multi-line title.
+            By default is the same as the name.
+        """
         self.name = name
         self.field_type = field_type
         self.value_path = self._prepare_value_path(value_path, name)
+        self.title_lines = list(self._gen_title_lines(title, self.name))
 
     def fetch_value(self, record):
         """get value from a record according to the rules specified by value_path."""
@@ -679,6 +712,33 @@ class RecordField:
                 val = val[key]
         return val
 
+    def get_title_cell_text_len(self, fmt_modifier):
+        """Get length of the field's title."""
+        # Default implementation does not use fmt_modifier argument
+        # pylint: disable=unused-argument
+        return max(len(str(l)) for l in self.title_lines)
+
+    @classmethod
+    def _gen_title_lines(cls, title, field_name):
+        # constructor helper.
+        # converts the 'title' argument into a list of objects to be displayed
+        # in title lines
+        intermediary = None
+        if title is None:
+            intermediary = [field_name]
+        elif isinstance(title, str):
+            intermediary = [title]
+        elif isinstance(title, (list, tuple)):
+            intermediary = title
+        else:
+            intermediary = [title]
+
+        for item in intermediary:
+            if isinstance(item, str):
+                yield from (l.strip() for l in item.split('\n'))
+            else:
+                yield item
+
     @classmethod
     def _prepare_value_path(cls, value_path, field_name):
         # "0.name" -> [(False, 0), (True, 'name')]
@@ -686,7 +746,7 @@ class RecordField:
         # "0." -> [(False, 0), (True, 'field_name')]
         if isinstance(value_path, int):
             return [(False, value_path)]
-        assert isinstance(value_path, str)
+        assert isinstance(value_path, str), f"it is {type(value_path)}: {value_path}"
 
         prepared_path = []
 
@@ -755,7 +815,7 @@ class ReprColumn:
     """Information about a single column of the record's representation.
 
     Do not confuse with field. Record consists of fields, record's representation
-    (for example a table) contains of columns. Each column corresponds to some
+    (for example a table) consists of columns. Each column corresponds to some
     field, any number of columns may correspond to a given field.
     """
 
@@ -802,37 +862,35 @@ class ReprColumn:
             self.max_width,
         )
 
-    def get_cell_text_len(self, record, cell_type):
-        """Get desired cell length for this value.
+    def get_title_width(self):
+        """Get width of the column's title.
+
+        As of now columns do not have own titles, so the title of the corresponding
+        field is used.
+        """
+        return self.field.get_title_cell_text_len(self.fmt_modifier)
+
+    def get_cell_text_len(self, record):
+        """Get desired cell length for this column when displaying given record.
 
         (Actual cell may be shorter or longer).
         """
         value = self.field.fetch_value(record)
-        return self.field.field_type.get_cell_text_len_for_row_type(
-            value, self.fmt_modifier, cell_type)
+        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier)
 
-    def make_cell_ch_text(
-        self, record, cell_type, field_palette, table_palette,
+    def make_cell_ch_chunks(
+        self, record, field_palette, table_palette,
     ) -> [CHText.Chunk]:
         """Fetch value from record and make colored text for a cell.
 
         Length of created text is exactly self.width.
         """
         value = self.field.fetch_value(record)
-        if cell_type == CELL_TYPE_TITLE:
-            return self.make_title_cell_ch_text_by_value(value, table_palette)
 
-        return self.field.field_type.make_cell_ch_text(
+        return self.field.field_type.make_cell_ch_chunks(
             value, self.fmt_modifier, self.width,
             field_palette, table_palette,
         )
-
-    def make_title_cell_ch_text_by_value(
-        self, value, table_palette,
-    ) -> [CHText.Chunk]:
-        """Prepare list of CHText.Chunk for table title cell."""
-        return self.field.field_type.make_title_cell_ch_text(
-            value, self.width, table_palette)
 
     def to_fmt_str(self):
         """Create fmt string - human readable and editable descr of self."""
@@ -1022,13 +1080,15 @@ class ReprStructure:
     - ":3-10" : (optional) minimum and maximum width of the column.
         ":n-n" is equivalent to a shorter ":n"
     """
-    __slots__ = 'record_structure', 'columns'
+    __slots__ = 'record_structure', 'columns', 'title_field_type'
 
     _DFLT_FIELD_TYPE = _DefaultFieldType()
+    _DFLT_TITLE_FIELD_TYPE = _DefaultTitleFieldType()
 
     def __init__(self, record_structure, columns):
         self.record_structure: RecordStructure = record_structure
         self.columns: [ReprColumn] = columns
+        self.title_field_type = self._DFLT_TITLE_FIELD_TYPE
 
     def clone(self):
         return ReprStructure(
@@ -1037,7 +1097,7 @@ class ReprStructure:
         )
 
     @classmethod
-    def make(cls, fmt, fields, fields_types, sample_record):
+    def make(cls, fmt, fields, fields_types, fields_titles, sample_record):
         """Alternative constructor of ReprStructure.
 
         Arguments:
@@ -1046,6 +1106,10 @@ class ReprStructure:
         - fields: [RecordField|str], describes record structure, that is location
             of field values in the record object.
         - fields_types: {field_name: FieldType}
+        - fields_titles: {field_name: title_items}. The title_items may be:
+            - simple string
+            - string containing new-line characters (for multi-line title)
+            - list of strings or other simple objects (for multi-line title)
         - sample_record: sample record.
 
         All the arguments are optional, the method fetches information about record
@@ -1053,6 +1117,7 @@ class ReprStructure:
         """
         parsed_fmt = cls._parse_fmt(fmt)
         fields_types_dict = {} if fields_types is None else fields_types
+        fields_titles_dict = {} if fields_titles is None else fields_titles
 
         record_structure = None
         repr_columns = None
@@ -1070,7 +1135,9 @@ class ReprStructure:
                     f"Expected RecordField or str")
                 f_name = obj
                 return RecordField(
-                    f_name, fields_types_dict.get(f_name, cls._DFLT_FIELD_TYPE), pos)
+                    f_name,
+                    fields_types_dict.get(f_name, cls._DFLT_FIELD_TYPE),
+                    pos, fields_titles_dict.get(f_name))
             record_structure = RecordStructure([
                 _local_mk_rec_fld(pos, obj)
                 for (pos, obj) in enumerate(fields)])
@@ -1079,7 +1146,9 @@ class ReprStructure:
             # we can get RecordStructure from the sample record
             record_structure = RecordStructure([
                 RecordField(
-                    name, fields_types_dict.get(name, cls._DFLT_FIELD_TYPE), pos)
+                    name,
+                    fields_types_dict.get(name, cls._DFLT_FIELD_TYPE),
+                    pos, fields_titles_dict.get(name))
                 for pos, name in enumerate(sample_record._fields)])
 
         if record_structure is not None:
@@ -1111,7 +1180,8 @@ class ReprStructure:
                             c.field_name,  # if path to the field is not specified we
                                            # interprete it as
                                            # 'the field name itself is the path'
-                        )
+                        ),
+                        fields_titles_dict.get(c.field_name),
                     ))
                 record_structure = RecordStructure(fields_list)
             repr_columns = [
@@ -1134,7 +1204,7 @@ class ReprStructure:
                     f"{sample_record}. Provide record structure information "
                     f"using 'fields' argument")
             record_structure = RecordStructure([
-                RecordField(f"col_{pos+1}", cls._DFLT_FIELD_TYPE, pos)
+                RecordField(f"col_{pos+1}", cls._DFLT_FIELD_TYPE, pos, None)
                 for pos in range(len(sample_record))
             ])
 
@@ -1145,7 +1215,8 @@ class ReprStructure:
             # no records. Still need to display some dummy table
             record_structure = RecordStructure([
                 RecordField(
-                    '-                              -', cls._DFLT_FIELD_TYPE, 0)
+                    '-                              -', cls._DFLT_FIELD_TYPE,
+                    0, None)
             ])
 
         if repr_columns is None:
@@ -1160,28 +1231,25 @@ class ReprStructure:
         return all(col.width is not None for col in self.columns)
 
     def detect_actual_columns_widths(
-            self, title_records, body_records, *,
+            self, body_records, *,
             _account_columns_names=True):
         """Calculate actual widths of columns using the actual records."""
-        for col in self.columns:
-            col.width = (
-                min(col.max_width, max(col.min_width, len(col.name)))
-                if _account_columns_names
-                else col.min_width)
+        if _account_columns_names:
+            for col in self.columns:
+                title_width = col.get_title_width()
+                col.width = min(col.max_width, max(col.min_width, title_width))
+        else:
+            for col in self.columns:
+                col.width = col.min_width
 
-        for cell_type, recs_generator in [
-            (CELL_TYPE_TITLE, title_records),
-            (CELL_TYPE_BODY, body_records),
-        ]:
-            for rec in recs_generator:
-                for col in self.columns:
-                    if col.width < col.max_width:
-                        col.width = max(
-                            col.width,
-                            min(col.max_width, col.get_cell_text_len(rec, cell_type))
-                        )
-                if all(col.width == col.max_width for col in self.columns):
-                    break
+        for rec in body_records:
+            for col in self.columns:
+                if col.width < col.max_width:
+                    col.width = max(
+                        col.width, min(col.max_width, col.get_cell_text_len(rec))
+                    )
+            if all(col.width == col.max_width for col in self.columns):
+                break
 
     def remove_columns(self, columns_names):
         """Remove specified column from self"""
@@ -1189,6 +1257,38 @@ class ReprStructure:
             c for c in self.columns
             if c.name not in columns_names
         ]
+
+    def make_record_ch_chunks_all(self, record, cp) -> [[CHText.Chunk]]:
+        """Create intermediate data for the record's text representation.
+
+        Returns [[CHText.Chunk]], where each inner list corresponds to a column
+        in self.columns.
+        """
+        result = []
+        for col in self.columns:
+            field_type = col.field.field_type
+            field_palette = cp.get_sub_palette(field_type.PALETTE_CLASS)
+            result.append(col.make_cell_ch_chunks(record, field_palette, cp))
+        return result
+
+    def gen_title_lines_ch_chunks_all(self, cp) -> Iterator[[[CHText.Chunk]]]:
+        """Generate intermediate data for the record's title representation.
+
+        The title may consist of several lines, for each line [[CHText.Chunk]]
+        is generated. Each inner list corresponds to a title of a single column.
+        """
+        title_palette = cp.get_sub_palette(_DefaultTitleFieldType.PALETTE_CLASS)
+        num_title_lines = max(len(col.field.title_lines) for col in self.columns)
+        for i in range(num_title_lines):
+            line_result = []  # [[CHText.Chunk]]
+            for col in self.columns:
+                title_item = (
+                    col.field.title_lines[i] if i < len(col.field.title_lines)
+                    else "")
+                ch_items = self.title_field_type.make_cell_ch_chunks(
+                    title_item, None, col.width, title_palette, cp)
+                line_result.append(ch_items)
+            yield line_result
 
     def __repr__(self):
         # it's important that repr contains fmt string, which can be used
@@ -1264,18 +1364,20 @@ class PPTable(PPObj):
     of data (such as results of sql query).
     """
 
-    class TablePalette(CompoundPalette, FieldType.RecordPalette):
+    class TablePalette(CompoundPalette):
         """Palette to be used to print PPTable."""
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'TABLE.BORDER': "GREEN",
-            'TABLE.COL_TITLE': "GREEN:bold",
+            'TABLE.WARN': "WARN",
+            'TABLE.HEADER': "GREEN:bold",
         }
 
         SUB_PALETTES_MAP = {}
 
         border = ConfColor('TABLE.BORDER')
-        col_title = ConfColor('TABLE.COL_TITLE')
+        warn = ConfColor('TABLE.WARN')
+        header = ConfColor('TABLE.HEADER')
 
     PALETTE_CLASS = TablePalette
 
@@ -1288,8 +1390,8 @@ class PPTable(PPObj):
             limits=None,
             skip_columns=None,
             fields=None,
-            title_records=None,
             fields_types=None,
+            fields_titles=None,
     ):
         """Constructor of PPTable object - this object prints table.
 
@@ -1313,9 +1415,10 @@ class PPTable(PPObj):
         - skip_columns: list of columns to skip. Overrides fmt argument.
         - fields: (optional) list of names of fileds in a record, or list
             of RecordField objects
-        - title_records: (optional) list of objects which have format similar to
-            elements of 'records' argument, but contain information for
-            multi-line titles
+        - fields_titles: optional {field_name: title_items}. The title_items may be:
+            - simple string
+            - string containing new-line characters (for multi-line title)
+            - list of strings or other simple objects (for multi-line title)
         - fields_types: (optional) dictionary {field_name: FieldType}.
 
         Combinations of arguments used in common scenarios:
@@ -1350,8 +1453,8 @@ class PPTable(PPObj):
         # In case of table the original object is the list of records:
         self.r = self.records
 
-        # self._default_pptable_printer produces 'default' representation of the table
-        # (that is what is produced by 'print(pptable)')
+        # self._default_pptable_printer produces 'default' representation of
+        # the table (that is what is produced by 'print(pptable)')
         self._default_pptable_printer = _PPTableImpl(
             records,
             header=header,
@@ -1361,8 +1464,8 @@ class PPTable(PPObj):
             limits=limits,
             skip_columns=skip_columns,
             fields=fields,
-            title_records=title_records,
             fields_types=fields_types,
+            fields_titles=fields_titles,
         )
 
     def set_fmt(self, fmt):
@@ -1514,7 +1617,7 @@ class PPTableFormat:
         self.any_lines_skipped = None
 
     @classmethod
-    def make(cls, fmt, fields, fields_types, sample_record=None):
+    def make(cls, fmt, fields, fields_types, fields_titles, sample_record=None):
         """Alternative PPTableFormat constructor.
 
         Arguments:
@@ -1525,7 +1628,8 @@ class PPTableFormat:
 
         return PPTableFormat(
             ReprStructure.make(
-                parsed_fmt.cols_parsed_fmt, fields, fields_types, sample_record),
+                parsed_fmt.cols_parsed_fmt,
+                fields, fields_types, fields_titles, sample_record),
             limit_flines, limit_llines,
         )
 
@@ -1637,26 +1741,28 @@ class _PPTableImpl:
             limits=None,
             skip_columns=None,
             fields=None,
-            title_records=None,
             fields_types=None,
+            fields_titles=None,
     ):
         # check doc of PPTable for description of aruments
 
         self.records = records
 
-        self._ppt_fmt = self._init_format(fmt, fmt_obj, fields, fields_types)
+        self._ppt_fmt = self._init_format(
+            fmt, fmt_obj, fields, fields_types, fields_titles)
+
         self._ppt_fmt.set_limits(limits)
 
         if skip_columns is not None:
             self._ppt_fmt.remove_columns(skip_columns)
 
-        self.title_records = title_records or []
-
         self.header = header
         self.footer = (
             footer if footer is not None else f"Total {len(self.records)} records")
 
-    def _init_format(self, fmt, fmt_obj, fields, fields_types) -> PPTableFormat:
+    def _init_format(
+        self, fmt, fmt_obj, fields, fields_types, fields_titles,
+    ) -> PPTableFormat:
         # part of PPTable constructor.
         # depending on arguments choose apropriate way to create PPTableFormat
 
@@ -1667,7 +1773,7 @@ class _PPTableImpl:
             return fmt_obj.clone()
 
         return PPTableFormat.make(
-            fmt, fields, fields_types,
+            fmt, fields, fields_types, fields_titles,
             self.records[0] if self.records else None,
         )
 
@@ -1690,11 +1796,11 @@ class _PPTableImpl:
     def gen_ch_lines(self, cp: PPTable.TablePalette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""
 
-        columns = self._ppt_fmt.repr_structure.columns
+        repr_structure = self._ppt_fmt.repr_structure
+        columns = repr_structure.columns
         record_fields_palettes = [
             cp.get_sub_palette(col.field.field_type.PALETTE_CLASS)
             for col in columns]
-        title_fields_palettes = [cp for col in columns]
 
         # prepare list of table lines. Table line may correspond to a record
         # or to a special markup lines
@@ -1708,7 +1814,7 @@ class _PPTableImpl:
                 field.fetch_value(rec) for field in break_by_fields]
             if (prev_break_by_values is not None and
                 prev_break_by_values != cur_break_by_values
-               ):
+            ):
                 table_lines.append(break_line)
             table_lines.append(rec)
             prev_break_by_values = cur_break_by_values
@@ -1734,9 +1840,8 @@ class _PPTableImpl:
         self._ppt_fmt.any_lines_skipped = n_skipped > 0
 
         # calculate actual widths of table columns (col.width)
-        if not self._ppt_fmt.repr_structure.col_widths_finalized():
-            self._ppt_fmt.repr_structure.detect_actual_columns_widths(
-                self.title_records,
+        if not repr_structure.col_widths_finalized():
+            repr_structure.detect_actual_columns_widths(
                 (
                     rec for rec in table_lines
                     if not isinstance(rec, self._ServiceLine)
@@ -1769,53 +1874,26 @@ class _PPTableImpl:
         # 2. table header (name)
         if self.header:
             line = FieldType.fit_to_width(
-                [cp.col_title(self.header)], table_width - 2, ALIGN_LEFT, cp)
+                [cp.header(self.header)], table_width - 2, ALIGN_LEFT, cp)
             line.insert(0, sep)
             line.append(sep)
             yield CHText.make(line)
 
-        # 3. column names
-        #
-        # 'Names' part of the table consists of two sections:
-        # - names of the columns
-        # - (optional) title records
-        # If a table has title records it looks as if the table has multi-line
-        # column names. But the sources of data for these lines are different.
-        # For the first line the source is the columns names, and for subsequent
-        # lines it is explicitely specified record objects. Different processing
-        # is required in these cases.
-        #
-        # 3.1. the first line of column names
-        line = [sep]
-        is_first = True
-        for col in columns:
-            if is_first:
-                is_first = False
-            else:
-                line.append(sep)
-            line.extend(
-                col.make_title_cell_ch_text_by_value(col.name, cp))
-
-        line.append(sep)
-        yield CHText.make(line)
-
-        # 3.2. multi-line column titles
-        cols_and_palettes = list(zip(columns, title_fields_palettes))
-        for title_rec in self.title_records:
-            yield CHText.make(self._make_table_line(
-                title_rec, cols_and_palettes, sep, CELL_TYPE_TITLE, cp))
+        # 3. multi column titles
+        for title_line_data in repr_structure.gen_title_lines_ch_chunks_all(cp):
+            yield self._make_table_line(title_line_data, sep)
 
         # 4. one more border_line
         yield border_line
 
         # 5. table contents - actual records and service lines
-        cols_and_palettes = list(zip(columns, record_fields_palettes))
         for tl in table_lines:
             if isinstance(tl, self._ServiceLine):
                 yield tl.ch_text
             else:
-                yield CHText.make(self._make_table_line(
-                    tl, cols_and_palettes, sep, CELL_TYPE_BODY, cp))
+                yield self._make_table_line(
+                    self._ppt_fmt.repr_structure.make_record_ch_chunks_all(tl, cp),
+                    sep)
 
         # 6. final border line
         yield border_line
@@ -1825,18 +1903,17 @@ class _PPTableImpl:
             yield CHText.make(FieldType.fit_to_width(
                 [cp.text(self.footer)], table_width, ALIGN_LEFT, cp))
 
-    def _make_table_line(
-        self, record, cols_and_palettes, sep, cell_type, cp,
-    ) -> [CHText.Chunk]:
-        # create CHText chunks - representaion of a single record in table
+    def _make_table_line(self, cells_ch_texts_data, sep) -> [CHText.Chunk]:
+        # helper method wich combines cells text into table line
+        # [[CHText.Chunk]] -> [CHText.Chunk]
         line = [sep]
         is_first = True
-        for col, field_palette in cols_and_palettes:
+        for cell_ch_text_items in cells_ch_texts_data:
             if is_first:
                 is_first = False
             else:
                 line.append(sep)
-            line.extend(col.make_cell_ch_text(record, cell_type, field_palette, cp))
+            line.extend(cell_ch_text_items)
         line.append(sep)
         return line
 
@@ -1844,7 +1921,7 @@ class _PPTableImpl:
 #########################
 # PPRecord
 
-class _PPRecordData:
+class PPRecordChData:
     # result produced by PPRecordFmt.
 
     def __init__(self, cols_names, cols_ch_texts):
@@ -1853,6 +1930,9 @@ class _PPRecordData:
 
     def __str__(self):
         return " ".join(str(c) for c in self.columns)
+
+    def ch_text(self):
+        return CHText(" ").join(self.columns)
 
 
 class PPRecordFmt(PaletteUser):
@@ -1863,30 +1943,33 @@ class PPRecordFmt(PaletteUser):
 
     PALETTE_CLASS = PPRecordPalette
 
-    def __init__(self, fmt, fields=None, fields_types=None, sample_record=None):
+    def __init__(
+        self, fmt,
+        fields=None, fields_types=None, fields_titles=None, sample_record=None,
+    ):
         self.repr_structure = ReprStructure.make(
-            fmt, fields, fields_types, sample_record)
+            fmt, fields, fields_types, fields_titles, sample_record)
 
-    def __call__(self, rec_obj, *, palette=None, no_color=None, colors_conf=None):
+    def __call__(self, record, *, palette=None, no_color=None, colors_conf=None):
+        """Create colored text representation of the record.
 
+        Returns PPRecordChData object, which can be directly printed or converted
+        to string. It also contains text representations of the individual columns.
+        """
         cp = self._mk_palette(palette, no_color, colors_conf)
 
         if not self.repr_structure.col_widths_finalized():
             self.repr_structure.detect_actual_columns_widths(
-                [], [rec_obj],
+                [record],
                 _account_columns_names=False,
             )
 
-        cols_names = []
-        cols_ch_texts = []
+        cols_names = [col.name for col in self.repr_structure.columns]
+        cols_ch_texts = [
+            CHText(ch_items)
+            for ch_items in self.repr_structure.make_record_ch_chunks_all(record, cp)]
 
-        for col in self.repr_structure.columns:
-            field_palette = cp.get_sub_palette(col.field.field_type.PALETTE_CLASS)
-            cols_names.append(col.name)
-            cols_ch_texts.append(CHText(
-                col.make_cell_ch_text(rec_obj, CELL_TYPE_BODY, field_palette, cp)))
-
-        return _PPRecordData(cols_names, cols_ch_texts)
+        return PPRecordChData(cols_names, cols_ch_texts)
 
 
 #########################
@@ -1952,7 +2035,7 @@ class PPEnumFieldType(FieldType):
         """Return simple string name of the value."""
         return self.enum_values.get(value, self.enum_missing_value)[0]
 
-    def make_desired_cell_ch_text(
+    def make_desired_cell_ch_chunks(
         self, value, fmt_modifier, field_palette,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment"""
@@ -1992,7 +2075,7 @@ class PPEnumFieldType(FieldType):
             if value is None:
                 # special case: cell will not contain enum's value and name,
                 # but a single None
-                text_and_alignment = super().make_desired_cell_ch_text(
+                text_and_alignment = super().make_desired_cell_ch_chunks(
                     value, None, cp)
                 by_fmt_cache['val'][value] = text_and_alignment
                 by_fmt_cache['name'][value] = text_and_alignment
@@ -2004,7 +2087,7 @@ class PPEnumFieldType(FieldType):
         color_fmt = cp.get_color(syntax_name)
 
         # 'val' format
-        val_text_items, align = super().make_desired_cell_ch_text(value, None, cp)
+        val_text_items, align = super().make_desired_cell_ch_chunks(value, None, cp)
         by_fmt_cache['val'][value] = (val_text_items, align)
 
         # 'name' format

@@ -609,10 +609,11 @@ class TestPPTable(unittest.TestCase):
         ]
         table = PPTable(
             records, fields=['id', 'level', 'name'],
-            title_records=[
-                ('iddescr', 'll', 'nnnn'),
-                (555, 777, None),
-            ],
+            fields_titles={
+                'id': ('id\niddescr', 555),
+                'level': ('level\nll', 777),
+                'name': ('name\nnnnn', None),
+            },
             fmt="id,id:10,  level,name:1-10, level:20",
         )
         verify_table_format(
@@ -738,6 +739,7 @@ class TestPPTable(unittest.TestCase):
                 field_name,
                 dflt_field_type,
                 pos,
+                field_name,
             ) for pos, field_name in [
                 (0, 'id'),
                 (2, 'name'),
@@ -783,7 +785,7 @@ class TestPPTable(unittest.TestCase):
         # 0. prepare custom field type
         class CustomFieldType(FieldType):
             """Produce some text, which is not just str(value)"""
-            def make_desired_cell_ch_text(
+            def make_desired_cell_ch_chunks(
                 self, value, fmt_modifier, _c,
             ) -> ([CHText.Chunk], int):
                 """Custom format value for a table column.
@@ -1288,15 +1290,6 @@ class TestEnhancedPPTable(unittest.TestCase):
             ((4, 7, "Elizer"), ('iz', 'Izrael')),
         ]
 
-        # !!!!! valid change
-        #with self.assertRaises(ValueError) as exc:
-        #    PPTable(records, fmt=(
-        #        "id:10,"  # value_path is not specified
-        #        " name<-0.2,country<-1.1"))
-        #
-        # err_msg = str(exc.exception)
-        # self.assertIn("value_paths not found", err_msg)
-
         table = PPTable(records, fmt=(
             "id:10,"  # value_path is not specified, but it's ok because ...
             " name<-0.2,country<-1.1,"
@@ -1383,9 +1376,16 @@ class TestPPRecordFormatter(unittest.TestCase):
 
         r = rec_fmt((10, "John", 42))
 
+        s = str(r)
+        ch = r.ch_text()
+
         #print(r)
+        #print(s)
+
         #print(r.cols_by_name["id"])
         #print("--".join(str(c) for c in r.columns))
+
+        #print(rec_fmt((10, "John", 42), no_color=True))
 
     def test_record_fmt_named_tuple(self):
         """Test PPRecordFmt usage when record is a named tuple."""
