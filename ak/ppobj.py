@@ -485,8 +485,10 @@ class PPWrap:
 #
 # The purpose of the following record-related classes is to facilitate
 # processing records and presenting data from the records on screen.
-#
+
+#########################
 # class FieldType
+
 
 class FieldType(PaletteUser):
     """Describe properties of a field (in a record).
@@ -495,6 +497,16 @@ class FieldType(PaletteUser):
 
     Not trivial example of the FieldType is a enum. The value is just an id,
     but we may want to display (or not to display) the corresponding name as well.
+
+    FieldType should implement the following methods:
+    - make_desired_cell_ch_chunks: returns "desired text"(*) and alignment
+    - get_cell_text_len: return length of the "desired text"(*)
+    - make_cell_ch_chunks: returns properly trancated or enlarged "desired text"(*)
+        to fit specified length.
+
+    (*) "desired text" is a colored text representing the value. Actual text may
+    be different if it is necessary to fit the text into a cell of a specified width.
+    For performance reasons it is not a CHText object, but [CHText.Chunk].
     """
     class RecordPalette(Palette):
         """Palette used for field values of standard types."""
@@ -524,12 +536,6 @@ class FieldType(PaletteUser):
             value, fmt_modifier,
             self.PALETTE_CLASS(no_color=True))
         return CHText.calc_chunks_len(ch_text_chunks)
-
-    def get_title_cell_text_len(self, value, fmt_modifier) -> int:
-        """Calculate len of the title of a table column."""
-        # Default implementation does not use fmt_modifier argument
-        # pylint: disable=unused-argument
-        return max(len(str(l)) for l in self.title_lines)
 
     def make_desired_cell_ch_chunks(
         self, value, fmt_modifier, field_palette,
