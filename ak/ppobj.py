@@ -27,8 +27,6 @@ from collections import defaultdict
 from ak import utils
 from ak.color import CHText, Palette, CompoundPalette, PaletteUser, ConfColor
 
-ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
-
 
 class CHTextResult:
     """CHTextResult can be used either as a usual CHText object, or as iterator.
@@ -518,6 +516,9 @@ class FieldType(PaletteUser):
     be different if it is necessary to fit the text into a cell of a specified width.
     For performance reasons it is not a CHText object, but [CHText.Chunk].
     """
+
+    ALIGN_LEFT, ALIGN_CENTER, ALIGN_RIGHT = 1, 2, 3
+
     class RecordPalette(Palette):
         """Palette used for field values of standard types."""
         SYNTAX_DEFAULTS = {
@@ -564,15 +565,15 @@ class FieldType(PaletteUser):
                 f"Specified fmt_modifier: '{fmt_modifier}'")
         if PrettyPrinter.is_keyword_value(value):
             color_fmt = cp.keyword
-            align = ALIGN_RIGHT
+            align = self.ALIGN_RIGHT
         elif isinstance(value, Number):
             color_fmt = cp.number
-            align = ALIGN_RIGHT
+            align = self.ALIGN_RIGHT
         elif isinstance(value, FieldValueType):
             return value.make_desired_cell_ch_chunks(fmt_modifier, field_palette)
         else:
             color_fmt = cp.text
-            align = ALIGN_LEFT
+            align = self.ALIGN_LEFT
         return [color_fmt(str(value))], align
 
     def make_cell_ch_chunks(
@@ -607,8 +608,8 @@ class FieldType(PaletteUser):
             f"Field type {self} does not support format modifiers. "
             f"(specified format modifier: '{fmt_modifier}')")
 
-    @staticmethod
-    def fit_to_width(ch_chunks, width, align, cp) -> [CHText.Chunk]:
+    @classmethod
+    def fit_to_width(cls, ch_chunks, width, align, cp) -> [CHText.Chunk]:
         """[CHText.Chunk] -> [CHText.Chunk] of exactly specified length.
 
         Arguments:
@@ -617,7 +618,8 @@ class FieldType(PaletteUser):
             - single CHText.Chunk
             - CHText
         - width: desired width of result
-        - align: pbobj.ALIGN_LEFT or pbobj.ALIGN_CENTER or pbobj.ALIGN_RIGHT
+        - align: FieldType.ALIGN_LEFT or FieldType.ALIGN_CENTER
+            or FieldType.ALIGN_RIGHT
         - warn_syntax_name: in case the text does not fit into width
             it is not simply truncated, but modified - warn_syntax_name is required
             to get a color to be used to indicate modifications
@@ -640,7 +642,7 @@ class FieldType(PaletteUser):
         if filler_len == 0:
             return ch_chunks  # lucky, the text has exactly necessary length
         if filler_len > 0:
-            if align == ALIGN_CENTER:
+            if align == cls.ALIGN_CENTER:
                 left_filer_len = filler_len // 2
                 right_filler_len = filler_len - left_filer_len
                 result = [cp.text(' '*left_filer_len)]
@@ -648,9 +650,9 @@ class FieldType(PaletteUser):
                 result.append(cp.text(' '*right_filler_len))
                 return result
             filler = cp.text(' '*filler_len)
-            if align == ALIGN_LEFT:
+            if align == cls.ALIGN_LEFT:
                 return ch_chunks + [filler, ]
-            assert align == ALIGN_RIGHT
+            assert align == cls.ALIGN_RIGHT
             result = [filler, ]
             result.extend(ch_chunks)
             return result
@@ -698,7 +700,7 @@ class _DefaultTitleFieldType(_DefaultFieldType):
     ) -> ([CHText.Chunk], int):
         """Make desired content for title."""
         if isinstance(value, str) and fmt_modifier is None:
-            return field_palette.col_title(value), ALIGN_LEFT
+            return field_palette.col_title(value), self.ALIGN_LEFT
         return super().make_desired_cell_ch_chunks(value, fmt_modifier, field_palette)
 
 
@@ -1930,7 +1932,7 @@ class _PPTableImpl:
                 cp.text(f"{n_skipped} records skipped"),
             ],
             table_width - 2,
-            ALIGN_LEFT,
+            FieldType.ALIGN_LEFT,
             cp)
         skipped_line_contents.insert(0, sep)
         skipped_line_contents.append(sep)
@@ -1944,7 +1946,7 @@ class _PPTableImpl:
         # 2. table header (name)
         if self.header:
             line = FieldType.fit_to_width(
-                [cp.header(self.header)], table_width - 2, ALIGN_LEFT, cp)
+                [cp.header(self.header)], table_width - 2, FieldType.ALIGN_LEFT, cp)
             line.insert(0, sep)
             line.append(sep)
             yield CHText.make(line)
@@ -1971,7 +1973,7 @@ class _PPTableImpl:
         # 7. summary line
         if self.footer:
             yield CHText.make(FieldType.fit_to_width(
-                [cp.text(self.footer)], table_width, ALIGN_LEFT, cp))
+                [cp.text(self.footer)], table_width, FieldType.ALIGN_LEFT, cp))
 
     def _make_table_line(self, cells_ch_texts_data, sep) -> [CHText.Chunk]:
         # helper method wich combines cells text into table line
@@ -2172,7 +2174,7 @@ class PPEnumFieldType(FieldType):
         full_text_items.extend(val_text_items)
         full_text_items.append(cp.text(" "))
         full_text_items.append(color_fmt(name))
-        by_fmt_cache['full'][value] = (full_text_items, ALIGN_LEFT)
+        by_fmt_cache['full'][value] = (full_text_items, self.ALIGN_LEFT)
 
     def get_cell_text_len(self, value, fmt_modifier) -> int:
         """Calculate length of text representation of the value."""

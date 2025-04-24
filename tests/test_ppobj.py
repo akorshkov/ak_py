@@ -5,9 +5,9 @@ import io
 from collections import namedtuple
 
 from ak.color import CHText, ConfColor, ColorFmt
-from ak import ppobj
 from ak.ppobj import CHTextResult, PrettyPrinter, pp
-from ak.ppobj import FieldType, RecordField, PPTable, PPEnumFieldType, PPRecordFmt
+from ak.ppobj import (
+    FieldType, FieldValueType, RecordField, PPTable, PPEnumFieldType, PPRecordFmt)
 
 
 #########################
@@ -802,7 +802,7 @@ class TestPPTable(unittest.TestCase):
                     str_val = str(value) + " " + fmt_modifier
                 text_items = [_c.number(str_val)]
 
-                return text_items, ppobj.ALIGN_LEFT
+                return text_items, FieldType.ALIGN_LEFT
 
             def is_fmt_modifier_ok(self, fmt_modifier):
                 """Verify 'fmt_modifier' is acceptable by this Field Type.
@@ -1370,7 +1370,7 @@ class TestCustomFieldValueType(unittest.TestCase):
     def test_success_scenario(self):
         """ """
         # 1. create the custom FieldValueType
-        class CustomFieldValue(ppobj.FieldValueType):
+        class CustomFieldValue(FieldValueType):
             def __init__(self, x):
                 self.x = x
 
@@ -1380,7 +1380,7 @@ class TestCustomFieldValueType(unittest.TestCase):
                     field_palette.text("the value is "),
                     field_palette.number(str(self.x)),
                     field_palette.keyword("!"),
-                ], ppobj.ALIGN_LEFT
+                ], FieldType.ALIGN_LEFT
 
         # 2. create a table, which displays these values
 

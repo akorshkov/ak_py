@@ -6,7 +6,6 @@ import sqlite3
 
 from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
-from ak import ppobj
 from ak.ppobj import FieldType, PPTable
 
 from .test_ppobj import verify_table_format
@@ -127,7 +126,7 @@ class TestMCallerSQL(unittest.TestCase):
             ) -> ([str|tuple], int):
                 """adds some text to a value """
                 text = [_c.number(str(value) + " custom descr")]
-                return text, ppobj.ALIGN_LEFT
+                return text, FieldType.ALIGN_LEFT
 
         custom_field_type = CustomFieldType()
 
