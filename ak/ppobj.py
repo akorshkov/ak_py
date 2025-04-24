@@ -8,7 +8,13 @@ Classes provided by this module:
 - PPEnumFieldType - to be used by PPTable for enum fields
 """
 
-# - FieldType       - general properties of a field
+# - FieldType       - general properties of a field. Defines how to display misc
+#                     values in representation column. It implements default
+#                     representation for values of a symple types (ints, strings,
+#                     etc.) or delegates his task to the value itself (if the value
+#                     is an instance of FieldValueType class)
+# - FieldValueType  - the value of a field may be an instance of this class.
+#                     Check description of FieldType class for details.
 # - RecordField     - field type and it's location in a record
 # - RecordStructure - all the fields in a record
 # - ReprColumn      - field, widths, fmt_modifier
@@ -495,6 +501,10 @@ class FieldType(PaletteUser):
 
     The main purpose of this class is to format the field's value.
 
+    This class implements default representation for simple values (numbers,
+    strings, etc.), or delegates this task to the value objects itself (if
+    the value is an instance of FieldValueType class).
+
     Not trivial example of the FieldType is a enum. The value is just an id,
     but we may want to display (or not to display) the corresponding name as well.
 
@@ -529,7 +539,7 @@ class FieldType(PaletteUser):
         """Calculate length of text representation of the value (for usual cell)
 
         This implementation is universal, but inefficient. Override in
-        derived classes to avoid construction of syntax items objects - usually
+        derived classes to avoid construction of CHText.Chunk objects - usually
         it is not required to find out text length.
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
@@ -558,6 +568,8 @@ class FieldType(PaletteUser):
         elif isinstance(value, Number):
             color_fmt = cp.number
             align = ALIGN_RIGHT
+        elif isinstance(value, FieldValueType):
+            return value.make_desired_cell_ch_chunks(fmt_modifier, field_palette)
         else:
             color_fmt = cp.text
             align = ALIGN_LEFT
@@ -568,6 +580,10 @@ class FieldType(PaletteUser):
         field_palette, record_palette,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
+        if isinstance(value, FieldValueType):
+            return value.make_cell_ch_chunks(
+                fmt_modifier, width, field_palette, record_palette)
+
         text, align = self.make_desired_cell_ch_chunks(
             value, fmt_modifier, field_palette)
 
@@ -653,9 +669,11 @@ class _DefaultFieldType(FieldType):
     # Default FieldType to be used for fields with simple values.
     # Implements more efficient get_cell_text_len
 
-    def get_cell_text_len(self, value, _fmt_modifier):
+    def get_cell_text_len(self, value, fmt_modifier):
         """Calculate length of text representation of the value."""
         # caluculate text length w/o constructing CHText object for the cell
+        if isinstance(value, FieldValueType):
+            return value.get_cell_text_len(fmt_modifier)
         return len(str(value))
 
 
@@ -682,6 +700,52 @@ class _DefaultTitleFieldType(_DefaultFieldType):
         if isinstance(value, str) and fmt_modifier is None:
             return field_palette.col_title(value), ALIGN_LEFT
         return super().make_desired_cell_ch_chunks(value, fmt_modifier, field_palette)
+
+
+class FieldValueType(PaletteUser):
+    """More complex values of fields.
+
+    This class provides functionality similar to the functionality provided
+    by 'FieldType' calss. The difference is that 'FieldType' objects format given
+    values to be displayed in a record column. Objects of 'FieldValueType' ARE the
+    values which can produce representation of self for a record column.
+
+    Names of the mothods the derived class should implement are the same as in
+    'FieldType' class. But these methods do not accept the 'value' argument:
+
+    - make_desired_cell_ch_chunks: returns "desired text" and alignment
+    - get_cell_text_len: return length of the "desired text"
+    - make_cell_ch_chunks: returns properly trancated or enlarged "desired text"
+        to fit specified length.
+    """
+
+    PALETTE_CLASS = FieldType.RecordPalette
+
+    def make_desired_cell_ch_chunks(
+        self, fmt_modifier, field_palette,
+    ) -> ([CHText.Chunk], int):
+        raise NotImplementedError(
+            f"'make_desired_cell_ch_chunks' is not implemented in '{type(self)}'")
+
+    def get_cell_text_len(self, fmt_modifier):
+        """Calculate length of text representation of self (for usual cell)
+
+        This implementation is universal, but inefficient. Override in
+        derived classes to avoid construction of CHText.Chunk objects - usually
+        it is not required to find out text length.
+        """
+        ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
+            fmt_modifier, self.PALETTE_CLASS(no_color=True))
+        return CHText.calc_chunks_len(ch_text_chunks)
+
+    def make_cell_ch_chunks(
+        self, fmt_modifier, width,
+        field_palette, record_palette,
+    ) -> [CHText.Chunk]:
+        """self -> [CHText.Chunk] having exactly specified width."""
+        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, field_palette)
+
+        return FieldType.fit_to_width(text, width, align, record_palette)
 
 
 class RecordField:
