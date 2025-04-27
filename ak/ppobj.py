@@ -11,10 +11,9 @@ Classes provided by this module:
 # - FieldType       - general properties of a field. Defines how to display misc
 #                     values in representation column. It implements default
 #                     representation for values of a symple types (ints, strings,
-#                     etc.) or delegates his task to the value itself (if the value
-#                     is an instance of FieldValueType class)
-# - FieldValueType  - the value of a field may be an instance of this class.
-#                     Check description of FieldType class for details.
+#                     etc.)
+# - FieldValueType  - if the value of a field is an instance of this class,
+#                     then the value itself produces it's representation.
 # - RecordField     - field type and it's location in a record
 # - RecordStructure - all the fields in a record
 # - ReprColumn      - field, widths, fmt_modifier
@@ -500,8 +499,7 @@ class FieldType(PaletteUser):
     The main purpose of this class is to format the field's value.
 
     This class implements default representation for simple values (numbers,
-    strings, etc.), or delegates this task to the value objects itself (if
-    the value is an instance of FieldValueType class).
+    strings, etc.)
 
     Not trivial example of the FieldType is a enum. The value is just an id,
     but we may want to display (or not to display) the corresponding name as well.
@@ -569,21 +567,17 @@ class FieldType(PaletteUser):
         elif isinstance(value, Number):
             color_fmt = cp.number
             align = self.ALIGN_RIGHT
-        elif isinstance(value, FieldValueType):
-            return value.make_desired_cell_ch_chunks(fmt_modifier, field_palette)
         else:
             color_fmt = cp.text
             align = self.ALIGN_LEFT
         return [color_fmt(str(value))], align
 
     def make_cell_ch_chunks(
-        self, value, fmt_modifier, width,
-        field_palette, record_palette,
+        self, value, fmt_modifier, width, record_palette,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
-        if isinstance(value, FieldValueType):
-            return value.make_cell_ch_chunks(
-                fmt_modifier, width, field_palette, record_palette)
+
+        field_palette = record_palette.get_sub_palette(self.PALETTE_CLASS)
 
         text, align = self.make_desired_cell_ch_chunks(
             value, fmt_modifier, field_palette)
@@ -674,8 +668,6 @@ class _DefaultFieldType(FieldType):
     def get_cell_text_len(self, value, fmt_modifier):
         """Calculate length of text representation of the value."""
         # caluculate text length w/o constructing CHText object for the cell
-        if isinstance(value, FieldValueType):
-            return value.get_cell_text_len(fmt_modifier)
         return len(str(value))
 
 
@@ -721,6 +713,10 @@ class FieldValueType(PaletteUser):
         to fit specified length.
     """
 
+    ALIGN_LEFT = FieldType.ALIGN_LEFT
+    ALIGN_CENTER = FieldType.ALIGN_CENTER
+    ALIGN_RIGHT = FieldType.ALIGN_RIGHT
+
     PALETTE_CLASS = FieldType.RecordPalette
 
     def make_desired_cell_ch_chunks(
@@ -741,10 +737,11 @@ class FieldValueType(PaletteUser):
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def make_cell_ch_chunks(
-        self, fmt_modifier, width,
-        field_palette, record_palette,
+        self, fmt_modifier, width, record_palette,
     ) -> [CHText.Chunk]:
         """self -> [CHText.Chunk] having exactly specified width."""
+        field_palette = record_palette.get_sub_palette(self.PALETTE_CLASS)
+
         text, align = self.make_desired_cell_ch_chunks(fmt_modifier, field_palette)
 
         return FieldType.fit_to_width(text, width, align, record_palette)
@@ -948,20 +945,23 @@ class ReprColumn:
         (Actual cell may be shorter or longer).
         """
         value = self.field.fetch_value(record)
+        if isinstance(value, FieldValueType):
+            return value.get_cell_text_len(self.fmt_modifier)
         return self.field.field_type.get_cell_text_len(value, self.fmt_modifier)
 
-    def make_cell_ch_chunks(
-        self, record, field_palette, table_palette,
-    ) -> [CHText.Chunk]:
+    def make_cell_ch_chunks(self, record, record_palette) -> [CHText.Chunk]:
         """Fetch value from record and make colored text for a cell.
 
         Length of created text is exactly self.width.
         """
         value = self.field.fetch_value(record)
 
+        if isinstance(value, FieldValueType):
+            return value.make_cell_ch_chunks(
+                self.fmt_modifier, self.width, record_palette)
+
         return self.field.field_type.make_cell_ch_chunks(
-            value, self.fmt_modifier, self.width,
-            field_palette, table_palette,
+            value, self.fmt_modifier, self.width, record_palette,
         )
 
     def to_fmt_str(self):
@@ -1339,8 +1339,7 @@ class ReprStructure:
         result = []
         for col in self.columns:
             field_type = col.field.field_type
-            field_palette = cp.get_sub_palette(field_type.PALETTE_CLASS)
-            result.append(col.make_cell_ch_chunks(record, field_palette, cp))
+            result.append(col.make_cell_ch_chunks(record, cp))
         return result
 
     def gen_title_lines_ch_chunks_all(self, cp) -> Iterator[[[CHText.Chunk]]]:
@@ -1349,7 +1348,6 @@ class ReprStructure:
         The title may consist of several lines, for each line [[CHText.Chunk]]
         is generated. Each inner list corresponds to a title of a single column.
         """
-        title_palette = cp.get_sub_palette(_DefaultTitleFieldType.PALETTE_CLASS)
         num_title_lines = max(len(col.field.title_lines) for col in self.columns)
         for i in range(num_title_lines):
             line_result = []  # [[CHText.Chunk]]
@@ -1358,7 +1356,7 @@ class ReprStructure:
                     col.field.title_lines[i] if i < len(col.field.title_lines)
                     else "")
                 ch_items = self.title_field_type.make_cell_ch_chunks(
-                    title_item, None, col.width, title_palette, cp)
+                    title_item, None, col.width, cp)
                 line_result.append(ch_items)
             yield line_result
 
