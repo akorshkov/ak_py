@@ -4,9 +4,10 @@ import unittest
 import io
 from collections import namedtuple
 
-from ak.color import CHText, ConfColor, ColorFmt
+from ak.color import CHText, ConfColor, ColorFmt, Palette, CompoundPalette
 from ak.ppobj import CHTextResult, PrettyPrinter, pp
 from ak.ppobj import (
+    PPObj,
     FieldType, FieldValueType, RecordField, PPTable, PPEnumFieldType, PPRecordFmt)
 
 
@@ -304,6 +305,115 @@ class TestCHTextResult(unittest.TestCase):
         self.assertEqual(t1, t1)
         self.assertEqual(t1, t2)
 
+
+#########################
+# Test PPObj
+
+class TestSimplePPObj(unittest.TestCase):
+    """Test simple Pretty-Printable object."""
+
+    class SimplePPObj(PPObj):
+        """Simple PPObj."""
+
+        # PPObj should have PALETTE_CLASS:
+        class MyPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                "X.C1": "NUMBER",
+                "X.C2": "BLUE",
+            }
+            color_1 = ConfColor("X.C1")
+            color_2 = ConfColor("X.C2")
+
+        PALETTE_CLASS = MyPalette
+
+        def __init__(self, val1, val2):
+            self.val1 = val1
+            self.val2 = val2
+
+        def make_ch_text(self, palette):
+            """Method which produces color representaion of self.
+
+            Alternatively it is possible to implement 'gen_ch_lines' method.
+            """
+            return palette.color_1(self.val1) + palette.color_2(self.val2)
+
+    def test_simple_ppobj(self):
+        """Test behavior of a simple PPObj."""
+
+        # 0. create an instance of SimplePPObj
+        obj = self.SimplePPObj("aa", "bb")
+
+        # 1. It is possible to get palette, which will be used to print this object
+        obj_palette = obj.make_palette()
+        # print(obj_palette.make_report())
+
+        # 2. It is possible just to print it
+        with io.StringIO() as output:
+            print(obj, file=output)
+            print_result = output.getvalue().strip()
+
+        expected_result = str(ColorFmt("YELLOW")("aa") + ColorFmt("BLUE")("bb"))
+
+        self.assertEqual(print_result, expected_result)
+
+    def test_palette_in_compound_palette(self):
+        """Test how ppobj may use palette from CompoundPalette."""
+
+        class AltSimplePPObjPalette1(self.SimplePPObj.MyPalette):
+            """Alternative palette to be used by SimplePPObj."""
+            SYNTAX_DEFAULTS = {
+                "ALT1_C1": "RED",
+                "ALT1_C2": "YELLOW",
+            }
+            color_1 = ConfColor("ALT1_C1")
+            color_2 = ConfColor("ALT1_C2")
+
+        class AltSimplePPObjPalette2(self.SimplePPObj.MyPalette):
+            """Alternative palette to be used by SimplePPObj."""
+            SYNTAX_DEFAULTS = {
+                "ALT2_C1": "CYAN",
+                "ALT2_C2": "MAGENTA",
+            }
+            color_1 = ConfColor("ALT2_C1")
+            color_2 = ConfColor("ALT2_C2")
+
+        class BigObjPalette(CompoundPalette):
+            SUB_PALETTES_MAP = {
+                (self.SimplePPObj.MyPalette, None): AltSimplePPObjPalette1,
+                (self.SimplePPObj.MyPalette, "cm"): AltSimplePPObjPalette2,
+            }
+
+        palette = BigObjPalette()
+
+        # now palette contains information about alternative palette for
+        # the SimplePPObj.
+        # It can be used to print the object
+
+        obj = self.SimplePPObj("aaa", "bbb")
+
+        text_std = obj.ch_text()
+
+        # 1. compound palette is used. But it contains no alternative palette
+        # for our class and shade "unexpected shade". So, standard palette is used.
+        chtext = obj.ch_text(compound_palette=palette, shade_name="unexpected shade")
+        self.assertEqual(chtext, text_std)
+
+        # 2. compound palette is used. Shade is not specified.
+        # AltSimplePPObjPalette1 is used in this case (see SUB_PALETTES_MAP)
+        chtext = obj.ch_text(compound_palette=palette)
+        self.assertNotEqual(chtext, text_std)
+        self.assertEqual(
+            chtext,
+            ColorFmt("RED")("aaa") + ColorFmt("YELLOW")("bbb"),
+        )
+
+        # 3. compound palette is used, shade is specified.
+        chtext = obj.ch_text(compound_palette=palette, shade_name="cm")
+        self.assertNotEqual(chtext, text_std)
+        self.assertEqual(
+            chtext,
+            ColorFmt("CYAN")("aaa") + ColorFmt("MAGENTA")("bbb"),
+        )
 
 
 #########################
@@ -1095,7 +1205,7 @@ class TestPPTable(unittest.TestCase):
         )
 
 
-class TestByLineTableOerations(unittest.TestCase):
+class TestByLineTableOperations(unittest.TestCase):
     """Test how colored text is generated for table in 'line-by-line' mode."""
 
     def test_table_ch_lines_generation(self):

@@ -137,6 +137,8 @@ class PrettyPrinter(PaletteUser):
         self, obj_to_print, *,
         palette=None,
         no_color=False,
+        compound_palette=None,
+        shade_name=None,
     ) -> CHTextResult:
         """obj_to_print -> pretty-printed colored text.
 
@@ -146,8 +148,13 @@ class PrettyPrinter(PaletteUser):
             such class, contains colors to be used
         - no_color: optional bool; True indicates that produced text will contain
             no colors
+        - compound_palette: can be specified if the palette to use is a part of
+            the palette of some bigger object. Check CompoundPalette doc for more
+            details.
+        - shade_name: additional parameter for identication of the required palette
+            in the compound_palette.
         """
-        palette = self._mk_palette(palette, no_color)
+        palette = self._mk_palette(palette, no_color, compound_palette, shade_name)
         ppobj = _PrettyPrinterTextGen(self, obj_to_print)
         return CHTextResult(ppobj, palette)
 
@@ -399,6 +406,7 @@ class PPObj(PaletteUser):
 
     def ch_text(
         self, *, palette=None, no_color=False,
+        compound_palette=None, shade_name=None,
     ) -> CHTextResult:
         """Return CHTextResult - colored representation of self.
 
@@ -406,10 +414,15 @@ class PPObj(PaletteUser):
         - palette: (optional) Either Palette-derived class or an object of such type
         - no_color: instructs to produce text without color effects,
             False by default
+        - compound_palette: can be specified if the object's palette is a part of
+            the palette of some bigger object. Check CompoundPalette doc for more
+            details.
+        - shade_name: additional parameter for identication of the required palette
+            in the compound_palette.
         """
         return CHTextResult(
             self,
-            self._mk_palette(palette, no_color))
+            self._mk_palette(palette, no_color, compound_palette, shade_name))
 
     def make_ch_text(self, cp: Palette) -> CHText:
         """Return CHText - colored representation of self"""
@@ -2015,13 +2028,28 @@ class PPRecordFmt(PaletteUser):
         self.repr_structure = ReprStructure.make(
             fmt, fields, fields_types, fields_titles, sample_record)
 
-    def __call__(self, record, *, palette=None, no_color=False):
+    def __call__(
+        self, record, *, palette=None, no_color=False,
+        compound_palette=None, shade_name=None,
+    ):
         """Create colored text representation of the record.
 
         Returns PPRecordChData object, which can be directly printed or converted
         to string. It also contains text representations of the individual columns.
+
+        Arguments:
+        - record: object to print
+        - palette: optional PrettyPrinter.PPPalette-derived class or an object of
+            such class, contains colors to be used
+        - no_color: optional bool; True indicates that produced text will contain
+            no colors
+        - compound_palette: can be specified if the palette to use is a part of
+            the palette of some bigger object. Check CompoundPalette doc for more
+            details.
+        - shade_name: additional parameter for identication of the required palette
+            in the compound_palette.
         """
-        cp = self._mk_palette(palette, no_color)
+        cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
 
         if not self.repr_structure.col_widths_finalized():
             self.repr_structure.detect_actual_columns_widths(

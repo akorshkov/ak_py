@@ -1592,7 +1592,7 @@ class CompoundPalette(Palette):
         border = ConfColor("RED")  # overrides table border color
 
         SUB_PALETTES_MAP = {
-            (EnumPalette, "context"): CustomizedEnumPaletteClass
+            (EnumPalette, "shade"): CustomizedEnumPaletteClass
         }
 
     table_object.ch_text(palette=CustomizedTablePalette)
@@ -1605,7 +1605,7 @@ class CompoundPalette(Palette):
 
     The second element of the key in SUB_PALETTES_MAP can be used if the enums
     may appear in different parts of the table and we want to customize these
-    cells differently. Interpretation the "context" item is done by the class
+    cells differently. Interpretation the "shade" item is done by the class
     which uses the palette, actual Table class does not uses it and expects
     this element to be None).
     """
@@ -1622,13 +1622,13 @@ class CompoundPalette(Palette):
         self._sub_palettes = {}
 
     def get_sub_palette(
-        self, palette_class, modifier_name=None
+        self, palette_class, shade_name=None
     ):
-        key = (palette_class, modifier_name)
+        key = (palette_class, shade_name)
         result = self._sub_palettes.get(key)
         if result is None:
             actual_palette_class = self.SUB_PALETTES_MAP.get(
-                palette_class, palette_class)
+                key, palette_class)
             result = actual_palette_class(self._no_color, self.colors_conf)
             self._sub_palettes[key] = result
         return result
@@ -1694,15 +1694,30 @@ class PaletteUser:
     PALETTE_CLASS = None
 
     @classmethod
-    def _mk_palette(cls, palette, no_color):
-        # methods which produce colored text should accept three optional
+    def _mk_palette(cls, palette, no_color, compound_palette, shade_name):
+        # methods which produce colored text should accept four optional
         # agruments which control the colors of the result:
         # - palette: either Palette-derived class or an object of such class
         # - no_color: instructs to produce text without color effects,
         #     False by default
+        # - compound_palette: optional CompoundPalette object which contains
+        #     palette for cls as a sub-palette
+        # - shade_name: optional identifier of the "shade" of required palette in the
+        #     compound_palette
         #
         # This method provides standard way to create a palette object from
         # these arguments.
+
+        if compound_palette is not None:
+            assert palette is None, (
+                f"both 'palette' and 'compound_palette' arguments are specified")
+            assert cls.PALETTE_CLASS is not None, (
+                f"'PALETTE_CLASS' is not implemented in {str(cls)}")
+            return compound_palette.get_sub_palette(cls.PALETTE_CLASS, shade_name)
+        else:
+            assert shade_name is None, (
+                f"{shade_name=} argument is specified, "
+                f"but 'compound_palette' is None")
 
         if palette is not None:
             if isinstance(palette, Palette):
@@ -1721,6 +1736,12 @@ class PaletteUser:
         palette_class = palette or cls.PALETTE_CLASS
 
         return palette_class(no_color)
+
+    def make_palette(
+        self, *, palette=None, no_color=False,
+        compound_palette=None, shade_name=None,
+    ):
+        return self._mk_palette(palette, no_color, compound_palette, shade_name)
 
 
 def get_global_colors_config():

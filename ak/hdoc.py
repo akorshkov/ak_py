@@ -166,7 +166,7 @@ class HCommand(PaletteUser):
 
     def __init__(self, dets_level=_LEVEL_H):
         self.dets_level = dets_level
-        self._c = self._mk_palette(None, False)
+        self._c = self._mk_palette(None, False, None, None)
 
     def __call__(self, obj, filt=_DFLT_FILT_ARG):
         # this method does not return the help text, but prints it
