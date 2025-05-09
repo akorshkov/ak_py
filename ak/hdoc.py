@@ -49,7 +49,7 @@ class LLImpl(PaletteUser):
         - locals_dict: dictionary of console's locals
         """
         self.locals_dict = locals_dict
-        self._c = self._mk_palette(None, None, None)
+        self._c = self._mk_palette(None, None)
 
     # !!! is not used anywhere. Need tests
     def gen_sh_lines(self) -> Iterator[CHText]:
@@ -166,7 +166,7 @@ class HCommand(PaletteUser):
 
     def __init__(self, dets_level=_LEVEL_H):
         self.dets_level = dets_level
-        self._c = self._mk_palette(None, None, None)
+        self._c = self._mk_palette(None, False)
 
     def __call__(self, obj, filt=_DFLT_FILT_ARG):
         # this method does not return the help text, but prints it

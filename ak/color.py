@@ -1349,7 +1349,7 @@ class _PaletteMeta(type):
     # 2. Substitutes ConfColor items in class declaration with callables which
     #   return corresponding ColorFmt objects.
     def __call__(
-        palette_class, colors_conf=None, no_color=False,
+        palette_class, no_color=False, colors_conf=None,
         _local_colors=None, *, synced=False,
     ):
         """Intercept construction of the Palette object.
@@ -1629,7 +1629,7 @@ class CompoundPalette(Palette):
         if result is None:
             actual_palette_class = self.SUB_PALETTES_MAP.get(
                 palette_class, palette_class)
-            result = actual_palette_class(self.colors_conf, self._no_color)
+            result = actual_palette_class(self._no_color, self.colors_conf)
             self._sub_palettes[key] = result
         return result
 
@@ -1694,14 +1694,12 @@ class PaletteUser:
     PALETTE_CLASS = None
 
     @classmethod
-    def _mk_palette(cls, palette, no_color, colors_conf):
+    def _mk_palette(cls, palette, no_color):
         # methods which produce colored text should accept three optional
         # agruments which control the colors of the result:
         # - palette: either Palette-derived class or an object of such class
         # - no_color: instructs to produce text without color effects,
         #     False by default
-        # - colors_conf: global colors config is used by default. Explicitely
-        #     used for testing purposes only
         #
         # This method provides standard way to create a palette object from
         # these arguments.
@@ -1709,10 +1707,6 @@ class PaletteUser:
         if palette is not None:
             if isinstance(palette, Palette):
                 # ready-to-use palette object is provided
-                assert colors_conf is None, (
-                    f"Error creating Palette object. Both ready to use palette "
-                    f"object {palette=} of type {type(palette)} and {colors_conf=} "
-                    f"arguments are provided")
                 if no_color:
                     palette = type(palette)(no_color=True)
                 return palette
@@ -1726,7 +1720,7 @@ class PaletteUser:
 
         palette_class = palette or cls.PALETTE_CLASS
 
-        return palette_class(colors_conf, no_color)
+        return palette_class(no_color)
 
 
 def get_global_colors_config():

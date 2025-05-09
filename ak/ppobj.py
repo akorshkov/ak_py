@@ -137,7 +137,6 @@ class PrettyPrinter(PaletteUser):
         self, obj_to_print, *,
         palette=None,
         no_color=False,
-        colors_conf=None,
     ) -> CHTextResult:
         """obj_to_print -> pretty-printed colored text.
 
@@ -147,10 +146,8 @@ class PrettyPrinter(PaletteUser):
             such class, contains colors to be used
         - no_color: optional bool; True indicates that produced text will contain
             no colors
-        - colors_conf: optional, global colors config. Is used for testing
-            purposes only
         """
-        palette = self._mk_palette(palette, no_color, colors_conf)
+        palette = self._mk_palette(palette, no_color)
         ppobj = _PrettyPrinterTextGen(self, obj_to_print)
         return CHTextResult(ppobj, palette)
 
@@ -401,7 +398,7 @@ class PPObj(PaletteUser):
         return str(self.ch_text())
 
     def ch_text(
-        self, *, palette=None, no_color=False, colors_conf=None,
+        self, *, palette=None, no_color=False,
     ) -> CHTextResult:
         """Return CHTextResult - colored representation of self.
 
@@ -409,12 +406,10 @@ class PPObj(PaletteUser):
         - palette: (optional) Either Palette-derived class or an object of such type
         - no_color: instructs to produce text without color effects,
             False by default
-        - colors_conf: global colors config is used by default. Explicitely
-            used for testing purposes only
         """
         return CHTextResult(
             self,
-            self._mk_palette(palette, no_color, colors_conf))
+            self._mk_palette(palette, no_color))
 
     def make_ch_text(self, cp: Palette) -> CHText:
         """Return CHText - colored representation of self"""
@@ -2020,13 +2015,13 @@ class PPRecordFmt(PaletteUser):
         self.repr_structure = ReprStructure.make(
             fmt, fields, fields_types, fields_titles, sample_record)
 
-    def __call__(self, record, *, palette=None, no_color=None, colors_conf=None):
+    def __call__(self, record, *, palette=None, no_color=False):
         """Create colored text representation of the record.
 
         Returns PPRecordChData object, which can be directly printed or converted
         to string. It also contains text representations of the individual columns.
         """
-        cp = self._mk_palette(palette, no_color, colors_conf)
+        cp = self._mk_palette(palette, no_color)
 
         if not self.repr_structure.col_widths_finalized():
             self.repr_structure.detect_actual_columns_widths(

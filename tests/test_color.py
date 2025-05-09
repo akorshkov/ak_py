@@ -1094,7 +1094,7 @@ class TestColorsConfigAndGlobalPalette(unittest.TestCase):
         # Rule for 'SYNT_1' can be resolved now.
 
         # this affected the colors_conf
-        _ = MyPalette(colors_conf)
+        _ = MyPalette(True, colors_conf)
 
         report = colors_conf.make_report()
         # print(report)
