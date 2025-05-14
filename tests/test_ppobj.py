@@ -1578,3 +1578,21 @@ class TestPPRecordFormatter(unittest.TestCase):
 
         dep_ch_text = rec_repr.cols_by_name['department']
         self.assertEqual(dep_ch_text.plain_text(), "245")
+
+    def test_short_columns(self):
+        """Test PPRecordFmt behavior of value does not fit to the given space."""
+
+        tupletype = namedtuple("SomeRecord", ["id", "f1", "f2"])
+        record = tupletype(10, "some long value", 245)
+
+        # create the record formatter. Width of the 'f1' field is too short.
+        rec_fmt = PPRecordFmt("id:5,f1:5,f2:5")
+
+        # obj_palette = rec_fmt.make_palette()
+        # print(obj_palette.make_report())
+        # print(rec_fmt(record))
+
+        s = CHText.strip_colors(str(rec_fmt(record)))
+        # Expected result: 3 fields separated by space, each field width = 5
+        #                    01234 01234 01234
+        self.assertEqual(s, "   10 so...   245")

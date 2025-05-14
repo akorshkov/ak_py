@@ -622,9 +622,7 @@ class FieldType(PaletteUser):
         - width: desired width of result
         - align: FieldType.ALIGN_LEFT or FieldType.ALIGN_CENTER
             or FieldType.ALIGN_RIGHT
-        - warn_syntax_name: in case the text does not fit into width
-            it is not simply truncated, but modified - warn_syntax_name is required
-            to get a color to be used to indicate modifications
+        - cp: record's color palette
 
         Return value:
         Method always returns [CHText.Chunk].
@@ -1346,7 +1344,6 @@ class ReprStructure:
         """
         result = []
         for col in self.columns:
-            field_type = col.field.field_type
             result.append(col.make_cell_ch_chunks(record, cp))
         return result
 
@@ -2018,6 +2015,11 @@ class PPRecordFmt(PaletteUser):
 
     class PPRecordPalette(CompoundPalette, FieldType.RecordPalette):
         SUB_PALETTES_MAP = {}
+        SYNTAX_DEFAULTS = {
+            'RECORD.WARN': "WARN",
+        }
+
+        warn = ConfColor('RECORD.WARN')
 
     PALETTE_CLASS = PPRecordPalette
 
