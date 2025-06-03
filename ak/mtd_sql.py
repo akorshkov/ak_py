@@ -205,6 +205,26 @@ class SqlOrCondition(SqlFilterCondition):
         return result
 
 
+class SqlAndCondition(SqlFilterCondition):
+    """Several SqlFilterCondition objects combined with 'AND'."""
+    __slots__ = ('operands', )
+    def __init__(self, *args, **kwargs):
+        if kwargs:
+            args = list(args)
+            args.extend(sorted(kwargs.items()))
+        self.operands = [SqlFilterCondition.make(arg) for arg in args]
+
+    def make_text_update_values(self, values_list, placeholders_type) -> str:
+        if not self.operands:
+            return "TRUE"
+        result = "("
+        result += " AND ".join(
+            op.make_text_update_values(values_list, placeholders_type)
+            for op in self.operands)
+        result += ")"
+        return result
+
+
 class SqlMethod:
     """Python wrapper of sql request."""
 
@@ -219,6 +239,7 @@ class SqlMethod:
     )
 
     _or = SqlOrCondition
+    _and = SqlAndCondition
 
     def __init__(self, sql_select_from, *,
                  group_by=None, order_by=None, record_name=None, as_scalars=False):

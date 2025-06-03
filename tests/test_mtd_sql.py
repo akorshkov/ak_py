@@ -259,7 +259,7 @@ class TestSQLMethod(unittest.TestCase):
         self.assertEqual(james_id, get_users_ids.one(db, None, name="James"))
 
     def test_complex_conditions(self):
-        """Test SqlMethod._or condition."""
+        """Test SqlMethod._or and SqlMethod._and conditions."""
 
         db = self._make_sample_db_users(
             [
@@ -297,6 +297,24 @@ class TestSQLMethod(unittest.TestCase):
         self.assertEqual(
             {2}, set(recs_ids),
             "Condition is identical to 'account_id = 1 AND (name='Chuck' OR id=2'")
+
+        # 3. test simple 'and' condition
+        recs_ids = get_users_ids.list(db, SqlMethod._and(id=2, name="Chuck"))
+        self.assertEqual(recs_ids, [])
+
+        recs_ids = get_users_ids.list(db, SqlMethod._and(id=2, name="Arnold"))
+        self.assertEqual(recs_ids, [2])
+
+        # 4. test combination of 'or' and 'and' conditions
+        recs_ids = get_users_ids.list(
+            db,
+            SqlMethod._or(
+                SqlMethod._and(id=2, name="Arnold"),
+                SqlMethod._and(name="Harry", account_id=7),
+                SqlMethod._and(name="Asimov", account_id=1),
+            ))
+        recs_ids.sort()
+        self.assertEqual(recs_ids, [2, 4])
 
     def test_aggregation(self):
         """Test requests with 'GROUP BY' clause."""
