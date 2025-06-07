@@ -761,6 +761,8 @@ class RecordField:
 
     __slots__ = 'name', 'field_type', 'value_path', 'title_lines'
 
+    _V_PATH_ATTR, _V_PATH_KEY, _V_PATH_CONST = range(3)
+
     def __init__(self, name, field_type, value_path, title):
         """RecordField constructor.
 
@@ -780,11 +782,14 @@ class RecordField:
     def fetch_value(self, record):
         """get value from a record according to the rules specified by value_path."""
         val = record
-        for is_attr, key in self.value_path:
-            if is_attr:
+        for v_path_type, key in self.value_path:
+            if v_path_type == self._V_PATH_ATTR:
                 val = getattr(val, key)
-            else:
+            elif v_path_type == self._V_PATH_KEY:
                 val = val[key]
+            else:
+                assert v_path_type == self._V_PATH_CONST
+                val = key
         return val
 
     def get_title_cell_text_len(self, fmt_modifier):
@@ -816,14 +821,20 @@ class RecordField:
 
     @classmethod
     def _prepare_value_path(cls, value_path, field_name):
-        # "0.name" -> [(False, 0), (True, 'name')]
-        # "1.[name]" -> [(False, 0), (False, 'name')]
-        # "0." -> [(False, 0), (True, 'field_name')]
+        # "0.name" -> [(_V_PATH_KEY, 0), (_V_PATH_ATTR, 'name')]
+        # "1.[name]" -> [(_V_PATH_KEY, 1), (_V_PATH_KEY, 'name')]
+        # "0." -> [(_V_PATH_KEY, 0), (_V_PATH_ATTR, 'field_name')]
+        # "=xx" -> [(_V_PATH_CONST, 'xx'), ]
         if isinstance(value_path, int):
-            return [(False, value_path)]
+            return [(cls._V_PATH_KEY, value_path)]
         assert isinstance(value_path, str), f"it is {type(value_path)}: {value_path}"
 
         prepared_path = []
+
+        value_path = value_path.lstrip()
+        if value_path.startswith('='):
+            prepared_path.append((cls._V_PATH_CONST, value_path[1:]))
+            return prepared_path
 
         steps = [s.strip() for s in value_path.split('.')]
         for step in steps:
@@ -834,7 +845,9 @@ class RecordField:
 
             key = cls._opt_convert_int(step)
             is_attr = isinstance(key, str) and not in_brakets
-            prepared_path.append((is_attr, key))
+            prepared_path.append(
+                ((cls._V_PATH_ATTR if is_attr else cls._V_PATH_KEY), key)
+            )
 
         if not prepared_path:
             raise ValueError(f"unexpected empty value_path: {value_path}")
@@ -1183,12 +1196,12 @@ class ReprStructure:
             doc to get the description of the format of this string.
         - fields: [RecordField|str], describes record structure, that is location
             of field values in the record object.
-        - fields_types: {field_name: FieldType}
-        - fields_titles: {field_name: title_items}. The title_items may be:
+        - fields_types: {field_name: FieldType}. Optional.
+        - fields_titles: {field_name: title_items}. Optional. The title_items may be:
             - simple string
             - string containing new-line characters (for multi-line title)
             - list of strings or other simple objects (for multi-line title)
-        - sample_record: sample record.
+        - sample_record: (optional) sample record.
 
         All the arguments are optional, the method fetches information about record
         structure and report columns from whatever is provided.
@@ -2026,13 +2039,27 @@ class PPRecordFmt(PaletteUser):
     def __init__(
         self, fmt,
         fields=None, fields_types=None, fields_titles=None, sample_record=None,
+        repr_structure=None,
     ):
-        self.repr_structure = ReprStructure.make(
-            fmt, fields, fields_types, fields_titles, sample_record)
+        if repr_structure is None:
+            repr_structure = ReprStructure.make(
+                fmt, fields, fields_types, fields_titles, sample_record)
+        else:
+            assert fmt is None
+            assert fields is None
+            assert fields_types is None
+            assert fields_titles is None
+            assert sample_record is None
+
+        self.repr_structure = repr_structure
+
+    def remove_columns(self, columns_names):
+        """Remove columns from the record formatter."""
+        self.repr_structure.remove_columns(columns_names)
 
     def __call__(
-        self, record, *, palette=None, no_color=False,
-        compound_palette=None, shade_name=None,
+        self, record=None, *, palette=None, no_color=False,
+        compound_palette=None, shade_name=None, **kwargs,
     ):
         """Create colored text representation of the record.
 
@@ -2040,7 +2067,8 @@ class PPRecordFmt(PaletteUser):
         to string. It also contains text representations of the individual columns.
 
         Arguments:
-        - record: object to print
+        - record: object to print. If the object to print is a simple dictionary it
+            is possible to use kwargs instead.
         - palette: optional PrettyPrinter.PPPalette-derived class or an object of
             such class, contains colors to be used
         - no_color: optional bool; True indicates that produced text will contain
@@ -2050,7 +2078,13 @@ class PPRecordFmt(PaletteUser):
             details.
         - shade_name: additional parameter for identication of the required palette
             in the compound_palette.
+        - kwargs: alternative way to specify the object to print.
         """
+        if kwargs:
+            assert record is None, (
+                f"both 'record' and keyword arguments are specified specified: "
+                f"{record=}; {kwargs=}")
+            record = kwargs
         cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
 
         if not self.repr_structure.col_widths_finalized():
@@ -2065,6 +2099,146 @@ class PPRecordFmt(PaletteUser):
             for ch_items in self.repr_structure.make_record_ch_chunks_all(record, cp)]
 
         return PPRecordChData(cols_names, cols_ch_texts)
+
+    def make_summary_fmt(self, **summary_columns):
+        """Create PPRecordFmt for printing summary records.
+
+        Positions of columns of the result PPRecordFmt are calculated based on
+        position of columns of self.
+
+        Arguments:
+        - summary_columns: description of the columns in the result PPRecordFmt.
+            Each value may be:
+            - src_column_name (*)
+            - (src_column_name, FieldType) (**)
+
+        (*) src_column_name may be:
+        - None: indicates the very first column which is supposed to contain
+            text description of the summary record. This description column
+            does not correspond to any column in self
+        - "col_name": name of the corresponding column in self. The start position
+            of these columns on screen will be the same.
+        - "col_name|": '|' suffix indicates that not only the start postion but
+            also the end position of corresponding columns will be the same
+
+        Result PPRecordFmt expects records which are simple dictionaries, with
+        keys the same as keys of summary_columns argument.
+        """
+
+        # 1. analize position of own columns
+        own_cols_positions = {} # {column_name: (start_pos, end_pos)}
+        own_cols_fields_types = {}
+        cur_col_start_pos = 0
+        all_fields_names = {
+            f.name for f in self.repr_structure.record_structure.fields}
+        for c in self.repr_structure.columns:
+            width = c.width if c.width is not None else c.min_width
+            next_col_start_pos = cur_col_start_pos + width + 1 # 1 is for delimiter
+            own_cols_positions[c.name] = (cur_col_start_pos, next_col_start_pos)
+            cur_col_start_pos = next_col_start_pos
+            own_cols_fields_types[c.name] = c.field.field_type
+
+        own_last_col_end_pos = cur_col_start_pos
+
+        # 2. analize arguments
+
+        summ_columns_data = [] # [[name, start_pos, end_pos, type], ]
+
+        for summ_col_name, summ_col_params in summary_columns.items():
+            if isinstance(summ_col_params, (list, tuple)):
+                assert len(summ_col_params) == 2, (
+                    f"Unexpected format of the summary column '{summ_col_name}'. "
+                    f"Expected a tuple ('orig_column_name', field_type): "
+                    f"{summ_col_params}")
+                src_col_name, field_type = summ_col_params
+            else:
+                src_col_name, field_type = summ_col_params, None
+
+            end_pos_fixed = False
+            if src_col_name is not None:
+                if src_col_name.startswith('|'):
+                    src_col_name = src_col_name[1:]
+                if src_col_name.endswith('|'):
+                    src_col_name = src_col_name[:-1]
+                    end_pos_fixed = True
+
+            src_col_pos = own_cols_positions.get(src_col_name)
+            if src_col_pos is None:
+                if src_col_name is None:
+                    # special case, very first summary column not corresponding to
+                    # any src column
+                    start_pos = 0
+                    end_pos = None
+                else:
+                    if src_col_name in all_fields_names:
+                        # the column name is valid, just column is invisible
+                        continue
+                    raise ValueError(
+                        f"Can't create summary record formater. "
+                        f"Unexpected column name '{src_col_name}' specified.")
+            else:
+                start_pos, end_pos = src_col_pos
+
+            if field_type is None:
+                # field_type was not specified explicitely. Try to use the type
+                # of the corresponding own field
+                field_type = own_cols_fields_types.get(src_col_name)
+
+            if not end_pos_fixed:
+                end_pos = None
+
+            summ_columns_data.append(
+                [summ_col_name, start_pos, end_pos, field_type])
+
+        summ_columns_data.sort(key=lambda x: x[1]) # sort by start_pos
+        next_col_start_pos = own_last_col_end_pos
+        for col_data in reversed(summ_columns_data):
+            if col_data[2] is None:
+                # end position of the column is not fixed, extend it to the next col
+                col_data[2] = next_col_start_pos
+            next_col_start_pos = col_data[1]
+
+        # start and end positions of all the columns are ready.
+        # But there may be gaps between them. Let's insert dummy filler columns
+        full_summ_colums_data = []
+        last_col_end_pos = 0
+        for col_data in summ_columns_data:
+            if col_data[1] != last_col_end_pos:
+                # gap between columns detected
+                assert col_data[1] > last_col_end_pos
+                filler_col_data = [None, last_col_end_pos, col_data[1], None]
+                full_summ_colums_data.append(filler_col_data)
+            full_summ_colums_data.append(col_data)
+            last_col_end_pos = col_data[2]
+
+        summ_columns_data = full_summ_colums_data
+
+        # ready to prepare RecordField objects
+        cur_filler_col_id = 0
+        fields = []  # [RecordField, ]
+        columns = []  # [ReprColumn, ]
+        for name, start_pos, end_pos, field_type in summ_columns_data:
+            if name is None:
+                # this is a filler column
+                name = f"__filler_{cur_filler_col_id}"
+                cur_filler_col_id += 1
+                value_path = "="  # constant empty string
+            else:
+                value_path = f"[{name}]"
+
+            if field_type is None:
+                field_type = ReprStructure._DFLT_FIELD_TYPE
+
+            width = end_pos - start_pos - 1
+            field = RecordField(name, field_type, value_path, name)
+            column = ReprColumn(field, min_width=width, max_width=width)
+            fields.append(field)
+            columns.append(column)
+
+        record_structure = RecordStructure(fields)
+        repr_structure = ReprStructure(record_structure, columns)
+
+        return PPRecordFmt(None, repr_structure=repr_structure)
 
 
 #########################

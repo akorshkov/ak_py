@@ -1596,3 +1596,99 @@ class TestPPRecordFormatter(unittest.TestCase):
         # Expected result: 3 fields separated by space, each field width = 5
         #                    01234 01234 01234
         self.assertEqual(s, "   10 so...   245")
+
+    def test_subtotals_formatter(self):
+        """Test printing subtotals for records produced by PPRecordFmt."""
+
+        tupletype = namedtuple(
+            "SomeRecord", ["id", "descr", "amount", "comment", "balance", "suffix"])
+
+        rec_fmt = PPRecordFmt("id:5,descr:10,amount:7,comment:5,balance:7,suffix:5")
+        s_orig = CHText.strip_colors(
+            str(rec_fmt(tupletype(3, "some descr", 33, "comm", 17, "omg"))))
+
+        # 1. Test text produced by the following summary formatter
+        summary_fmt = rec_fmt.make_summary_fmt(
+            group_name=None,
+            tot_amt="amount",
+            tb="balance|",
+        )
+
+        s_summ = CHText.strip_colors(
+            str(summary_fmt(group_name="group", tot_amt=77, tb=88)))
+
+        #                id   |descr     |amount |com..|balance|suffix
+        #                01234 0123456789 0123456 01234 0123456 01234
+        expected_orig = "    3 some descr      33 comm       17 omg  "
+        #                group_name      |tot_amt      |tb
+        expected_summ = "group                       77      88"
+        # 'tot_amt' column starts at the same position as 'amount' and spans
+        # till the next column 'tb'
+
+        self.assertEqual(s_orig, expected_orig)
+        self.assertEqual(s_summ, expected_summ)
+
+        # 2. similar summary formatter, but 'tot_amt' column should not span
+        summary_fmt = rec_fmt.make_summary_fmt(
+            group_name=None,
+            tot_amt="amount|",  # '|' suffix => column should not span
+            tb="balance|",
+        )
+
+        s_summ = CHText.strip_colors(
+            str(summary_fmt(group_name="group", tot_amt=77, tb=88)))
+
+        #                id   |descr     |amount |com..|balance|suffix
+        #                01234 0123456789 0123456 01234 0123456 01234
+        expected_orig = "    3 some descr      33 comm       17 omg  "
+        #                group_name      |tot_amt|     |tb
+        expected_summ = "group                 77            88"
+        self.assertEqual(s_summ, expected_summ)
+
+    def test_subtotals_formatter_skipped_columns(self):
+        """Test summary column associated with invisible main record column.
+
+        It should also be invisible.
+        """
+
+        tupletype = namedtuple(
+            "SomeRecord", ["id", "descr", "amount", "comment", "balance", "suffix"])
+
+        rec_fmt = PPRecordFmt("id:5,descr:10,amount:7,comment:5,balance:7,suffix:5")
+        rec_fmt.remove_columns(["amount", ])
+        s_orig = CHText.strip_colors(
+            str(rec_fmt(tupletype(3, "some descr", 33, "comm", 17, "omg"))))
+
+        # 1. Test text produced by the following summary formatter
+        summary_fmt = rec_fmt.make_summary_fmt(
+            group_name=None,
+            tot_amt="amount", # this column is invisible in the src_fmt
+            tb="balance|",
+        )
+
+        s_summ = CHText.strip_colors(
+            str(summary_fmt(group_name="group", tot_amt=77, tb=88)))
+
+        #                id   |descr     |com..|balance|suffix
+        #                01234 0123456789 01234 0123456 01234
+        expected_orig = "    3 some descr comm       17 omg  "
+        #                group_name            |tb
+        expected_summ = "group                       88"
+
+        self.assertNotIn(
+            "77", s_summ,
+            f"value '77' of 'tot_amt' field should not be present in the "
+            f"result string because the column is invisible: {s_summ}")
+        self.assertEqual(s_orig, expected_orig)
+        self.assertEqual(s_summ, expected_summ)
+
+        # 2. But attempt to specify not existing column name should result in error
+        with self.assertRaises(ValueError) as exc:
+            rec_fmt.make_summary_fmt(
+                group_name=None,
+                tot_amt="amount_x", # there is no such field
+                tb="balance|",
+            )
+
+        err_msg = str(exc.exception)
+        self.assertIn("amount_x", err_msg)
