@@ -1597,6 +1597,35 @@ class TestPPRecordFormatter(unittest.TestCase):
         #                    01234 01234 01234
         self.assertEqual(s, "   10 so...   245")
 
+    def test_formatter_titles(self):
+        """Test printing title line(s) for formatted records."""
+        tupletype = namedtuple(
+            "SomeRecord", ["id", "descr", "amount", "comment", "balance", "suffix"])
+
+        # 1. Test formatter without explicitely specified titles
+        rec_fmt = PPRecordFmt("id:5,descr:10,amount:7,comment:5,balance:7,suffix:5")
+
+        title = rec_fmt.title().plain_text()
+        #           01234 0123456789 0123456 01234 0123456 01234
+        expected = "id    descr      amount  co... balance su..."
+        self.assertEqual(title, expected)
+
+        # 2. Test formatter with explicitely specified titles
+        rec_fmt = PPRecordFmt(
+            "id:5,descr:10,amount:7,comment:5,balance:7,suffix:5",
+            fields_titles={
+                'id': "ID",
+                'descr': "Description",
+                'amount': "Amt.",
+                'comment': "",
+            }
+        )
+
+        title = rec_fmt.title().plain_text()
+        #           01234 0123456789 0123456 01234 0123456 01234
+        expected = "ID    Descrip... Amt.          balance su..."
+        self.assertEqual(title, expected)
+
     def test_subtotals_formatter(self):
         """Test printing subtotals for records produced by PPRecordFmt."""
 

@@ -1366,6 +1366,8 @@ class ReprStructure:
         The title may consist of several lines, for each line [[CHText.Chunk]]
         is generated. Each inner list corresponds to a title of a single column.
         """
+        if not self.col_widths_finalized():
+            self.detect_actual_columns_widths([], _account_columns_names=True)
         num_title_lines = max(len(col.field.title_lines) for col in self.columns)
         for i in range(num_title_lines):
             line_result = []  # [[CHText.Chunk]]
@@ -1886,9 +1888,6 @@ class _PPTableImpl:
 
         repr_structure = self._ppt_fmt.repr_structure
         columns = repr_structure.columns
-        record_fields_palettes = [
-            cp.get_sub_palette(col.field.field_type.PALETTE_CLASS)
-            for col in columns]
 
         # prepare list of table lines. Table line may correspond to a record
         # or to a special markup lines
@@ -2010,7 +2009,11 @@ class _PPTableImpl:
 # PPRecord
 
 class PPRecordChData:
-    # result produced by PPRecordFmt.
+    """Result produced by PPRecordFmt
+
+    It may behave as str or CHText but also provides access to the representation
+    of individual columns.
+    """
 
     def __init__(self, cols_names, cols_ch_texts):
         self.columns = cols_ch_texts
@@ -2099,6 +2102,15 @@ class PPRecordFmt(PaletteUser):
             for ch_items in self.repr_structure.make_record_ch_chunks_all(record, cp)]
 
         return PPRecordChData(cols_names, cols_ch_texts)
+
+    def title(
+        self, palette=None, no_color=False,
+        compound_palette=None, shade_name=None,
+    ) -> CHTextResult:
+        """ """
+        return _PPRecordTitle(self).ch_text(
+            palette=palette, no_color=no_color,
+            compound_palette=compound_palette, shade_name=shade_name)
 
     def make_summary_fmt(self, **summary_columns):
         """Create PPRecordFmt for printing summary records.
@@ -2239,6 +2251,42 @@ class PPRecordFmt(PaletteUser):
         repr_structure = ReprStructure(record_structure, columns)
 
         return PPRecordFmt(None, repr_structure=repr_structure)
+
+
+class _PPRecordTitle(PPObj):
+    # Pretty-Printable object which produces the title line(s) for the
+    # PPRecordFmt records.
+
+    # Palette used for title lines is the same as the record's palette.
+    # Note, that the look of the title cells is defined by it's own
+    # palette (_DefaultTitleFieldType.TitlePalette).
+    # To modify the color of title cells it's necessary to specify
+    # the replacement for _DefaultTitleFieldType.TitlePalette in
+    # the PPRecordFmt.PALETTE_CLASS compound palette)
+    PALETTE_CLASS = PPRecordFmt.PALETTE_CLASS
+
+    def __init__(self, rec_fmt):
+        """Constructor.
+
+        rec_fmt - the PPRecordFmt for which the title will be generated.
+        """
+        self.rec_fmt = rec_fmt
+
+    def gen_ch_lines(self, cp) -> Iterator[CHText]:
+        """Generate CHText title lines"""
+
+        sep = cp.text(" ")
+        for tl in self.rec_fmt.repr_structure.gen_title_lines_ch_chunks_all(cp):
+            # produce the CHText for a single title line
+            result_chunks = []
+            is_first = True
+            for cell_chunks in tl:
+                if is_first:
+                    is_first = False
+                else:
+                    result_chunks.extend(sep)
+                result_chunks.extend(cell_chunks)
+            yield CHText.make(result_chunks)
 
 
 #########################
