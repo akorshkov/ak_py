@@ -497,9 +497,9 @@ class PPWrap:
 # The purpose of the following record-related classes is to facilitate
 # processing records and presenting data from the records on screen.
 
+
 #########################
 # class FieldType
-
 
 class FieldType(PaletteUser):
     """Describe properties of a field (in a record).
@@ -538,9 +538,13 @@ class FieldType(PaletteUser):
 
     PALETTE_CLASS = RecordPalette
 
-    def __init__(self, min_width=1, max_width=999):
-        self.min_width = min_width
-        self.max_width = max_width
+    _DFLT_MIN_WIDTH = 1
+    _DFLT_MAX_WIDTH = 999
+
+    def __init__(self, min_width=None, max_width=None):
+        self.min_width = self._DFLT_MIN_WIDTH if min_width is None else min_width
+        self.max_width = self._DFLT_MAX_WIDTH if max_width is None else max_width
+        assert self.min_width <= self.max_width
 
     def get_cell_text_len(self, value, fmt_modifier) -> int:
         """Calculate length of text representation of the value (for usual cell)
@@ -768,13 +772,16 @@ class RecordField:
 
         Arguments:
         - name: str, field name. Human-readable unique identifier of the field.
-        - field_type: FieldType
+        - field_type: instance of FieldType
         - value_path: str, desribes location of the field value in the record object
         - title: str|list, title of the field. If it is a list or if it is a string
             containing new-line characters, it is interpreted as a multi-line title.
             By default is the same as the name.
         """
         self.name = name
+        assert not isinstance(field_type, type), (
+            f"invalid field_type argument. Expected instance of FieldType, got "
+            f"a class object: {field_type}")
         self.field_type = field_type
         self.value_path = self._prepare_value_path(value_path, name)
         self.title_lines = list(self._gen_title_lines(title, self.name))
