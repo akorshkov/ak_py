@@ -1954,24 +1954,6 @@ class PPTableFormat:
 #########################
 # PPRecord
 
-class PPRecordChData:
-    """Result produced by PPRecordFmt
-
-    It may behave as str or CHText but also provides access to the representation
-    of individual columns.
-    """
-
-    def __init__(self, cols_names, cols_ch_texts):
-        self.columns = cols_ch_texts
-        self.cols_by_name = dict(zip(cols_names, self.columns))
-
-    def __str__(self):
-        return " ".join(str(c) for c in self.columns)
-
-    def ch_text(self):
-        return CHText(" ").join(self.columns)
-
-
 class PPRecordFmt(PaletteUser):
     """Object of this class prints records in specified format."""
 
@@ -2009,11 +1991,8 @@ class PPRecordFmt(PaletteUser):
     def __call__(
         self, record=None, *, palette=None, no_color=False,
         compound_palette=None, shade_name=None, **kwargs,
-    ):
+    ) -> CHText:
         """Create colored text representation of the record.
-
-        Returns PPRecordChData object, which can be directly printed or converted
-        to string. It also contains text representations of the individual columns.
 
         Arguments:
         - record: object to print. If the object to print is a simple dictionary it
@@ -2042,12 +2021,9 @@ class PPRecordFmt(PaletteUser):
                 _account_columns_names=False,
             )
 
-        cols_names = [col.name for col in self.repr_structure.columns]
-        cols_ch_texts = [
+        return CHText(" ").join(
             CHText(ch_items)
-            for ch_items in self.repr_structure.make_record_ch_chunks_all(record, cp)]
-
-        return PPRecordChData(cols_names, cols_ch_texts)
+            for ch_items in self.repr_structure.make_record_ch_chunks_all(record, cp))
 
     def title(
         self, palette=None, no_color=False,

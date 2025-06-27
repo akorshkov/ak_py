@@ -1533,21 +1533,14 @@ class TestPPRecordFormatter(unittest.TestCase):
             fields=["id", "name", "age"],
         )
 
-        r = rec_fmt((10, "John", 42))
+        ch = rec_fmt((10, "John", 42))
 
-        s = str(r)
+        s = str(ch)
         plain = CHText.strip_colors(s)
         self.assertNotEqual(s, plain)
         self.assertEqual(plain, "10 John 42")
 
-        ch = r.ch_text()
         self.assertIsInstance(ch, CHText)
-
-        # check values of individual columns
-        id_ch_text = r.cols_by_name['id']
-        self.assertIsInstance(id_ch_text, CHText)
-        id_text = CHText.strip_colors(str(id_ch_text))
-        self.assertEqual(id_text, "10")
 
         # check 'no_color' option
         self.assertEqual(
@@ -1575,9 +1568,6 @@ class TestPPRecordFormatter(unittest.TestCase):
         s = CHText.strip_colors(str(rec_repr))
         # Expected result: 3 fields separated by space:
         self.assertEqual(s, "10 short 245")
-
-        dep_ch_text = rec_repr.cols_by_name['department']
-        self.assertEqual(dep_ch_text.plain_text(), "245")
 
     def test_short_columns(self):
         """Test PPRecordFmt behavior of value does not fit to the given space."""
