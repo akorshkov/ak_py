@@ -1616,6 +1616,128 @@ class TestPPRecordFormatter(unittest.TestCase):
         expected = "ID    Descrip... Amt.          balance su..."
         self.assertEqual(title, expected)
 
+    def test_record_style_usage(self):
+        """Test Record Style.
+
+        Currently the style can be used to specify borders between fields.
+        """
+
+        tupletype = namedtuple("SomeRecord", ["id", "f1", "f2"])
+        record = tupletype(10, "value", 245)
+
+        # 1. default record formatter produces a string of space-separated
+        # fields without outer left and right borders
+        dflt_fmt = PPRecordFmt("id:5,f1:5,f2:5")
+
+        s_dflt = dflt_fmt(record)
+        #                                      01234 01234 01234
+        self.assertEqual(s_dflt.plain_text(), "   10 value   245")
+
+        # 2. we can specify style when creating the formatter to specify
+        # the borders
+        brd_fmt = PPRecordFmt(
+            "id:5,f1:5,f2:5",
+            style=PPRecordFmt.Style(
+                inner_border=':',
+                left_border='<',
+                right_border='>',
+            )
+        )
+
+        s_brd = brd_fmt(record)
+        # print(s_brd)
+        #                                      01234 01234 01234
+        self.assertEqual(s_brd.plain_text(), "<   10:value:  245>")
+
+        # 3. alternatively it is possible to override the style in the
+        # derived class
+        class BrdRecFmt(PPRecordFmt):
+            _DFLT_STYLE = style=PPRecordFmt.Style(
+                inner_border='*',
+                left_border='[',
+                right_border=']',
+            )
+
+        c_brd_fmt = BrdRecFmt("id:5,f1:5,f2:5")
+        c_s_brd = c_brd_fmt(record)
+        # print(c_s_brd)
+        #                                        01234 01234 01234
+        self.assertEqual(c_s_brd.plain_text(), "[   10*value*  245]")
+
+        # 4. test how remove_columns work
+        c_brd_fmt.remove_columns(["id", "f2"])
+        s = c_brd_fmt(record)
+        #                                  01234
+        self.assertEqual(s.plain_text(), "[value]")
+
+        # 5. and now remove the very last column!
+        c_brd_fmt.remove_columns(["f1"])
+        s = c_brd_fmt(record)
+        self.assertEqual(s.plain_text(), "[]")
+
+    def test_palettes_for_formatter(self):
+        """Test different ways to specify color palette."""
+
+        # to test colors need a formatter with some borders.
+        # Borders have color.
+        class BrdRecFmt(PPRecordFmt):
+            _DFLT_STYLE = style=PPRecordFmt.Style(
+                inner_border='*',
+                left_border='[',
+                right_border=']',
+            )
+
+        fmt = BrdRecFmt("id:5,f1:5,f2:5")
+        tupletype = namedtuple("SomeRecord", ["id", "f1", "f2"])
+        record = tupletype(10, "value", 245)
+
+        class RedBordersPalette(PPRecordFmt.PPRecordPalette):
+            SYNTAX_DEFAULTS = {
+                'RB.RECORD.WARN': "WARN",
+                'RB.RECORD.BORDER': "RED",
+            }
+            warn = ConfColor('RB.RECORD.WARN')
+            border = ConfColor('RB.RECORD.BORDER')
+
+        class BlueBordersPalette(PPRecordFmt.PPRecordPalette):
+            SYNTAX_DEFAULTS = {
+                'BB.RECORD.WARN': "WARN",
+                'BB.RECORD.BORDER': "BLUE",
+            }
+            warn = ConfColor('BB.RECORD.WARN')
+            border = ConfColor('BB.RECORD.BORDER')
+
+        std_str = fmt(record)
+
+        # 1. explicitely specify palette during fmt call
+        red_brd_str = fmt(record, palette=RedBordersPalette())
+
+        self.assertNotEqual(std_str, red_brd_str)
+        self.assertEqual(std_str.plain_text(), red_brd_str.plain_text())
+
+        # 2. set the palette for the formatter
+        fmt.set_palette(palette=RedBordersPalette())
+
+        # now the fmt will produce red borders
+        s = fmt(record)
+        self.assertEqual(s, red_brd_str)
+
+        # it is possible to specify different palette for a call:
+        blue_brd_str = fmt(record, palette=BlueBordersPalette())
+        self.assertNotEqual(std_str, blue_brd_str)
+        self.assertNotEqual(red_brd_str, blue_brd_str)
+        self.assertEqual(std_str.plain_text(), blue_brd_str.plain_text())
+
+        # but without explicitely specified palette it will produce
+        # results with current (that is red) borders
+        s = fmt(record)
+        self.assertEqual(s, red_brd_str)
+
+        # 4. It is also possible to specify the palette during fmt construction
+        fmt = BrdRecFmt("id:5,f1:5,f2:5", palette=BlueBordersPalette())
+        s = fmt(record)
+        self.assertEqual(s, blue_brd_str)
+
     def test_subtotals_formatter(self):
         """Test printing subtotals for records produced by PPRecordFmt."""
 

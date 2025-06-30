@@ -22,6 +22,7 @@ Classes provided by this module:
 
 from typing import Iterator
 from numbers import Number
+from dataclasses import dataclass
 from collections import defaultdict
 from ak import utils
 from ak.color import CHText, Palette, CompoundPalette, PaletteUser, ConfColor
@@ -1009,6 +1010,20 @@ class ReprColumn:
         return fmt_str
 
 
+@dataclass(frozen=True)
+class RecordReprStyle:
+    """Style of the record representation.
+
+    Whether to print borders between fields and what characters to use for these
+    borders - this is an example of information to keep in this class.
+    But not the information about colors. Colors configuration is located
+    in corresponding PALETTE_CLASS class.
+    """
+    inner_border: str = " "
+    left_border: str = ""
+    right_border: str = ""
+
+
 class _ColumnsParsedFmt:
     # parsed 'fmt' string, which describes columns of record representation.
 
@@ -1178,24 +1193,40 @@ class ReprStructure:
     - ":3-10" : (optional) minimum and maximum width of the column.
         ":n-n" is equivalent to a shorter ":n"
     """
-    __slots__ = 'record_structure', 'columns', 'title_field_type'
+    __slots__ = (
+        'record_structure',
+        'columns',
+        'title_field_type',
+        'borders',
+        '_repr_style',
+    )
 
     _DFLT_FIELD_TYPE = _DefaultFieldType()
     _DFLT_TITLE_FIELD_TYPE = _DefaultTitleFieldType()
+    _DFLT_REPR_STYLE = RecordReprStyle()
 
-    def __init__(self, record_structure, columns):
+    def __init__(self, record_structure, columns, borders, style=None):
         self.record_structure: RecordStructure = record_structure
         self.columns: [ReprColumn] = columns
         self.title_field_type = self._DFLT_TITLE_FIELD_TYPE
+        self._repr_style = style or self._DFLT_REPR_STYLE
+        self.borders = borders
+        assert len(self.borders) == len(self.columns) + 1, (
+            f"{self.borders}, {self.columns}")
 
     def clone(self):
         return ReprStructure(
             self.record_structure, # it is immutable, no need to clone
             [c.clone() for c in self.columns],
+            self.borders,
+            self._repr_style,
         )
 
     @classmethod
-    def make(cls, fmt, fields, fields_types, fields_titles, sample_record):
+    def make(
+        cls, fmt, fields, fields_types, fields_titles, sample_record,
+        style=None,
+    ):
         """Alternative constructor of ReprStructure.
 
         Arguments:
@@ -1209,10 +1240,14 @@ class ReprStructure:
             - string containing new-line characters (for multi-line title)
             - list of strings or other simple objects (for multi-line title)
         - sample_record: (optional) sample record.
+        - style: optional instance of RecordReprStyle class. Contains some parameters
+            which affect the format of the record (such as what symbols to use for
+            borders)
 
         All the arguments are optional, the method fetches information about record
         structure and report columns from whatever is provided.
         """
+        style = style or cls._DFLT_REPR_STYLE
         parsed_fmt = cls._parse_fmt(fmt)
         fields_types_dict = {} if fields_types is None else fields_types
         fields_titles_dict = {} if fields_titles is None else fields_titles
@@ -1322,7 +1357,11 @@ class ReprStructure:
             # by default show all the fields
             repr_columns = [ReprColumn(field) for field in record_structure.fields]
 
-        return cls(record_structure, repr_columns)
+        borders = [style.inner_border for _ in range(len(repr_columns)-1)]
+        borders.insert(0, style.left_border)
+        borders.append(style.right_border)
+
+        return cls(record_structure, repr_columns, borders, style)
 
     def col_widths_finalized(self) -> bool:
         """Check if actual widths of columns are already known."""
@@ -1349,12 +1388,34 @@ class ReprStructure:
             if all(col.width == col.max_width for col in self.columns):
                 break
 
+    def get_borders_positions(self):
+        """Returns {col_start_pos: text_of_left_border}."""
+        borders_positions = {}
+        assert self.col_widths_finalized()
+        assert len(self.borders) == len(self.columns) + 1, (
+            f"{self.borders=}, {self.columns=}")
+        cur_pos = 0
+        for column, border in zip(self.columns, self.borders):
+            cur_pos += len(border)
+            borders_positions[cur_pos] = border
+            cur_pos += column.width
+        return borders_positions
+
     def remove_columns(self, columns_names):
         """Remove specified column from self"""
-        self.columns = [
-            c for c in self.columns
-            if c.name not in columns_names
-        ]
+        new_columns = []
+        new_borders = [self.borders[0]]  # left outer border remains the same
+        for i, col in enumerate(self.columns):
+            if col.name not in columns_names:
+                if new_columns:
+                    # add left border of the column only of this is NOT the very
+                    # first of remaining columns. The left border of the very
+                    # first column is the outer record border
+                    new_borders.append(self.borders[i])
+                new_columns.append(col)
+        new_borders.append(self.borders[-1])
+        self.columns = new_columns
+        self.borders = new_borders
 
     def make_record_ch_chunks_all(self, record, cp) -> [[CHText.Chunk]]:
         """Create intermediate data for the record's text representation.
@@ -1439,6 +1500,13 @@ class ReprStructure:
                     c.min_w, c.max_w))
 
         self.columns = columns
+
+        # as of now info about borders is not implemented in fmt.
+        # make the default borders
+        self.borders = [
+            self._repr_style.inner_border for _ in range(len(self.columns)-1)]
+        self.borders.insert(0, self._repr_style.left_border)
+        self.borders.append(self._repr_style.right_border)
 
     @staticmethod
     def _parse_fmt(fmt) -> _ColumnsParsedFmt:
@@ -1961,35 +2029,82 @@ class PPRecordFmt(PaletteUser):
         SUB_PALETTES_MAP = {}
         SYNTAX_DEFAULTS = {
             'RECORD.WARN': "WARN",
+            'RECORD.BORDER': "GREEN",
         }
 
         warn = ConfColor('RECORD.WARN')
+        border = ConfColor('RECORD.BORDER')
 
     PALETTE_CLASS = PPRecordPalette
 
+    Style = RecordReprStyle
+    _DFLT_STYLE = ReprStructure._DFLT_REPR_STYLE
+
     def __init__(
-        self, fmt,
+        self, fmt, *,
         fields=None, fields_types=None, fields_titles=None, sample_record=None,
+        style=None,
         repr_structure=None,
+        palette=None, no_color=False, compound_palette=None, shade_name=None,
     ):
+        """ PPRecordFmt constructor.
+
+        - fmt, fields, fields_types, fields_titles, sample_record, style: arguments
+            required to construct ReprStructure: object which contains information
+            about record fields and representation columns. Check ReprStructure
+            doc for more detailed description.
+        - repr_structure: optional ReprStructure object, can be specified instead of
+            all the previous arguments.
+        - palette, no_color, compound_palette, shade_name: set of arguments which
+            specify default palette used for formatting records. Check PPObj.ch_text
+            doc string for detailed description of these arguments.
+            The palette information may be overriden later by calling 'set_palette'
+            method, or it may be specified for a single format record call.
+        """
         if repr_structure is None:
             repr_structure = ReprStructure.make(
-                fmt, fields, fields_types, fields_titles, sample_record)
+                fmt, fields, fields_types, fields_titles, sample_record,
+                style=style or self._DFLT_STYLE,
+            )
         else:
             assert fmt is None
             assert fields is None
             assert fields_types is None
             assert fields_titles is None
             assert sample_record is None
+            assert style is None
 
         self.repr_structure = repr_structure
+
+        self._cp = None
+        self._borders = None
+        self.set_palette(
+            palette=palette,
+            no_color=no_color,
+            compound_palette=compound_palette,
+            shade_name=shade_name,
+        )
 
     def remove_columns(self, columns_names):
         """Remove columns from the record formatter."""
         self.repr_structure.remove_columns(columns_names)
+        self._borders = self._make_borders_chtext(self._cp)
+
+    def set_palette(
+        self, palette=None, no_color=None, compound_palette=None, shade_name=None,
+    ):
+        """Set palette for this Record Formatter.
+
+        It is possible to specify all the palette-related information with
+        each call of the formatter.
+        Instead it is possible to specify it once.
+        It may be more convenient and is slightly more efficient.
+        """
+        self._cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
+        self._borders = self._make_borders_chtext(self._cp)
 
     def __call__(
-        self, record=None, *, palette=None, no_color=False,
+        self, record=None, *, palette=None, no_color=None,
         compound_palette=None, shade_name=None, **kwargs,
     ) -> CHText:
         """Create colored text representation of the record.
@@ -2013,7 +2128,6 @@ class PPRecordFmt(PaletteUser):
                 f"both 'record' and keyword arguments are specified specified: "
                 f"{record=}; {kwargs=}")
             record = kwargs
-        cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
 
         if not self.repr_structure.col_widths_finalized():
             self.repr_structure.detect_actual_columns_widths(
@@ -2021,9 +2135,29 @@ class PPRecordFmt(PaletteUser):
                 _account_columns_names=False,
             )
 
-        return CHText(" ").join(
-            CHText(ch_items)
-            for ch_items in self.repr_structure.make_record_ch_chunks_all(record, cp))
+        if (
+            palette is None and no_color is None
+            and compound_palette is None and shade_name is None
+        ):
+            cp = self._cp
+            borders = self._borders
+        else:
+            cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
+            borders = self._make_borders_chtext(cp)
+
+        result_chunks = []
+        for border, ch_items in zip(
+            borders, self.repr_structure.make_record_ch_chunks_all(record, cp)
+        ):
+            result_chunks.append(border)
+            result_chunks.extend(ch_items)
+        if len(result_chunks) == 0:
+            # there are no columns in this record representation.
+            # still need to include left outer border into output
+            result_chunks.append(borders[0])
+        result_chunks.append(borders[-1])
+
+        return CHText.make(result_chunks)
 
     def title(
         self, palette=None, no_color=False,
@@ -2148,9 +2282,11 @@ class PPRecordFmt(PaletteUser):
         summ_columns_data = full_summ_colums_data
 
         # ready to prepare RecordField objects
+        own_borders_positions = self.repr_structure.get_borders_positions()
         cur_filler_col_id = 0
         fields = []  # [RecordField, ]
         columns = []  # [ReprColumn, ]
+        borders = []
         for name, start_pos, end_pos, field_type in summ_columns_data:
             if name is None:
                 # this is a filler column
@@ -2168,11 +2304,21 @@ class PPRecordFmt(PaletteUser):
             column = ReprColumn(field, min_width=width, max_width=width)
             fields.append(field)
             columns.append(column)
+            borders.append(own_borders_positions.get(start_pos, ""))
+        borders.append(self.repr_structure.borders[-1])
 
         record_structure = RecordStructure(fields)
-        repr_structure = ReprStructure(record_structure, columns)
+        repr_structure = ReprStructure(
+            record_structure, columns,
+            borders, self.repr_structure._repr_style,
+        )
 
         return PPRecordFmt(None, repr_structure=repr_structure)
+
+    def _make_borders_chtext(self, cp) -> [CHText.Chunk]:
+        # prepare text of borders between fields
+        return [
+            cp.border(border_text) for border_text in self.repr_structure.borders]
 
 
 class _PPRecordTitle(PPObj):
