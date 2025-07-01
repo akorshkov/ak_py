@@ -357,8 +357,19 @@ class CHText:
             for part in other:
                 self += part
         elif isinstance(other, type(self)):
-            for part in other.chunks:
-                self._append_chunk(part)
+            need_merge = (
+                len(self.chunks) > 0
+                and len(other.chunks) > 0
+                and self.chunks[-1].has_same_type(other.chunks[0]))
+
+            if need_merge:
+                self.chunks[-1] = self.chunks[-1].add_chunks_same_type(
+                    other.chunks[0])
+                self.chunks.extend(other.chunks[1:])
+            else:
+                self.chunks.extend(other.chunks)
+
+            self.scrlen += other.scrlen
         else:
             self._append_chunk(self.Chunk.make_plain(str(other)))
 
