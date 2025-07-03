@@ -35,7 +35,7 @@ class CHTextResult:
     CHText objects (usually corresponding to single lines of the multi-line text).
     CHTextResult produced by PPObj may be used in both contexts.
     """
-    __slots__ = '_ch_text'
+    __slots__ = ('_ch_text', )
 
     def __init__(self):
         self._ch_text = None
@@ -2054,8 +2054,8 @@ class PPTable(PPObj):
             self._ppt_fmt = PPTableFormat.make(
             fmt, fields, fields_types, fields_titles,
             self.records[0] if self.records else None,
-            style=style or self._DFLT_STYLE
-        )
+            style=style or self._DFLT_STYLE)
+
         self._ppt_fmt.set_limits(limits)
 
         if skip_columns is not None:
@@ -2100,6 +2100,7 @@ class PPTable(PPObj):
 
         repr_structure = self._ppt_fmt.repr_structure
         columns = repr_structure.columns
+        style = self._ppt_fmt.style
 
         # prepare list of table lines. Table line may correspond to a record
         # or to a special markup lines
@@ -2147,45 +2148,62 @@ class PPTable(PPObj):
                 )
             )
 
+        # there is no need to specify style when constructing PPRecordFmt
+        # because the record-related style information is present in
+        # the repr_structure
         normal_line_fmt = PPRecordFmt(
             None, repr_structure=repr_structure, palette=cp)
 
-        table_width = sum(col.width for col in columns) + len(columns) + 1
-
-        sep = cp.border('|')
+        table_width = (
+            sum(col.width for col in columns)
+            + sum(len(b) for b in repr_structure.borders)
+        )
 
         # contents of service lines can be created now
-        break_line.ch_text = CHText(sep, " "*(table_width - 2), sep)
+        inner_width = (table_width
+            - len(repr_structure.borders[0]) - len(repr_structure.borders[-1]))
+        left_ch_brd = cp.border(repr_structure.borders[0])
+        right_ch_brd = cp.border(repr_structure.borders[-1])
+        break_line.ch_text = CHText(
+            cp.border(repr_structure.borders[0]),
+            " "*inner_width,
+            cp.border(repr_structure.borders[-1]),
+        )
         skipped_line_contents = FieldType.fit_to_width(
             [
                 cp.warn("... "),
                 cp.text(f"{n_skipped} records skipped"),
             ],
-            table_width - 2,
+            inner_width,
             FieldType.ALIGN_LEFT,
             cp)
-        skipped_line_contents.insert(0, sep)
-        skipped_line_contents.append(sep)
+        skipped_line_contents.insert(0, left_ch_brd)
+        skipped_line_contents.append(right_ch_brd)
         skipped_recs_line.ch_text = CHText.make(skipped_line_contents)
 
         # 1. make first border line
-        border_line = CHText.make([
-            cp.border("".join("+" + "-"*col.width for col in columns) + '+')])
-        yield border_line
+        border_line = None
+        if style.show_horiz_borders:
+            border_line = self._make_separator_line(cp)
+
+        if border_line is not None:
+            yield border_line
 
         # 2. table header (name)
         if self.header:
             line = FieldType.fit_to_width(
-                [cp.header(self.header)], table_width - 2, FieldType.ALIGN_LEFT, cp)
-            line.insert(0, sep)
-            line.append(sep)
+                [cp.header(self.header)], inner_width, FieldType.ALIGN_LEFT, cp)
+            line.insert(0, left_ch_brd)
+            line.append(right_ch_brd)
             yield CHText.make(line)
 
         # 3. multi column titles
-        yield from normal_line_fmt.title()
+        if style.show_column_titles:
+            yield from normal_line_fmt.title()
 
         # 4. one more border_line
-        yield border_line
+        if (self.header or style.show_column_titles) and border_line is not None:
+            yield border_line
 
         # 5. table contents - actual records and service lines
         for tl in table_lines:
@@ -2195,26 +2213,40 @@ class PPTable(PPObj):
                 yield normal_line_fmt(tl)
 
         # 6. final border line
-        yield border_line
+        if border_line is not None:
+            yield border_line
 
         # 7. summary line
-        if self.footer:
+        if style.show_summary_line and self.footer:
             yield CHText.make(FieldType.fit_to_width(
                 [cp.text(self.footer)], table_width, FieldType.ALIGN_LEFT, cp))
 
-    def _make_table_line(self, cells_ch_texts_data, sep) -> [CHText.Chunk]:
-        # helper method wich combines cells text into table line
-        # [[CHText.Chunk]] -> [CHText.Chunk]
-        line = [sep]
-        is_first = True
-        for cell_ch_text_items in cells_ch_texts_data:
-            if is_first:
-                is_first = False
+    def _make_separator_line(self, cp: Palette) -> CHText:
+        # create horizontal border line
+
+        repr_structure = self._ppt_fmt.repr_structure
+        # it the horiz_border character is '-' the line will look like "+-----+--+"
+        ch = self._ppt_fmt.style.horiz_border or " "
+        s_ch = '+' if ch == '-' else ch
+        first_ch = '+' if ch == '-' else repr_structure.borders[0]
+        last_ch = '+' if ch == '-' else repr_structure.borders[-1]
+
+        line_chunks = []
+        for border, column in zip(repr_structure.borders, repr_structure.columns):
+            if len(line_chunks) == 0:
+                # the very first border
+                line_chunks.append(first_ch*len(border))
             else:
-                line.append(sep)
-            line.extend(cell_ch_text_items)
-        line.append(sep)
-        return line
+                line_chunks.append(s_ch*len(border))
+            line_chunks.append(ch*column.width)
+        if len(line_chunks) == 0:
+            # there are no columns in this record representation.
+            # still need to include left outer border into output
+            line_chunks.append(first_ch*len(repr_structure.borders[0]))
+
+        # right border
+        line_chunks.append(last_ch*len(repr_structure.borders[-1]))
+        return cp.border("".join(line_chunks))
 
 
 class _PPTableParsedFmt:
@@ -2315,7 +2347,7 @@ class PPTableFormat:
 
     _DFLT_LIMIT_LINES = (30, 20)  # n_first, n_last
 
-    def __init__(self, repr_structure, limit_flines=None, limit_llines=None):
+    def __init__(self, repr_structure, style, limit_flines=None, limit_llines=None):
         """Constructor of PPTableFormat.
 
         Arguments:
@@ -2326,6 +2358,7 @@ class PPTableFormat:
         """
         assert isinstance(repr_structure, ReprStructure)
         self.repr_structure = repr_structure  # ReprStructure
+        self.style = style
         self.limit_flines = limit_flines
         self.limit_llines = limit_llines
         # indicates if the table (which ownes this format object) has more lines
@@ -2350,12 +2383,13 @@ class PPTableFormat:
             ReprStructure.make(
                 parsed_fmt.cols_parsed_fmt,
                 fields, fields_types, fields_titles, sample_record, style),
-            limit_flines, limit_llines,
+            style, limit_flines, limit_llines,
         )
 
     def clone(self):
         return PPTableFormat(
-            self.repr_structure.clone(), self.limit_flines, self.limit_llines)
+            self.repr_structure.clone(), self.style,
+            self.limit_flines, self.limit_llines)
 
     def remove_columns(self, columns_names):
         """Remove columns from table."""

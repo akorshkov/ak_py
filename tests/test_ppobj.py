@@ -432,6 +432,8 @@ def verify_table_format(
 ):
     """Verify that table is printed out correctly.
 
+    Method works with tables having standard style only.
+
     Arguments:
     - table: either PPTable object or a sring
     Printed table looks like:
@@ -511,7 +513,34 @@ def verify_table_format(
             cols_widths, actual_col_widths,
             f"unexpected column widths in table:\n{orig_ttext}")
 
-    # 4. verify contains specified text
+    # ... other tests can be performed even if the table has not a standard style:
+    verify_styled_table_format(
+        testcase, orig_ttext,
+        contains_text=contains_text,
+        not_contains_text=not_contains_text)
+
+
+def verify_styled_table_format(
+    testcase, table,
+    contains_text=None,
+    not_contains_text=None,
+):
+    """To be used instead of 'verify_table_format' for tables with not default style.
+
+    Performs only very basic tests as parsing the table with not default style is
+    more difficult.
+    """
+    orig_ttext = table if isinstance(table, str) else str(table)
+    ttext = CHText.strip_colors(orig_ttext)
+
+    text_lines = ttext.split('\n')
+
+    if not text_lines:
+        return
+
+    table_width = len(text_lines[0])
+
+    # 1. verify contains specified text
     if contains_text is not None:
         if not isinstance(contains_text, (list, tuple)):
             contains_text = [contains_text, ]
@@ -519,7 +548,7 @@ def verify_table_format(
             testcase.assertIn(
                 t, ttext, f"table doesn't contain text '{t}':\n{orig_ttext}")
 
-    # 5. verify does not contain specified text
+    # 2. verify does not contain specified text
     if not_contains_text is not None:
         if not isinstance(not_contains_text, (list, tuple)):
             not_contains_text = [not_contains_text, ]
@@ -527,7 +556,7 @@ def verify_table_format(
             testcase.assertNotIn(
                 t, ttext, f"table unexpectedly contains text '{t}':\n{orig_ttext}")
 
-    # verify all lines has same length
+    # 3. verify all lines has same length
     for i, line in enumerate(text_lines):
         testcase.assertEqual(
             table_width, len(line),
@@ -1472,6 +1501,203 @@ class TestEnhancedPPTable(unittest.TestCase):
             n_body_lines=3,
             cols_widths=[len('seat'), len("Arnold")],
         )
+
+
+class TestPPTableStyle(unittest.TestCase):
+    """Test PPTables with different styles."""
+
+    def test_border_style(self):
+        """Test specifying different border text for PPTable."""
+
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        # 1. not standard inner border
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                inner_border=":",
+            ),
+        )
+
+        #print(table)
+        verify_styled_table_format(
+            self, table,
+            contains_text=[
+                "10:Linus",
+                "level:name",  # title line should also contain custom borders
+            ],
+            not_contains_text="10|Linus",
+        )
+
+        # 2. remove outer borders
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                left_border="",
+                right_border="",
+            ),
+        )
+
+        #print(table)
+        verify_styled_table_format(
+            self, table,
+            contains_text=[
+                "10|Linus",
+                "level|name",
+                "|Arnold",
+            ],
+            not_contains_text="Arnold|",
+        )
+
+    def test_omit_sections_with_style(self):
+        """Test omitting misc. table sections using style."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        # 1. skip title line
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                show_column_titles=False,
+            ),
+        )
+        # print(table)
+
+        verify_styled_table_format(
+            self, table,
+            not_contains_text="level",  # title of a column, should be skipped
+        )
+        ttext = table.ch_text()
+        lines = ttext.plain_text().split('\n')
+        separator_lines = [l for l in lines if '---' in l]
+        self.assertEqual(
+            len(separator_lines), 2,
+            f"expected to have only two separator lines as there is no "
+            f"title section:\n{ttext}"
+        )
+
+        # 2. skip horizontal borders
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                show_horiz_borders=False,
+            ),
+        )
+        #print(table)
+        verify_styled_table_format(
+            self, table,
+            contains_text="level",  # title of a column, not skipped
+            not_contains_text="---",  # part of horizontal border: skipped
+        )
+
+        # 3. skip summary line
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                show_summary_line=False,
+            ),
+        )
+        # print(table)
+        verify_styled_table_format(
+            self, table,
+            not_contains_text=["Total", "records"]
+        )
+
+        # 4. multiple style changes
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                inner_border=':',
+                left_border="",
+                right_border="",
+                # show_column_titles=False,
+                show_summary_line=False,
+                show_horiz_borders=False,
+            ),
+        )
+        # print(table)
+        verify_styled_table_format(
+            self, table,
+            not_contains_text=["Total", "records"]
+        )
+
+        # 5. test break-by and skipped columns
+        # Not testing if break-by lines are placed correctly, just
+        # making sure they do not break table format
+        table = PPTable(
+            records,
+            fmt="id!<-0,level<-1,name<-2",
+            limits=(1, 2),
+            style=PPTable.Style(
+                inner_border=':',
+                left_border="",
+                right_border="",
+                show_summary_line=False,
+                show_horiz_borders=False,
+            ),
+        )
+        # print(table)
+        # Expected result ('>' and '<' symbols are not included):
+        # >0123456789 1234<
+        # > 1:   10:Linus <
+        # >... 2 record...<   <- number of skipped lines
+        # >               <   <- the break-by empty line
+        # > 4:    7:Elizer<
+        verify_styled_table_format(
+            self, table,
+            contains_text=[
+                "... 2 record...",
+                "               ",
+            ],
+            not_contains_text=["Total", "records"]
+        )
+
+    def test_style_in_table_class(self):
+        """Test different ways to specify table style."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        # 1. specify style in table constructor
+        table = PPTable(
+            records,
+            fields=['id', 'level', 'name'],
+            style=PPTable.Style(
+                inner_border=":",
+            ),
+        )
+
+        # 2. specify style in derived class
+        class StyledPPTable(PPTable):
+            """PPTable with custom style."""
+            _DFLT_STYLE = PPTable.Style(
+                inner_border=":",
+            )
+
+        styled_class_table = StyledPPTable(
+            records,
+            fields=['id', 'level', 'name'],
+        )
+
+        self.assertEqual(str(table), str(styled_class_table))
 
 
 class TestCustomFieldValueType(unittest.TestCase):
