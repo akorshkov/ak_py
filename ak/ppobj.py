@@ -1961,6 +1961,34 @@ class PPTable(PPObj):
 
     _DFLT_STYLE = TableStyle()
 
+    class _TableVisibileLines:
+        # contains misc. intermediary data used during PPTable printing
+        def __init__(
+            self,
+            table_lines=None, break_line=None, skipped_recs_line=None,
+            n_skipped_lines=0,
+        ):
+            self.table_lines = table_lines
+            self.break_line = break_line
+            self.skipped_recs_line = skipped_recs_line
+            self.n_skipped_lines = n_skipped_lines
+
+        def clone(self):
+            # self.table_lines contains records and service lines.
+            # The service lines must be one of self.break_line
+            # or self.skipped_recs_line
+            new_break_line = PPTable._ServiceLine()
+            new_skipped_resc_line = PPTable._ServiceLine()
+            choose_line = lambda line: (
+                new_break_line if line is self.break_line
+                else (new_skipped_resc_line if line is self.skipped_recs_line
+                else line))
+            new_table_lines = [choose_line(line) for line in self.table_lines]
+            return PPTable._TableVisibileLines(
+                new_table_lines, new_break_line, new_skipped_resc_line,
+                self.n_skipped_lines,
+            )
+
     class _ServiceLine:
         # contents of a 'service' line of a printed table - line, which
         # doesn't correspond to any record (f.e. empty 'break by' line)
@@ -2065,6 +2093,8 @@ class PPTable(PPObj):
         self.footer = (
             footer if footer is not None else f"Total {len(self.records)} records")
 
+        self._visible_table_lines = None  # _TableVisibileLines
+
     def set_fmt(self, fmt):
         """Specify fmt - a string which describes format of the table.
 
@@ -2075,6 +2105,7 @@ class PPTable(PPObj):
         parsed_fmt = PPTableFormat._parse_fmt(fmt)
         new_fmt_obj._set_parsed_fmt(parsed_fmt, self._ppt_fmt)
         self._ppt_fmt = new_fmt_obj
+        self._visible_table_lines = None  # reset cached data
         return self
 
     def _get_fmt(self):
@@ -2101,6 +2132,95 @@ class PPTable(PPObj):
         repr_structure = self._ppt_fmt.repr_structure
         columns = repr_structure.columns
         style = self._ppt_fmt.style
+
+        table_width = self.get_table_width()
+        assert self._visible_table_lines is not None
+
+        # self._visible_table_lines contains list or visible records and
+        # 'service' lines. But service lines are not quite ready yet.
+        # Service lines contain ready CHText, which can be created only
+        # using the color palette. Single table can be printed multiple
+        # times concurrently, so this method should have it's own copy
+        # of the data.
+        cur_scheme = self._visible_table_lines.clone()
+
+        # there is no need to specify style when constructing PPRecordFmt
+        # because the record-related style information is present in
+        # the repr_structure
+        normal_line_fmt = PPRecordFmt(
+            None, repr_structure=repr_structure, palette=cp)
+
+        # contents of service lines can be created now
+        inner_width = (table_width
+            - len(repr_structure.borders[0]) - len(repr_structure.borders[-1]))
+        left_ch_brd = cp.border(repr_structure.borders[0])
+        right_ch_brd = cp.border(repr_structure.borders[-1])
+        cur_scheme.break_line.ch_text = CHText(
+            cp.border(repr_structure.borders[0]),
+            " "*inner_width,
+            cp.border(repr_structure.borders[-1]),
+        )
+        skipped_line_contents = FieldType.fit_to_width(
+            [
+                cp.warn("... "),
+                cp.text(f"{cur_scheme.n_skipped_lines} records skipped"),
+            ],
+            inner_width,
+            FieldType.ALIGN_LEFT,
+            cp)
+        skipped_line_contents.insert(0, left_ch_brd)
+        skipped_line_contents.append(right_ch_brd)
+        cur_scheme.skipped_recs_line.ch_text = CHText.make(skipped_line_contents)
+
+        # 1. make first border line
+        border_line = None
+        if style.show_horiz_borders:
+            border_line = self._make_separator_line(cp)
+
+        if border_line is not None:
+            yield border_line
+
+        # 2. table header (name)
+        if self.header:
+            line = FieldType.fit_to_width(
+                [cp.header(self.header)], inner_width, FieldType.ALIGN_LEFT, cp)
+            line.insert(0, left_ch_brd)
+            line.append(right_ch_brd)
+            yield CHText.make(line)
+
+        # 3. multi column titles
+        if style.show_column_titles:
+            yield from normal_line_fmt.title()
+
+        # 4. one more border_line
+        if (self.header or style.show_column_titles) and border_line is not None:
+            yield border_line
+
+        # 5. table contents - actual records and service lines
+        for tl in cur_scheme.table_lines:
+            if isinstance(tl, self._ServiceLine):
+                yield tl.ch_text
+            else:
+                yield normal_line_fmt(tl)
+
+        # 6. final border line
+        if border_line is not None:
+            yield border_line
+
+        # 7. summary line
+        if style.show_summary_line and self.footer:
+            yield CHText.make(FieldType.fit_to_width(
+                [cp.text(self.footer)], table_width, FieldType.ALIGN_LEFT, cp))
+
+    def _init_visible_lines_data(self):
+        # init information about visible columns.
+        # This operation is performed on demand (in the process of printing
+        # or when it it necessary to calculate table width)
+        if self._visible_table_lines is not None:
+            return
+
+        repr_structure = self._ppt_fmt.repr_structure
+        columns = repr_structure.columns
 
         # prepare list of table lines. Table line may correspond to a record
         # or to a special markup lines
@@ -2139,87 +2259,28 @@ class PPTable(PPObj):
             n_skipped = 0
         self._ppt_fmt.any_lines_skipped = n_skipped > 0
 
+        self._visible_table_lines = self._TableVisibileLines(
+            table_lines, break_line, skipped_recs_line, n_skipped)
+
+    def get_table_width(self) -> int:
+        """Calculate the total width of the table on the screen"""
+        self._init_visible_lines_data()
+
+        repr_structure = self._ppt_fmt.repr_structure
+
         # calculate actual widths of table columns (col.width)
         if not repr_structure.col_widths_finalized():
             repr_structure.detect_actual_columns_widths(
                 (
-                    rec for rec in table_lines
+                    rec for rec in self._visible_table_lines.table_lines
                     if not isinstance(rec, self._ServiceLine)
                 )
             )
 
-        # there is no need to specify style when constructing PPRecordFmt
-        # because the record-related style information is present in
-        # the repr_structure
-        normal_line_fmt = PPRecordFmt(
-            None, repr_structure=repr_structure, palette=cp)
-
-        table_width = (
-            sum(col.width for col in columns)
+        return (
+            sum(col.width for col in repr_structure.columns)
             + sum(len(b) for b in repr_structure.borders)
         )
-
-        # contents of service lines can be created now
-        inner_width = (table_width
-            - len(repr_structure.borders[0]) - len(repr_structure.borders[-1]))
-        left_ch_brd = cp.border(repr_structure.borders[0])
-        right_ch_brd = cp.border(repr_structure.borders[-1])
-        break_line.ch_text = CHText(
-            cp.border(repr_structure.borders[0]),
-            " "*inner_width,
-            cp.border(repr_structure.borders[-1]),
-        )
-        skipped_line_contents = FieldType.fit_to_width(
-            [
-                cp.warn("... "),
-                cp.text(f"{n_skipped} records skipped"),
-            ],
-            inner_width,
-            FieldType.ALIGN_LEFT,
-            cp)
-        skipped_line_contents.insert(0, left_ch_brd)
-        skipped_line_contents.append(right_ch_brd)
-        skipped_recs_line.ch_text = CHText.make(skipped_line_contents)
-
-        # 1. make first border line
-        border_line = None
-        if style.show_horiz_borders:
-            border_line = self._make_separator_line(cp)
-
-        if border_line is not None:
-            yield border_line
-
-        # 2. table header (name)
-        if self.header:
-            line = FieldType.fit_to_width(
-                [cp.header(self.header)], inner_width, FieldType.ALIGN_LEFT, cp)
-            line.insert(0, left_ch_brd)
-            line.append(right_ch_brd)
-            yield CHText.make(line)
-
-        # 3. multi column titles
-        if style.show_column_titles:
-            yield from normal_line_fmt.title()
-
-        # 4. one more border_line
-        if (self.header or style.show_column_titles) and border_line is not None:
-            yield border_line
-
-        # 5. table contents - actual records and service lines
-        for tl in table_lines:
-            if isinstance(tl, self._ServiceLine):
-                yield tl.ch_text
-            else:
-                yield normal_line_fmt(tl)
-
-        # 6. final border line
-        if border_line is not None:
-            yield border_line
-
-        # 7. summary line
-        if style.show_summary_line and self.footer:
-            yield CHText.make(FieldType.fit_to_width(
-                [cp.text(self.footer)], table_width, FieldType.ALIGN_LEFT, cp))
 
     def _make_separator_line(self, cp: Palette) -> CHText:
         # create horizontal border line
