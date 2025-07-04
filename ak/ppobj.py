@@ -2538,6 +2538,96 @@ class PPTableFormat:
 
 
 #########################
+# TableBlock
+
+class TableBlock(PPObj):
+    """Print several tables in a single block (vertical or horizontal).
+
+    'table' is a PPObj which produces lines of the same length and has
+    'get_table_width' method. So the TableBlock is also a table and can be
+    included into another TableBlock.
+    Another example of table object is PPTable.
+    """
+
+    class TableBlockPalette(CompoundPalette):
+        SUB_PALETTES_MAP = {}
+
+    PALETTE_CLASS = TableBlockPalette
+
+    def __init__(self, *inner_tables, vertical=False, separator_text=" "):
+        """TableBlock constructor.
+
+        Arguments:
+        - inner_tables: each element is either
+            - table
+            - (table, shade)
+
+        """
+        self.is_vertical = vertical
+        self.separator_text = separator_text
+        self.inner_tables = []  # [(inner_table, shade), ]
+        for inner_tbl_data in inner_tables:
+            if isinstance(inner_tbl_data, (list, tuple)):
+                assert len(inner_tbl_data) == 2, (
+                    f"unexpecte argument: {inner_tbl_data}. "
+                    f"Expected pair (tuple, shade)")
+                inner_table, shade = inner_tbl_data
+            else:
+                inner_table = inner_tbl_data
+                shade = None
+            self.inner_tables.append((inner_table, shade))
+
+    def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
+        """!!! """
+        if self.is_vertical:
+            yield from self._gen_for_vertical_layout(cp)
+        else:
+            yield from self._gen_for_horizontal_layout(cp)
+
+    def _gen_for_horizontal_layout(self, cp: Palette) -> Iterator[CHText]:
+        # generate CHText lines of the TableBlock representation: horizontal layout
+        filler_lines = [
+            cp.text(" "*t.get_table_width())
+            for t, _ in self.inner_tables]
+
+        def _infinite_generator(src):
+            yield from src
+            while True:
+                yield None
+
+        tables_lines_generators = [
+            _infinite_generator(table.ch_text(compound_palette=cp, shade_name=shade))
+            for table, shade in self.inner_tables]
+
+        tables_separator = cp.text(self.separator_text)
+
+        for tables_lines in zip(*tables_lines_generators):
+            if all(line is None for line in tables_lines):
+                break
+            tables_lines = [
+                l if l is not None else filler
+                for l, filler in zip(tables_lines, filler_lines)]
+            yield tables_separator.join(tables_lines)
+
+    def _gen_for_vertical_layout(self, cp: Palette) -> Iterator[CHText]:
+        # generate CHText lines of the TableBlock representation: vertical layout
+        width = self.get_table_width()
+        for table, shade in self.inner_tables:
+            filler = cp.text(" "*(width - table.get_table_width()))
+            for line in table.ch_text(compound_palette=cp, shade_name=shade):
+                yield line + filler
+
+    def get_table_width(self):
+        """Get total width of the block."""
+        if self.is_vertical:
+            return max(t.get_table_width() for t, _ in self.inner_tables)
+        else:
+            return (
+                sum(t.get_table_width() for t, _ in self.inner_tables)
+                + len(self.separator_text) * max(0, len(self.inner_tables) - 1))
+
+
+#########################
 # PPEnumFieldType
 
 class PPEnumFieldType(FieldType):

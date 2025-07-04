@@ -8,7 +8,9 @@ from ak.color import CHText, ConfColor, ColorFmt, Palette, CompoundPalette
 from ak.ppobj import CHTextResult, PrettyPrinter, pp
 from ak.ppobj import (
     PPObj,
-    FieldType, FieldValueType, RecordField, PPTable, PPEnumFieldType, PPRecordFmt)
+    FieldType, FieldValueType, RecordField, PPEnumFieldType,
+    PPRecordFmt, PPTable, TableBlock,
+)
 
 
 #########################
@@ -1863,7 +1865,7 @@ class TestPPRecordFormatter(unittest.TestCase):
         # the borders
         brd_fmt = PPRecordFmt(
             "id:5,f1:5,f2:5",
-            style=PPRecordFmt.Style(
+            style=PPTable.Style(
                 inner_border=':',
                 left_border='<',
                 right_border='>',
@@ -1878,7 +1880,7 @@ class TestPPRecordFormatter(unittest.TestCase):
         # 3. alternatively it is possible to override the style in the
         # derived class
         class BrdRecFmt(PPRecordFmt):
-            _DFLT_STYLE = style=PPRecordFmt.Style(
+            _DFLT_STYLE = PPRecordFmt.Style(
                 inner_border='*',
                 left_border='[',
                 right_border=']',
@@ -1907,7 +1909,7 @@ class TestPPRecordFormatter(unittest.TestCase):
         # to test colors need a formatter with some borders.
         # Borders have color.
         class BrdRecFmt(PPRecordFmt):
-            _DFLT_STYLE = style=PPRecordFmt.Style(
+            _DFLT_STYLE = PPRecordFmt.Style(
                 inner_border='*',
                 left_border='[',
                 right_border=']',
@@ -2059,3 +2061,132 @@ class TestPPRecordFormatter(unittest.TestCase):
 
         err_msg = str(exc.exception)
         self.assertIn("amount_x", err_msg)
+
+
+#########################
+# Test TableBlock
+
+class TestTableBlock(unittest.TestCase):
+    """Test printing several tables in a single block."""
+
+    def test_simple_horizontal_block(self):
+        """Test simple horizontal block of two tables."""
+
+        records_0 = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table_0 = PPTable(records_0, fields=['id', 'level', 'name'])
+
+        records_1 = [
+            (1, "user 01", 10),
+            (2, "user 02", 999),
+        ]
+
+        table_1 = PPTable(records_1, fields=['id', 'name', 'status'])
+
+        block = TableBlock(table_0, table_1)
+        # print(block)
+        verify_styled_table_format(
+            self, block,
+            contains_text=['id', 'name', 'level', 'status', 'user 01', 'Linus'],
+        )
+
+        expected_width = table_0.get_table_width() + table_1.get_table_width() + 1
+
+        self.assertEqual(expected_width, block.get_table_width())
+
+        block = TableBlock(table_1, table_0)
+        # print(block)
+        verify_styled_table_format(
+            self, block,
+            contains_text=['id', 'name', 'level', 'status', 'user 01', 'Linus'],
+        )
+
+    def test_simple_vertical_block(self):
+        """Test simple vertical block of two tables."""
+
+        records_0 = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table_0 = PPTable(records_0, fields=['id', 'level', 'name'])
+
+        records_1 = [
+            (1, "user 01", 10),
+            (2, "user 02", 999),
+        ]
+
+        table_1 = PPTable(records_1, fields=['id', 'name', 'status'])
+
+        block = TableBlock(table_1, table_0, vertical=True)
+        # print(block)
+        verify_styled_table_format(
+            self, block,
+            contains_text=['id', 'name', 'level', 'status', 'user 01', 'Linus'],
+        )
+
+    def test_composition_of_several_blocks(self):
+        records_0 = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        table_0 = PPTable(records_0, fields=['id', 'level', 'name'])
+
+        records_1 = [
+            (1, "user 01", 10),
+            (2, "user 02", 999),
+        ]
+
+        table_1 = PPTable(records_1, fields=['id', 'name', 'status'])
+
+        records_2 = list((n, f"user {n:02}") for n in range(15))
+        table_2 = PPTable(
+            records_2, fields=['id', 'name'],
+            style=PPTable.Style(
+                inner_border=":",
+                left_border="",
+                right_border="",
+                show_column_titles=False,
+                show_horiz_borders=False,
+                show_summary_line=False,
+            ),
+            header="= refs =",
+        )
+
+        records_3 = [
+            (10, "Some book to read", "Y-Pending Reading", 35, 78),
+            (20, "Done book", "C-Done", 73, 16),
+            (30, "Boots of Transcedence", "R-Got It", 3, None),
+            (40, "Piano", "P-Planned", None, 1765),
+        ]
+        table_3 = PPTable(
+            records_3,
+            fields=["Id", "Description", "Status", "Processing Facility", "Doc.ID."],
+        )
+
+        block = TableBlock(
+            TableBlock(
+                TableBlock(table_1, table_0),
+                table_3,
+                vertical=True,
+            ),
+            table_2,
+        )
+        # print(block)
+        verify_styled_table_format(
+            self, block,
+            contains_text=[
+                'id', 'name', 'level', 'status', 'user 01', 'Linus',
+                'Processing Facility', "= refs =",
+            ],
+        )
