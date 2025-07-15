@@ -236,13 +236,15 @@ class SqlMethod:
         'record_name',
         'fields',
         'rec_type',
+        'log_ref',
     )
 
     _or = SqlOrCondition
     _and = SqlAndCondition
 
     def __init__(self, sql_select_from, *,
-                 group_by=None, order_by=None, record_name=None, as_scalars=False):
+                 group_by=None, order_by=None, record_name=None, as_scalars=False,
+                 log_ref=None):
         """Create SqlMethod object.
 
         Arguments:
@@ -255,6 +257,7 @@ class SqlMethod:
         - as_scalars: if False, method returns records objects (usually
             namedtuples), overwise - first elements of these records.
             (it may be overridden when executing this method)
+        - log_ref: optional request identifier to be mentioned in the log.
 
         Note: selects with HAVING are not supported yet
         """
@@ -270,6 +273,7 @@ class SqlMethod:
         # namedtuple (if it is possible to create a namedtuple from the field
         # names)
         self.rec_type = None
+        self.log_ref = log_ref
 
     def _execute(self, conn, args, kwargs):
         # Execute sql request, and yield result records (or scalars)
@@ -304,7 +308,12 @@ class SqlMethod:
             sql += " ORDER BY " + order_by_clause
 
         # and execute request
-        logger.debug("SQL request: %s ; params: %s", sql, req_params)
+        logger.debug(
+            "SQL request%s: %s ; params: %s",
+            "" if self.log_ref is None else f" (#{self.log_ref})",
+            sql,
+            req_params,
+        )
         # print(f"'{sql}'", req_params)
         with contextlib.closing(conn.cursor()) as cur:
             cur.execute(sql, req_params)
