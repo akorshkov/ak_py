@@ -6,6 +6,7 @@ Classes provided by this module:
 - PPWrap - Pretty-printable wrapper to be used in interactive console
 - PPTable - pretty-printable 2-D tables
 - PPEnumFieldType - to be used by PPTable for enum fields
+- PPRecordFmt - makes line of colored text from a record. Is used by PPTable.
 """
 
 # - FieldType       - general properties of a field. Defines how to display misc
@@ -684,6 +685,8 @@ class FieldType(PaletteUser):
                 ch_chunks = [ch_chunks]
             elif isinstance(ch_chunks, CHText):
                 ch_chunks = ch_chunks.chunks.copy()
+            elif isinstance(ch_chunks, str):
+                ch_chunks = CHText(ch_chunks).chunks
 
         assert width >= 0
         filler_len = width - CHText.calc_chunks_len(ch_chunks)
@@ -1641,6 +1644,13 @@ class PPRecordFmt(PaletteUser):
         self.repr_structure.remove_columns(columns_names)
         self._borders = self._make_borders_chtext(self._cp)
 
+    def detect_actual_columns_widths(self, records, *, _account_columns_names=False):
+        """Calculate actual columns widths based of provided records."""
+        if not self.repr_structure.col_widths_finalized():
+            self.repr_structure.detect_actual_columns_widths(
+                    records,
+                    _account_columns_names=_account_columns_names)
+
     def set_palette(
         self, palette=None, no_color=None, compound_palette=None, shade_name=None,
     ):
@@ -1655,8 +1665,9 @@ class PPRecordFmt(PaletteUser):
         self._borders = self._make_borders_chtext(self._cp)
 
     def __call__(
-        self, record=None, *, palette=None, no_color=None,
-        compound_palette=None, shade_name=None, **kwargs,
+        self, record=None, *,
+        palette=None, no_color=None, compound_palette=None, shade_name=None,
+        **kwargs,
     ) -> CHText:
         """Create colored text representation of the record.
 
@@ -1729,9 +1740,48 @@ class PPRecordFmt(PaletteUser):
 
         return CHText.make(result_chunks)
 
+    def line(
+        self, ch_text,
+        palette=None, no_color=None, compound_palette=None, shade_name=None,
+        show_outer_border=True,
+    ) -> CHText:
+        """Produce a line (CHText) having the same width as the record.
+
+        Arguments:
+        - ch_text: CHText or str. Content of the line, arbitrary text.
+        - palette, no_color, compound_palette, shade_name: (optional) arguments
+            which identify color palette to be used. Check PPObj.ch_text doc
+            for details.
+            In most cases these arguments should not be used because the palette
+            data should be specified for the record formatter using 'set_palette'
+            method
+        - show_outer_border: specifies if the result should contain outer record
+            borders.
+
+        This method is supposed to be used to produce table-like text having
+        record lines and lines with misc descriptions.
+        """
+        cp, chborders = self._mk_cp_and_chborders(
+            palette, no_color, compound_palette, shade_name)
+
+        inner_width = (
+            sum(col.width for col in self.repr_structure.columns)
+            + sum(len(b) for b in self.repr_structure.borders[1:-1])
+        )
+        if not show_outer_border:
+            inner_width += len(self.repr_structure.borders[0])
+            inner_width += len(self.repr_structure.borders[-1])
+
+        l = FieldType.fit_to_width(ch_text, inner_width, FieldType.ALIGN_LEFT, cp)
+        if show_outer_border:
+            l.insert(0, chborders[0])
+            l.append(chborders[-1])
+
+        return CHText.make(l)
+
     def title(
-        self, palette=None, no_color=None,
-        compound_palette=None, shade_name=None,
+        self, *,
+        palette=None, no_color=None, compound_palette=None, shade_name=None,
     ) -> CHTextResult:
         """Produce title lines.
 
@@ -1745,7 +1795,7 @@ class PPRecordFmt(PaletteUser):
             description of these arguments.
             There is no need to specify these arguments if this palette-related
             information was specified previously (either in constructor or
-            uging 'set_palette' method)
+            using 'set_palette' method)
         """
         cp, chborders = self._mk_cp_and_chborders(
             palette, no_color, compound_palette, shade_name)
@@ -2126,14 +2176,33 @@ class PPTable(PPObj):
         """
         self._ppt_fmt.remove_columns(columns_names)
 
+    def make_record_formatter(
+        self, *,
+        palette=None, no_color=None, compound_palette=None, shade_name=None,
+    ) -> PPRecordFmt:
+        """Create a Record Formatter object which prints table lines.
+
+        The Record Formatter may be used to print out individual records in the
+        same way they look in the standard table.
+
+        Arguments:
+        - palette, no_color, compound_palette, shade_name: arguments which identify
+            color palette to be used. Check PPObj.ch_text doc for detailed
+            description of these arguments.
+        """
+        self.get_table_width()  # this call finishes initialization by calculating
+                                # actual widths of the columns.
+
+        cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
+        return PPRecordFmt(
+            None, repr_structure=self._ppt_fmt.repr_structure, palette=cp)
+
     def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""
 
-        repr_structure = self._ppt_fmt.repr_structure
-        columns = repr_structure.columns
         style = self._ppt_fmt.style
 
-        table_width = self.get_table_width()
+        self._init_visible_lines_data()
         assert self._visible_table_lines is not None
 
         # self._visible_table_lines contains list or visible records and
@@ -2147,30 +2216,16 @@ class PPTable(PPObj):
         # there is no need to specify style when constructing PPRecordFmt
         # because the record-related style information is present in
         # the repr_structure
-        normal_line_fmt = PPRecordFmt(
-            None, repr_structure=repr_structure, palette=cp)
+        normal_line_fmt = self.make_record_formatter(palette=cp)
 
         # contents of service lines can be created now
-        inner_width = (table_width
-            - len(repr_structure.borders[0]) - len(repr_structure.borders[-1]))
-        left_ch_brd = cp.border(repr_structure.borders[0])
-        right_ch_brd = cp.border(repr_structure.borders[-1])
-        cur_scheme.break_line.ch_text = CHText(
-            cp.border(repr_structure.borders[0]),
-            " "*inner_width,
-            cp.border(repr_structure.borders[-1]),
-        )
-        skipped_line_contents = FieldType.fit_to_width(
+        cur_scheme.break_line.ch_text = normal_line_fmt.line(cp.text(""))
+        cur_scheme.skipped_recs_line.ch_text = normal_line_fmt.line(
             [
                 cp.warn("... "),
                 cp.text(f"{cur_scheme.n_skipped_lines} records skipped"),
-            ],
-            inner_width,
-            FieldType.ALIGN_LEFT,
-            cp)
-        skipped_line_contents.insert(0, left_ch_brd)
-        skipped_line_contents.append(right_ch_brd)
-        cur_scheme.skipped_recs_line.ch_text = CHText.make(skipped_line_contents)
+            ]
+        )
 
         # 1. make first border line
         border_line = None
@@ -2182,11 +2237,12 @@ class PPTable(PPObj):
 
         # 2. table header (name)
         if self.header:
-            line = FieldType.fit_to_width(
-                [cp.header(self.header)], inner_width, FieldType.ALIGN_LEFT, cp)
-            line.insert(0, left_ch_brd)
-            line.append(right_ch_brd)
-            yield CHText.make(line)
+            #line = FieldType.fit_to_width(
+            #    [cp.header(self.header)], inner_width, FieldType.ALIGN_LEFT, cp)
+            #line.insert(0, left_ch_brd)
+            #line.append(right_ch_brd)
+            #yield CHText.make(line)
+            yield normal_line_fmt.line(cp.header(self.header))
 
         # 3. multi column titles
         if style.show_column_titles:
@@ -2209,8 +2265,7 @@ class PPTable(PPObj):
 
         # 7. summary line
         if style.show_summary_line and self.footer:
-            yield CHText.make(FieldType.fit_to_width(
-                [cp.text(self.footer)], table_width, FieldType.ALIGN_LEFT, cp))
+            yield normal_line_fmt.line(cp.text(self.footer), show_outer_border=False)
 
     def _init_visible_lines_data(self):
         # init information about visible columns.
@@ -2269,13 +2324,12 @@ class PPTable(PPObj):
         repr_structure = self._ppt_fmt.repr_structure
 
         # calculate actual widths of table columns (col.width)
-        if not repr_structure.col_widths_finalized():
-            repr_structure.detect_actual_columns_widths(
-                (
-                    rec for rec in self._visible_table_lines.table_lines
-                    if not isinstance(rec, self._ServiceLine)
-                )
-            )
+        self._ppt_fmt.detect_actual_columns_widths(
+            (
+                rec for rec in self._visible_table_lines.table_lines
+                if not isinstance(rec, self._ServiceLine)
+            ),
+            _account_columns_names=True)
 
         return (
             sum(col.width for col in repr_structure.columns)
@@ -2452,6 +2506,13 @@ class PPTableFormat:
             self.repr_structure.clone(), self.style,
             self.limit_flines, self.limit_llines)
 
+    def detect_actual_columns_widths(self, records, *, _account_columns_names=False):
+        """Calculate actual columns widths based of provided records."""
+        if not self.repr_structure.col_widths_finalized():
+            self.repr_structure.detect_actual_columns_widths(
+                    records,
+                    _account_columns_names=_account_columns_names)
+
     def remove_columns(self, columns_names):
         """Remove columns from table."""
         self.repr_structure.remove_columns(columns_names)
@@ -2578,7 +2639,7 @@ class TableBlock(PPObj):
             self.inner_tables.append((inner_table, shade))
 
     def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
-        """!!! """
+        """Generate CHText objects - lines of the printed block of tables."""
         if self.is_vertical:
             yield from self._gen_for_vertical_layout(cp)
         else:

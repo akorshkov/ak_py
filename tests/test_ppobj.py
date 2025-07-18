@@ -1236,6 +1236,53 @@ class TestPPTable(unittest.TestCase):
         )
 
 
+class TestCustomTableLines(unittest.TestCase):
+    """Test producing table-like text using table's record formatter"""
+
+    def test_table_with_block_headers(self):
+        """Direct printing of table records and special header lines."""
+
+        records = [
+            (1, "user 01", 10),
+            (2, "user 02", 10),
+            (3, "user 03", 10),
+            (4, "user 04", 20),
+            (5, "user 05", 20),
+        ]
+
+        table = PPTable(
+            records, fields=['id', 'name', 'status'],
+            fmt="name, status, id",
+        )
+
+        def _produce_table_ch_text():
+            rec_formatter = table.make_record_formatter()
+
+            yield rec_formatter.line("Starting line")
+            yield rec_formatter.line("Very looooong starting line XMark")
+            yield from rec_formatter.title()
+
+            for r in records:
+                if r[0] == 3:
+                    yield rec_formatter.line("")
+                    yield rec_formatter.line(
+                        " " + ColorFmt("BLUE")("valued ") + ColorFmt("RED")(r[1]))
+                    yield rec_formatter.line("")
+                yield rec_formatter(r)
+
+            yield from rec_formatter.title()
+
+        ch_text = CHText("\n").join(_produce_table_ch_text())
+
+        # print(ch_text)
+        # mostly checking that all the lines have the same length
+        verify_styled_table_format(
+            self, ch_text,
+            contains_text=["...", "Starting line", "Very looooong", "user 05"],
+            not_contains_text=["XMark",], # it's in the end of the loo long a line
+        )
+
+
 class TestByLineTableOperations(unittest.TestCase):
     """Test how colored text is generated for table in 'line-by-line' mode."""
 
