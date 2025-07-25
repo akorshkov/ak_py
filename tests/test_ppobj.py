@@ -1268,6 +1268,7 @@ class TestCustomTableLines(unittest.TestCase):
                     yield rec_formatter.line(
                         " " + ColorFmt("BLUE")("valued ") + ColorFmt("RED")(r[1]))
                     yield rec_formatter.line("")
+                    yield from rec_formatter.lines(["hello", "n3"])
                 yield rec_formatter(r)
 
             yield from rec_formatter.title()
@@ -1278,7 +1279,10 @@ class TestCustomTableLines(unittest.TestCase):
         # mostly checking that all the lines have the same length
         verify_styled_table_format(
             self, ch_text,
-            contains_text=["...", "Starting line", "Very looooong", "user 05"],
+            contains_text=[
+                "...", "Starting line", "Very looooong", "user 05",
+                "|hello", "|n3",  # args of 'lines' method appear on different lines
+            ],
             not_contains_text=["XMark",], # it's in the end of the loo long a line
         )
 

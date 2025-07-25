@@ -1779,6 +1779,31 @@ class PPRecordFmt(PaletteUser):
 
         return CHText.make(l)
 
+    def lines(
+        self, ch_text_lines,
+        palette=None, no_color=None, compound_palette=None, shade_name=None,
+        show_outer_border=True,
+    ) -> Iterator[CHText]:
+        """Similar to 'line' method but produces several lines"""
+        cp, chborders = self._mk_cp_and_chborders(
+            palette, no_color, compound_palette, shade_name)
+
+        inner_width = (
+            sum(col.width for col in self.repr_structure.columns)
+            + sum(len(b) for b in self.repr_structure.borders[1:-1])
+        )
+        if not show_outer_border:
+            inner_width += len(self.repr_structure.borders[0])
+            inner_width += len(self.repr_structure.borders[-1])
+
+        for ch_text in ch_text_lines:
+            l = FieldType.fit_to_width(ch_text, inner_width, FieldType.ALIGN_LEFT, cp)
+            if show_outer_border:
+                l.insert(0, chborders[0])
+                l.append(chborders[-1])
+
+            yield CHText.make(l)
+
     def title(
         self, *,
         palette=None, no_color=None, compound_palette=None, shade_name=None,
@@ -2130,9 +2155,9 @@ class PPTable(PPObj):
             self._ppt_fmt = fmt_obj.clone()
         else:
             self._ppt_fmt = PPTableFormat.make(
-            fmt, fields, fields_types, fields_titles,
-            self.records[0] if self.records else None,
-            style=style or self._DFLT_STYLE)
+                fmt, fields, fields_types, fields_titles,
+                self.records[0] if self.records else None,
+                style=style or self._DFLT_STYLE)
 
         self._ppt_fmt.set_limits(limits)
 
