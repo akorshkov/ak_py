@@ -590,6 +590,18 @@ class TestPPTable(unittest.TestCase):
             n_body_lines=4, # all 4 records expected to be visible
         )
 
+        # 1.5 the records may be a generator. The result should be the
+        # same as in previous case
+        table = PPTable(
+            (r for r in records),
+            fields=['id', 'level', 'name'])
+
+        verify_table_format(
+            self, table,
+            cols_names=['id', 'level', 'name'],
+            n_body_lines=4, # all 4 records expected to be visible
+        )
+
         # 2. specify format explicitely
         # columns are in different order, some are duplicated
         table.fmt = "id:5,id:10,  level:11,name:15, level:20"

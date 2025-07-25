@@ -2142,6 +2142,17 @@ class PPTable(PPObj):
         Check doc of PPTableFormat for more detailed description of fmt string.
         """
         self.records = records
+
+        try:
+            self.records[0]
+        except IndexError:
+            pass
+        except TypeError:
+            # the records object is a generator. PPTable needs to iterate records
+            # more than once (the first time to calculate columns widths).
+            # So it is necessary to store all the records locally.
+            self.records = list(self.records)
+
         # each PPObj should have 'r' attribute, which contains 'original' object.
         # In case of table the original object is the list of records:
         self.r = self.records
