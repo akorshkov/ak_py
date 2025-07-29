@@ -1247,6 +1247,24 @@ class TestPPTable(unittest.TestCase):
             ],
         )
 
+    def test_pptable_construction_errors(self):
+        """Make sure error messages are meaningful."""
+        RecType = namedtuple('RecType', ['id', 'level', 'name'])
+
+        records = [
+            RecType(1, 10, "Linus"),
+            RecType(2, 10, "Arnold"),
+            RecType(3, 17, "Jerry"),
+            RecType(4, 7, "Elizer"),
+        ]
+
+        with self.assertRaises(ValueError) as exc:
+            PPTable(records, fmt="level,Id")
+
+        err_msg = str(exc.exception)
+        self.assertIn("does not have a field with name 'Id'", err_msg)
+        self.assertIn("'id'", err_msg)
+
 
 class TestCustomTableLines(unittest.TestCase):
     """Test producing table-like text using table's record formatter"""

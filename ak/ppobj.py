@@ -949,8 +949,13 @@ class RecordStructure:
                 f"{duplicates}")
 
     def get_field(self, field_name) -> RecordField:
-        """Get RecordField by name. None if not found."""
-        return self.map.get(field_name)
+        """Get RecordField by name. Raise meaningful error if field not found."""
+        try:
+            return self.map[field_name]
+        except KeyError:
+            raise ValueError(
+                f"RecordStructure does not have a field with name '{field_name}'. "
+                f"Valid fields names: {self.map.keys()}")
 
 
 class ReprColumn:
