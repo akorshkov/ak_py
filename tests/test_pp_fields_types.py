@@ -6,7 +6,10 @@ from datetime import datetime
 
 from ak.color import ColorFmt
 from ak.ppobj import PPTable
-from ak.pp_fields_types import PPEnumFieldType, date_time_field_type, title_field_type
+from ak.pp_fields_types import (
+    date_time_field_type, title_field_type,
+    PPEnumFieldType, MatrixFieldValueType,
+)
 from .test_ppobj import verify_table_format
 
 
@@ -230,5 +233,52 @@ class TestPPEnumFieldType(unittest.TestCase):
             ],
             not_contains_text=[
                 "<???>",
+            ],
+        )
+
+
+class TestMatrixFieldType(unittest.TestCase):
+    """Test MatrixFieldValueType"""
+
+    def test_matrix_table(self):
+        """Test a table with a column having values of different types."""
+
+        records = [
+            ("Name", "Harry"),
+            ("Age", 11),
+            ("Login Date",
+                MatrixFieldValueType(
+                    datetime(2025, 8, 1, 17, 41, 27),
+                    date_time_field_type,
+                )),
+            ("Next",
+                MatrixFieldValueType(
+                    datetime(2025, 8, 2),
+                    date_time_field_type,
+                    'Dt',
+                )),
+        ]
+
+        table = PPTable(
+            records, fields=["Key", "Value"],
+            fields_types={
+                "Key": title_field_type,
+            }
+        )
+
+        # print(table)
+        verify_table_format(
+            self, table,
+            cols_names=['Key', 'Value'],
+            cols_widths=[
+                #         123456789 123456789 123456
+                10,    # "Login Date"
+                26,    # "2025-08-01 17:41:27.000000"
+            ],
+            contains_text=[
+                # "Login Date" contains time part
+                "2025-08-01 17:41:27.000000",
+                # "Next" value is a date, time part skipped
+                "2025-08-02                ",
             ],
         )

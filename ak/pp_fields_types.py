@@ -4,12 +4,20 @@ To be used when constructing tables and record formatters.
 - PPTitleFieldType - field type which formats values for column titles
 - PPDateTimeFieldType - to be used for date/time fields
 - PPEnumFieldType - to be used for enum fields
+- MatrixFieldValueType - to be used when values of different types are supposed
+    to be present in the same table column
+
+Note, that above-mentioned objects are classes. When constructing a table you
+need to specify an instance of FieldType class. In most cases it is possible to
+use already created instances of these objects:
+- title_field_type
+- date_time_field_type
 """
 
 from datetime import datetime
 
 from ak.color import CHText, ConfColor
-from ak.ppobj import FieldType, _DefaultTitleFieldType
+from ak.ppobj import FieldType, FieldValueType, _DefaultTitleFieldType
 
 
 #########################
@@ -243,3 +251,35 @@ class PPEnumFieldType(FieldType):
 
         # 'full' format
         self._cache_lengths['full'][value] = val_len + 1 + name_len
+
+
+#########################
+# MatrixFieldValueType
+
+class MatrixFieldValueType(FieldValueType):
+    """Field Value, which is formatted using specified FieldType.
+
+    Example: a table with two columns, "name" and "value".
+    Different values in "value" column may have different types: strings, numbers,
+    dates, custom types, etc. To properly format all these values we may use
+    instances of FieldValueType-derived class as the values and associate the
+    default FieldType with this column. In this case the value itself will produce
+    the formatted text.
+
+    MatrixFieldValueType is an implementation of FieldValueType which formats
+    the value using specified FieldType.
+    """
+
+    def __init__(self, value, field_type, fmt_modifier=None):
+        assert not isinstance(field_type, type), (
+            f"invalid field_type argument. Expected instance of FieldType, got "
+            f"a class object: {field_type}")
+        self.value = value
+        self.field_type = field_type
+        self.fmt_modifier = fmt_modifier
+
+    def make_desired_cell_ch_chunks(
+        self, fmt_modifier, fld_cp,
+    ) -> ([CHText.Chunk], int):
+        return self.field_type.make_desired_cell_ch_chunks(
+            self.value, self.fmt_modifier, fld_cp)
