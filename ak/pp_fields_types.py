@@ -1,6 +1,7 @@
 """Library of FieldType objects.
 
 To be used when constructing tables and record formatters.
+- PPTitleFieldType - field type which formats values for column titles
 - PPDateTimeFieldType - to be used for date/time fields
 - PPEnumFieldType - to be used for enum fields
 """
@@ -8,12 +9,19 @@ To be used when constructing tables and record formatters.
 from datetime import datetime
 
 from ak.color import CHText, ConfColor
-from ak.ppobj import FieldType
+from ak.ppobj import FieldType, _DefaultTitleFieldType
 
 
 #########################
 # Common Field Types
 
+# PPTitleFieldType - format values the same way as for columns titles
+
+PPTitleFieldType = _DefaultTitleFieldType
+title_field_type = _DefaultTitleFieldType()
+
+
+# PPDateTimeFieldType - format dates and time values
 
 class PPDateTimeFieldType(FieldType):
     """FieldType for representing date/time values.
@@ -28,9 +36,6 @@ class PPDateTimeFieldType(FieldType):
         'S': "use YYYY-MM-DD HH:MM:SS, include timezone info if present",
         'MS': "use YYYY-MM-DD HH:MM:SS.ffffff, include timezone info if present",
     }
-
-    def __init__(self):
-        super().__init__()
 
     def make_desired_cell_ch_chunks(
         self, value, fmt_modifier, fld_cp,
@@ -65,6 +70,11 @@ class PPDateTimeFieldType(FieldType):
             dt.hour == 0 and dt.minute == 0
             and dt.second == 0 and dt.microsecond == 0)
 
+
+date_time_field_type = PPDateTimeFieldType()
+
+
+# PPEnumFieldType - format enums
 
 class PPEnumFieldType(FieldType):
     """PPTable Enum Field Type.

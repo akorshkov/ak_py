@@ -4,9 +4,40 @@ import unittest
 
 from datetime import datetime
 
+from ak.color import ColorFmt
 from ak.ppobj import PPTable
-from ak.pp_fields_types import PPEnumFieldType, PPDateTimeFieldType
+from ak.pp_fields_types import PPEnumFieldType, date_time_field_type, title_field_type
 from .test_ppobj import verify_table_format
+
+
+class TestPPTitleFieldType(unittest.TestCase):
+    """Test FieldType which formats values as for columns titles."""
+
+    def test_kv_table(self):
+        """Simle success scenario."""
+
+        # common scenario for this FieldType usage is "key-value" table.
+        # The "key" column contains names of some entities and we may want to
+        # format these names the same way as columns titles
+        records = [
+            ("Name", "Harry"),
+            ("Age", 11),
+        ]
+
+        table = PPTable(
+            records, fields=["key", "value"],
+            fields_types={
+                "key": title_field_type,
+            },
+        )
+        # print(table)
+
+        # Need to make sure that the values in the first column are printed
+        # in the same color as column title.
+        # The color is defined in _DefaultTitleFieldType.TitlePalette class.
+        # Probably should make it more convenient, not sure
+        s = str(ColorFmt("GREEN", bold=True)("Age"))
+        self.assertIn(s, str(table))
 
 
 class TestPPDateTimeFieldType(unittest.TestCase):
@@ -22,9 +53,9 @@ class TestPPDateTimeFieldType(unittest.TestCase):
             fields=["Date", "DateT", "Nth"],
             fmt="Date,Date/S,DateT,DateT/S,DateT/MS,Nth,Nth/S",
             fields_types={
-                'Date': PPDateTimeFieldType(),
-                'DateT': PPDateTimeFieldType(),
-                'Nth': PPDateTimeFieldType(),
+                'Date': date_time_field_type,
+                'DateT': date_time_field_type,
+                'Nth': date_time_field_type,
             },
         )
 
