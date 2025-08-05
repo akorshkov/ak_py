@@ -571,20 +571,21 @@ class FieldType(PaletteUser):
 
     _FMT_MODIFIERS = {}
 
-    class RecordPalette(Palette):
+    class FieldPalette(CompoundPalette):
         """Palette used for field values of standard types."""
+        SUB_PALETTES_MAP = {}
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
-            'RECORD.NUMBER': "NUMBER",
-            'RECORD.KEYWORD': "KEYWORD",
-            'RECORD.WARN': "WARN",
+            'FIELD.NUMBER': "NUMBER",
+            'FIELD.KEYWORD': "KEYWORD",
+            'FIELD.WARN': "WARN",
         }
 
-        number = ConfColor('RECORD.NUMBER')
-        keyword = ConfColor('RECORD.KEYWORD')
-        warn = ConfColor('RECORD.WARN')
+        number = ConfColor('FIELD.NUMBER')
+        keyword = ConfColor('FIELD.KEYWORD')
+        warn = ConfColor('FIELD.WARN')
 
-    PALETTE_CLASS = RecordPalette
+    PALETTE_CLASS = FieldPalette
 
     _DFLT_MIN_WIDTH = 1
     _DFLT_MAX_WIDTH = 999
@@ -607,7 +608,7 @@ class FieldType(PaletteUser):
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, field_palette,
+        self, value, fmt_modifier, cell_plt,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
 
@@ -616,33 +617,30 @@ class FieldType(PaletteUser):
         Implementation for general field type: value printed almost as is.
         To be overiden in derived classes.
         """
-        cp = field_palette
         if fmt_modifier is not None:
             raise ValueError(
                 f"{type(self)} field type does not support format modifiers. "
                 f"Specified fmt_modifier: '{fmt_modifier}'")
         if PrettyPrinter.is_keyword_value(value):
-            color_fmt = cp.keyword
+            color_fmt = cell_plt.keyword
             align = self.ALIGN_RIGHT
         elif isinstance(value, Number):
-            color_fmt = cp.number
+            color_fmt = cell_plt.number
             align = self.ALIGN_RIGHT
         else:
-            color_fmt = cp.text
+            color_fmt = cell_plt.text
             align = self.ALIGN_LEFT
         return [color_fmt(str(value))], align
 
     def make_cell_ch_chunks(
-        self, value, fmt_modifier, width, record_palette,
+        self, value, fmt_modifier, width, cell_plt,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
 
-        field_palette = record_palette.get_sub_palette(self.PALETTE_CLASS)
-
         text, align = self.make_desired_cell_ch_chunks(
-            value, fmt_modifier, field_palette)
+            value, fmt_modifier, cell_plt)
 
-        return self.fit_to_width(text, width, align, record_palette)
+        return self.fit_to_width(text, width, align, cell_plt)
 
     def _verify_fmt_modifier(self, fmt_modifier):
         # Raise exc if 'fmt_modifier' is not compatible with this field type.
@@ -761,12 +759,12 @@ class _DefaultTitleFieldType(_DefaultFieldType):
     PALETTE_CLASS = TitlePalette
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, field_palette,
+        self, value, fmt_modifier, cell_plt,
     ) -> ([CHText.Chunk], int):
         """Make desired content for title."""
         if isinstance(value, str) and fmt_modifier is None:
-            return field_palette.col_title(value), self.ALIGN_LEFT
-        return super().make_desired_cell_ch_chunks(value, fmt_modifier, field_palette)
+            return cell_plt.col_title(value), self.ALIGN_LEFT
+        return super().make_desired_cell_ch_chunks(value, fmt_modifier, cell_plt)
 
 
 class FieldValueType(PaletteUser):
@@ -790,10 +788,10 @@ class FieldValueType(PaletteUser):
     ALIGN_CENTER = FieldType.ALIGN_CENTER
     ALIGN_RIGHT = FieldType.ALIGN_RIGHT
 
-    PALETTE_CLASS = FieldType.RecordPalette
+    PALETTE_CLASS = FieldType.FieldPalette
 
     def make_desired_cell_ch_chunks(
-        self, fmt_modifier, field_palette,
+        self, fmt_modifier, col_plt,
     ) -> ([CHText.Chunk], int):
         raise NotImplementedError(
             f"'make_desired_cell_ch_chunks' is not implemented in '{type(self)}'")
@@ -809,15 +807,11 @@ class FieldValueType(PaletteUser):
             fmt_modifier, self.PALETTE_CLASS(no_color=True))
         return CHText.calc_chunks_len(ch_text_chunks)
 
-    def make_cell_ch_chunks(
-        self, fmt_modifier, width, record_palette,
-    ) -> [CHText.Chunk]:
+    def make_cell_ch_chunks(self, fmt_modifier, width, col_plt) -> [CHText.Chunk]:
         """self -> [CHText.Chunk] having exactly specified width."""
-        field_palette = record_palette.get_sub_palette(self.PALETTE_CLASS)
 
-        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, field_palette)
-
-        return FieldType.fit_to_width(text, width, align, record_palette)
+        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, col_plt)
+        return FieldType.fit_to_width(text, width, align, col_plt)
 
 
 class RecordField:
@@ -983,12 +977,15 @@ class ReprColumn:
     """
 
     __slots__ = (
-        'field', 'name', 'fmt_modifier', 'break_by',
+        'field', 'name', 'fmt_modifier', 'break_by', 'shade_name',
         'min_width', 'max_width', 'width',
     )
 
-    def __init__(self, field, fmt_modifier=None, break_by=False,
-                 min_width=None, max_width=None):
+    def __init__(
+        self, field, fmt_modifier=None, break_by=False,
+        min_width=None, max_width=None,
+        shade_name=None,
+    ):
         """ReprColumn constructor.
 
         Arguments:
@@ -1001,11 +998,16 @@ class ReprColumn:
             whenever the value of this column changes.
             (It is only used when the column is a part of the PPTable)
         - min_width, max_width: limits for column width.
+        - shade_name: optional name of the shade to be used when fetching
+            the color palette for the current column from the record's
+            palette (see CompoundPalette).
         """
         self.field = field  # RecordField
         self.name = self.field.name
 
         ftype = self.field.field_type
+
+        self.shade_name = shade_name
 
         self.fmt_modifier = fmt_modifier  # or field.dflt_fmt_modifier
         ftype._verify_fmt_modifier(self.fmt_modifier)
@@ -1023,6 +1025,7 @@ class ReprColumn:
             self.break_by,
             self.min_width,
             self.max_width,
+            self.shade_name,
         )
 
     def get_title_width(self):
@@ -1041,9 +1044,10 @@ class ReprColumn:
         value = self.field.fetch_value(record)
         if isinstance(value, FieldValueType):
             return value.get_cell_text_len(self.fmt_modifier)
+
         return self.field.field_type.get_cell_text_len(value, self.fmt_modifier)
 
-    def make_cell_ch_chunks(self, record, record_palette) -> [CHText.Chunk]:
+    def make_cell_ch_chunks(self, record, cell_plt) -> [CHText.Chunk]:
         """Fetch value from record and make colored text for a cell.
 
         Length of created text is exactly self.width.
@@ -1051,11 +1055,11 @@ class ReprColumn:
         value = self.field.fetch_value(record)
 
         if isinstance(value, FieldValueType):
-            return value.make_cell_ch_chunks(
-                self.fmt_modifier, self.width, record_palette)
+            cell_plt = cell_plt.get_sub_palette(value.PALETTE_CLASS)
+            return value.make_cell_ch_chunks(self.fmt_modifier, self.width, cell_plt)
 
         return self.field.field_type.make_cell_ch_chunks(
-            value, self.fmt_modifier, self.width, record_palette,
+            value, self.fmt_modifier, self.width, cell_plt,
         )
 
     def to_fmt_str(self):
@@ -1484,18 +1488,21 @@ class ReprStructure:
         self.columns = new_columns
         self.borders = new_borders
 
-    def make_record_ch_chunks_all(self, record, cp) -> [[CHText.Chunk]]:
+    def make_record_ch_chunks_all(self, record, cols_plts) -> [[CHText.Chunk]]:
         """Create intermediate data for the record's text representation.
 
         Returns [[CHText.Chunk]], where each inner list corresponds to a column
         in self.columns.
         """
+        assert len(cols_plts) == len(self.columns)
         result = []
-        for col in self.columns:
-            result.append(col.make_cell_ch_chunks(record, cp))
+        for col, col_plt in zip(self.columns, cols_plts):
+            result.append(col.make_cell_ch_chunks(record, col_plt))
         return result
 
-    def make_title_line_ch_chunks_all(self, cols_titles, cp) -> [[CHText.Chunk]]:
+    def make_title_line_ch_chunks_all(
+        self, cols_titles, rec_plt,
+    ) -> [[CHText.Chunk]]:
         """Create intermediate data for record's title line representation.
 
         Title may consist of several lines. This method produces one line.
@@ -1504,6 +1511,9 @@ class ReprStructure:
         title line of a column in self.columns.
         """
         assert len(cols_titles) == len(self.columns)
+
+        cp = rec_plt.get_sub_palette(
+            self.title_field_type.PALETTE_CLASS)
 
         return [
             self.title_field_type.make_cell_ch_chunks(title, None, col.width, cp)
@@ -1600,7 +1610,7 @@ class ReprStructure:
 class PPRecordFmt(PaletteUser):
     """Object of this class prints records in specified format."""
 
-    class PPRecordPalette(CompoundPalette, FieldType.RecordPalette):
+    class PPRecordPalette(CompoundPalette):
         SUB_PALETTES_MAP = {}
         SYNTAX_DEFAULTS = {
             'RECORD.BORDER': "GREEN",
@@ -1649,7 +1659,8 @@ class PPRecordFmt(PaletteUser):
 
         self.repr_structure = repr_structure
 
-        self._cp = None
+        self._plt = None
+        self._cols_plts = None
         self._borders = None
         self.set_palette(
             palette=palette,
@@ -1661,7 +1672,8 @@ class PPRecordFmt(PaletteUser):
     def remove_columns(self, columns_names):
         """Remove columns from the record formatter."""
         self.repr_structure.remove_columns(columns_names)
-        self._borders = self._make_borders_chtext(self._cp)
+        self._cols_plts = self._make_cols_palettes(self._plt)
+        self._borders = self._make_borders_chtext(self._plt)
 
     def detect_actual_columns_widths(self, records, *, _account_columns_names=False):
         """Calculate actual columns widths based of provided records."""
@@ -1680,8 +1692,9 @@ class PPRecordFmt(PaletteUser):
         Instead it is possible to specify it once.
         It may be more convenient and is slightly more efficient.
         """
-        self._cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
-        self._borders = self._make_borders_chtext(self._cp)
+        self._plt = self._mk_palette(palette, no_color, compound_palette, shade_name)
+        self._cols_plts = self._make_cols_palettes(self._plt)
+        self._borders = self._make_borders_chtext(self._plt)
 
     def __call__(
         self, record=None, *,
@@ -1712,30 +1725,34 @@ class PPRecordFmt(PaletteUser):
                 _account_columns_names=False,
             )
 
-        cp, borders = self._mk_cp_and_chborders(
+        _rec_plt, cols_plts, borders = self._mk_plt_and_chborders(
             palette, no_color, compound_palette, shade_name)
 
         return self._compose_line_with_borders(
-            self.repr_structure.make_record_ch_chunks_all(record, cp),
+            self.repr_structure.make_record_ch_chunks_all(record, cols_plts),
             borders)
 
-    def _mk_cp_and_chborders(self, palette, no_color, compound_palette, shade_name):
+    def _mk_plt_and_chborders(self, palette, no_color, compound_palette, shade_name):
         # Text of borders between fields does not depend on palette.
         # But the colored text of the borders does.
-        # This method chooses palette and ceates corresponding chtext for borders
+        # This method chooses palette and creates corresponding chtext for borders
         if (
             palette is None and no_color is None
             and compound_palette is None and shade_name is None
         ):
-            return self._cp, self._borders
+            return self._plt, self._cols_plts, self._borders
 
-        cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
-        return cp, self._make_borders_chtext(cp)
+        rec_plt = self._mk_palette(palette, no_color, compound_palette, shade_name)
 
-    def _make_title_line(self, cols_titles, chborders, cp) -> CHText:
+        return (
+            rec_plt,
+            self._make_cols_palettes(rec_plt),
+            self._make_borders_chtext(rec_plt))
+
+    def _make_title_line(self, cols_titles, chborders, rec_plt) -> CHText:
         # returns CHText corresponding to a single line of the title
         return self._compose_line_with_borders(
-            self.repr_structure.make_title_line_ch_chunks_all(cols_titles, cp),
+            self.repr_structure.make_title_line_ch_chunks_all(cols_titles, rec_plt),
             chborders)
 
     @staticmethod
@@ -1780,7 +1797,7 @@ class PPRecordFmt(PaletteUser):
         This method is supposed to be used to produce table-like text having
         record lines and lines with misc descriptions.
         """
-        cp, chborders = self._mk_cp_and_chborders(
+        rec_plt, _cols_plts, chborders = self._mk_plt_and_chborders(
             palette, no_color, compound_palette, shade_name)
 
         inner_width = (
@@ -1791,7 +1808,9 @@ class PPRecordFmt(PaletteUser):
             inner_width += len(self.repr_structure.borders[0])
             inner_width += len(self.repr_structure.borders[-1])
 
-        l = FieldType.fit_to_width(ch_text, inner_width, FieldType.ALIGN_LEFT, cp)
+        l = FieldType.fit_to_width(
+            ch_text, inner_width, FieldType.ALIGN_LEFT, rec_plt)
+
         if show_outer_border:
             l.insert(0, chborders[0])
             l.append(chborders[-1])
@@ -1804,7 +1823,7 @@ class PPRecordFmt(PaletteUser):
         show_outer_border=True,
     ) -> Iterator[CHText]:
         """Similar to 'line' method but produces several lines"""
-        cp, chborders = self._mk_cp_and_chborders(
+        rec_plt, _cols_plts, chborders = self._mk_plt_and_chborders(
             palette, no_color, compound_palette, shade_name)
 
         inner_width = (
@@ -1816,7 +1835,9 @@ class PPRecordFmt(PaletteUser):
             inner_width += len(self.repr_structure.borders[-1])
 
         for ch_text in ch_text_lines:
-            l = FieldType.fit_to_width(ch_text, inner_width, FieldType.ALIGN_LEFT, cp)
+            l = FieldType.fit_to_width(
+                ch_text, inner_width, FieldType.ALIGN_LEFT, rec_plt)
+
             if show_outer_border:
                 l.insert(0, chborders[0])
                 l.append(chborders[-1])
@@ -1841,7 +1862,7 @@ class PPRecordFmt(PaletteUser):
             information was specified previously (either in constructor or
             using 'set_palette' method)
         """
-        cp, chborders = self._mk_cp_and_chborders(
+        rec_plt, _cols_plts, chborders = self._mk_plt_and_chborders(
             palette, no_color, compound_palette, shade_name)
 
         if not self.repr_structure.col_widths_finalized():
@@ -1849,7 +1870,7 @@ class PPRecordFmt(PaletteUser):
                 [], _account_columns_names=True)
 
         return CHTextFixedListResult([
-            self._make_title_line(tl, chborders, cp)
+            self._make_title_line(tl, chborders, rec_plt)
             for tl in self.repr_structure.gen_title_lines_values()
         ])
 
@@ -2004,6 +2025,13 @@ class PPRecordFmt(PaletteUser):
         # prepare text of borders between fields
         return [
             cp.border(border_text) for border_text in self.repr_structure.borders]
+
+    def _make_cols_palettes(self, cp):
+        # prepare Palette objects for all columns
+        return [
+            cp.get_sub_palette(col.field.field_type.PALETTE_CLASS)
+            for col in self.repr_structure.columns
+        ]
 
 
 #########################
@@ -2248,11 +2276,11 @@ class PPTable(PPObj):
         self.get_table_width()  # this call finishes initialization by calculating
                                 # actual widths of the columns.
 
-        cp = self._mk_palette(palette, no_color, compound_palette, shade_name)
+        tbl_plt = self._mk_palette(palette, no_color, compound_palette, shade_name)
         return PPRecordFmt(
-            None, repr_structure=self._ppt_fmt.repr_structure, palette=cp)
+            None, repr_structure=self._ppt_fmt.repr_structure, palette=tbl_plt)
 
-    def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
+    def gen_ch_lines(self, tbl_plt: Palette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""
 
         style = self._ppt_fmt.style
@@ -2271,28 +2299,28 @@ class PPTable(PPObj):
         # there is no need to specify style when constructing PPRecordFmt
         # because the record-related style information is present in
         # the repr_structure
-        normal_line_fmt = self.make_record_formatter(palette=cp)
+        normal_line_fmt = self.make_record_formatter(palette=tbl_plt)
 
         # contents of service lines can be created now
-        cur_scheme.break_line.ch_text = normal_line_fmt.line(cp.text(""))
+        cur_scheme.break_line.ch_text = normal_line_fmt.line(tbl_plt.text(""))
         cur_scheme.skipped_recs_line.ch_text = normal_line_fmt.line(
             [
-                cp.warn("... "),
-                cp.text(f"{cur_scheme.n_skipped_lines} records skipped"),
+                tbl_plt.warn("... "),
+                tbl_plt.text(f"{cur_scheme.n_skipped_lines} records skipped"),
             ]
         )
 
         # 1. make first border line
         border_line = None
         if style.show_horiz_borders:
-            border_line = self._make_separator_line(cp)
+            border_line = self._make_separator_line(tbl_plt)
 
         if border_line is not None:
             yield border_line
 
         # 2. table header (name)
         if self.header:
-            yield normal_line_fmt.line(cp.header(self.header))
+            yield normal_line_fmt.line(tbl_plt.header(self.header))
 
         # 3. multi column titles
         if style.show_column_titles:
@@ -2315,7 +2343,8 @@ class PPTable(PPObj):
 
         # 7. summary line
         if style.show_summary_line and self.footer:
-            yield normal_line_fmt.line(cp.text(self.footer), show_outer_border=False)
+            yield normal_line_fmt.line(
+                tbl_plt.text(self.footer), show_outer_border=False)
 
     def _init_visible_lines_data(self):
         # init information about visible columns.

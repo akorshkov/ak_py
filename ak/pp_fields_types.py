@@ -46,28 +46,28 @@ class PPDateTimeFieldType(FieldType):
     }
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, fld_cp,
+        self, value, fmt_modifier, cell_plt,
     ) -> ([CHText.Chunk], int):
         fmt_modifier = fmt_modifier or 'DT'
         self._verify_fmt_modifier(fmt_modifier)
 
         if value is None:
             return super().make_desired_cell_ch_chunks(
-                value, None, fld_cp)
+                value, None, cell_plt)
 
         assert isinstance(value, datetime)
 
         if fmt_modifier == 'D':
-            val = [fld_cp.text(value.strftime("%Y-%m-%d"))]
+            val = [cell_plt.text(value.strftime("%Y-%m-%d"))]
         elif fmt_modifier == 'DT' or fmt_modifier == 'Dt':
-            val = [fld_cp.text(value.strftime("%Y-%m-%d"))]
+            val = [cell_plt.text(value.strftime("%Y-%m-%d"))]
             if not self._is_date(value):
-                time_fmt = fld_cp.warn if fmt_modifier == 'DT' else fld_cp.text
-                val.append(fld_cp.warn(value.strftime(" %H:%M:%S.%f%z")))
+                time_fmt = cell_plt.warn if fmt_modifier == 'DT' else cell_plt.text
+                val.append(cell_plt.warn(value.strftime(" %H:%M:%S.%f%z")))
         elif fmt_modifier == 'S':
-            val = [fld_cp.text(value.strftime("%Y-%m-%d %H:%M:%S%z"))]
+            val = [cell_plt.text(value.strftime("%Y-%m-%d %H:%M:%S%z"))]
         else:
-            val = [fld_cp.text(value.strftime("%Y-%m-%d %H:%M:%S.%f%z"))]
+            val = [cell_plt.text(value.strftime("%Y-%m-%d %H:%M:%S.%f%z"))]
 
         return val, self.ALIGN_LEFT
 
@@ -145,12 +145,12 @@ class PPEnumFieldType(FieldType):
         return self.enum_values.get(value, self.enum_missing_value)[0]
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, fld_cp,
+        self, value, fmt_modifier, cell_plt,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment"""
 
-        cache_key = id(fld_cp)  # need to maintain separate caches
-                            # enum_value -> CTHText for different palettes
+        cache_key = id(cell_plt)  # need to maintain separate caches
+                                  # enum_value -> CTHText for different palettes
         # prepare and cache cell text for a enum value
         # cache is prepared for all supported format modifiers
         try:
@@ -170,11 +170,11 @@ class PPEnumFieldType(FieldType):
 
         if value not in by_value_cache:
             self._make_text_cache_for_val(
-                value, fld_cp, by_fmt_cache)
+                value, cell_plt, by_fmt_cache)
 
         return by_value_cache[value]
 
-    def _make_text_cache_for_val(self, value, cp, by_fmt_cache) -> None:
+    def _make_text_cache_for_val(self, value, cell_plt, by_fmt_cache) -> None:
         # populate self._cache for value
         # ('by_fmt_cache' is part of self._cache)
         try:
@@ -185,7 +185,7 @@ class PPEnumFieldType(FieldType):
                 # special case: cell will not contain enum's value and name,
                 # but a single None
                 text_and_alignment = super().make_desired_cell_ch_chunks(
-                    value, None, cp)
+                    value, None, cell_plt)
                 by_fmt_cache['val'][value] = text_and_alignment
                 by_fmt_cache['name'][value] = text_and_alignment
                 by_fmt_cache['full'][value] = text_and_alignment
@@ -193,10 +193,11 @@ class PPEnumFieldType(FieldType):
             name, syntax_name = self.enum_missing_value
             val_len = max(self.max_val_len, len(str(value)))
 
-        color_fmt = cp.get_color(syntax_name)
+        color_fmt = cell_plt.get_color(syntax_name)
 
         # 'val' format
-        val_text_items, align = super().make_desired_cell_ch_chunks(value, None, cp)
+        val_text_items, align = super().make_desired_cell_ch_chunks(
+            value, None, cell_plt)
         by_fmt_cache['val'][value] = (val_text_items, align)
 
         # 'name' format
@@ -207,9 +208,9 @@ class PPEnumFieldType(FieldType):
         pad_len = val_len - CHText.calc_chunks_len(val_text_items)
         if pad_len > 0:
             # align 'value' portion of the text to right
-            full_text_items.append(cp.text(" " * pad_len))
+            full_text_items.append(cell_plt.text(" " * pad_len))
         full_text_items.extend(val_text_items)
-        full_text_items.append(cp.text(" "))
+        full_text_items.append(cell_plt.text(" "))
         full_text_items.append(color_fmt(name))
         by_fmt_cache['full'][value] = (full_text_items, self.ALIGN_LEFT)
 
@@ -279,7 +280,17 @@ class MatrixFieldValueType(FieldValueType):
         self.fmt_modifier = fmt_modifier
 
     def make_desired_cell_ch_chunks(
-        self, fmt_modifier, fld_cp,
+        self, fmt_modifier, cell_plt,
     ) -> ([CHText.Chunk], int):
+        """make desired text and alignment for self.value and self.field_type"""
+        cell_plt = cell_plt.get_sub_palette(self.field_type.PALETTE_CLASS)
+
+        # value of the 'fmt_modifier' argument was specified in the record or table
+        # description of current column. In case of the matrix field the values
+        # in the column may be be of different types and have different possible
+        # values of fmt_modifier. The fmt_modifier specified for the whole column
+        # can not be used for individual cell. The fmt_modifier for this particular
+        # cell is specified in self:
+
         return self.field_type.make_desired_cell_ch_chunks(
-            self.value, self.fmt_modifier, fld_cp)
+            self.value, self.fmt_modifier, cell_plt)

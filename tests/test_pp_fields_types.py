@@ -282,3 +282,26 @@ class TestMatrixFieldType(unittest.TestCase):
                 "2025-08-02                ",
             ],
         )
+
+    def test_field_custom_palette(self):
+        """Test situation when child FieldType uses own palette."""
+
+        records = [
+            ("Name Date", MatrixFieldValueType("Karl", title_field_type)),
+        ]
+
+        # The value "Karl" is supposed to be printed the same color as the columns
+        # titles. The field type corresponding to the second column is standard.
+        # But the value of this cell contains both the value itself (string "Karl")
+        # and the field type to be used to format the value.
+        table = PPTable(
+            records,
+            fields=["Key", "Value"],
+        )
+
+        verify_table_format(
+            self, table,
+            cols_names=['Key', 'Value'],
+        )
+
+        # print(table)
