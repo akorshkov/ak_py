@@ -316,6 +316,37 @@ class TestSQLMethod(unittest.TestCase):
         recs_ids.sort()
         self.assertEqual(recs_ids, [2, 4])
 
+    def test_ignore_condition_value(self):
+        """Test special IGNORE value of sql condition."""
+
+        db = self._make_sample_db_users(
+            [
+                #id, name, account_id
+                (1, "James", 1),
+                (2, "Arnold", 1),
+                (3, "Chuck", 7),
+                (4, "Harry", 7),
+                (5, "Asimov", 7),
+            ])
+
+        get_users_ids = SqlMethod(
+            "SELECT id FROM users ",
+            record_name='user',
+            as_scalars=True,
+        )
+
+        # 1. test IGNORE value in method arguments
+        recs_ids = get_users_ids.list(db, account_id=7, name=SqlMethod.IGNORE)
+        self.assertEqual(
+            {3, 4, 5}, set(recs_ids),
+            "the 'name=...' conditions should be ignored")
+
+        # 1. test single condition with IGNORE value
+        recs_ids = get_users_ids.list(db, name=SqlMethod.IGNORE)
+        self.assertEqual(
+            {1, 2, 3, 4, 5}, set(recs_ids),
+            "the 'name=...' conditions should be ignored")
+
     def test_aggregation(self):
         """Test requests with 'GROUP BY' clause."""
 

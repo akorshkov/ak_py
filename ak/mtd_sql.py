@@ -27,6 +27,8 @@ class SqlFilterCondition:
 
     PLACEHOLDER_TYPE_QUESTION, PLACEHOLDER_TYPE_PERCENT_S = 0, 1
 
+    IGNORE = object()
+
     # to be used when constructing WHERE cluase
     _SQL_CLAUSES = {
         PLACEHOLDER_TYPE_QUESTION: {
@@ -91,6 +93,10 @@ class SqlFilterCondition:
             raise ValueError(f"Invalid argument '{type(src_obj)}': {src_obj}")
 
         return SqlFieldValCondition(field_name, op, value)
+
+    def is_ignored(self) -> bool:
+        """ !!! """
+        return False
 
     def make_text_update_values(self, values_list, placeholders_type) -> str:
         """Prepare the part of WHERE condition.
@@ -157,6 +163,9 @@ class SqlFieldValCondition(SqlFilterCondition):
                 f"unsupported sql operation '{self.op}'. Supported operations "
                 f"are: {self.SUPPORTED_OPS}")
 
+    def is_ignored(self) -> bool:
+        return self.value is self.IGNORE
+
     def make_text_update_values(self, values_list, placeholders_type) -> str:
         assert isinstance(values_list, list)
         sql_clauses = self._SQL_CLAUSES[placeholders_type]
@@ -193,6 +202,7 @@ class SqlOrCondition(SqlFilterCondition):
             args = list(args)
             args.extend(sorted(kwargs.items()))
         self.operands = [SqlFilterCondition.make(arg) for arg in args]
+        self.operands = [x for x in self.operands if not x.is_ignored()]
 
     def make_text_update_values(self, values_list, placeholders_type) -> str:
         if not self.operands:
@@ -213,6 +223,7 @@ class SqlAndCondition(SqlFilterCondition):
             args = list(args)
             args.extend(sorted(kwargs.items()))
         self.operands = [SqlFilterCondition.make(arg) for arg in args]
+        self.operands = [x for x in self.operands if not x.is_ignored()]
 
     def make_text_update_values(self, values_list, placeholders_type) -> str:
         if not self.operands:
@@ -241,6 +252,7 @@ class SqlMethod:
 
     _or = SqlOrCondition
     _and = SqlAndCondition
+    IGNORE = SqlFilterCondition.IGNORE
 
     def __init__(self, sql_select_from, *,
                  group_by=None, order_by=None, record_name=None, as_scalars=False,
@@ -295,6 +307,7 @@ class SqlMethod:
             args.extend(sorted(kwargs.items()))
 
         filters = [SqlFilterCondition.make(x) for x in args if x is not None]
+        filters = [x for x in filters if not x.is_ignored()]
 
         sql = self.sql_select_from
         req_params = []
