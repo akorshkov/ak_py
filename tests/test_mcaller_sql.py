@@ -81,6 +81,8 @@ class TestMCallerSQL(unittest.TestCase):
         h_text_obj = h(my_sql_caller)
         self.assertIn("get_account", h_text_obj)
 
+        db.close()
+
     def test_sql_select_with_joins(self):
         """Test behavior SqlMethodT with request with joins."""
 
@@ -114,6 +116,8 @@ class TestMCallerSQL(unittest.TestCase):
                 "users_dets",  # record name should be present in default header
             ]
         )
+
+        db.close()
 
     def test_sql_select_with_custom_format(self):
         """Test behavior SqlMethodT with not-default format."""
@@ -169,6 +173,8 @@ class TestMCallerSQL(unittest.TestCase):
             ]
         )
 
+        db.close()
+
     def test_arbitrary_sql_call(self):
         """MCallerSql should can execute arbitary 'manual' sql requests."""
         # create and populate database
@@ -189,3 +195,5 @@ class TestMCallerSQL(unittest.TestCase):
             n_body_lines=2,
             cols_names=['u_id', 'name', 'id', 'name_1'],
         )
+
+        db.close()

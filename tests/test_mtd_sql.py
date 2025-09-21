@@ -95,6 +95,8 @@ class TestSQLMethod(unittest.TestCase):
         result = account_by_id.one_or_none(db, id=10)
         self.assertIsNone(result)
 
+        db.close()
+
     def test_sql_select_multiple_records(self):
         """Test sql select when there are multiple or no records to return."""
 
@@ -124,6 +126,8 @@ class TestSQLMethod(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             get_users_by_account.one_or_none(db, account_id=1)
+
+        db.close()
 
     def test_as_scalar_option(self):
         """Test SqlMethod as_scalars option."""
@@ -167,6 +171,8 @@ class TestSQLMethod(unittest.TestCase):
         self.assertEqual(2, len(users))
         users_by_id = {u.id: u for u in users}
         self.assertEqual("Arnold", users_by_id[2].name)
+
+        db.close()
 
     def test_arguments_processing(self):
         """Test test arguments and keyword arguments processing."""
@@ -258,6 +264,8 @@ class TestSQLMethod(unittest.TestCase):
             james_id, get_users_ids.one(db, None, ('name', '=', "James")))
         self.assertEqual(james_id, get_users_ids.one(db, None, name="James"))
 
+        db.close()
+
     def test_complex_conditions(self):
         """Test SqlMethod._or and SqlMethod._and conditions."""
 
@@ -315,6 +323,8 @@ class TestSQLMethod(unittest.TestCase):
             ))
         recs_ids.sort()
         self.assertEqual(recs_ids, [2, 4])
+
+        db.close()
 
     def test_ignore_condition_value(self):
         """Test special IGNORE value of sql condition."""
@@ -379,6 +389,8 @@ class TestSQLMethod(unittest.TestCase):
         self.assertEqual(recs[0].account_id, 1, f"{recs[0]}")
         self.assertEqual(recs[1].sid, 8, f"{recs[1]}")
         self.assertEqual(recs[1].account_id, 7, f"{recs[1]}")
+
+        db.close()
 
 
 class TestRecordsMMap(unittest.TestCase):
