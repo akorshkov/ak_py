@@ -70,7 +70,7 @@ class TestColorFmt(unittest.TestCase):
             ColorFmt('BAD_COLOR')
 
         err_msg = str(exc.exception)
-        self.assertIn("Invalid color name", err_msg)
+        self.assertIn("Invalid text color name", err_msg)
         self.assertIn("BAD_COLOR", err_msg)
         self.assertIn(
             'MAGENTA', err_msg,
@@ -81,7 +81,7 @@ class TestColorFmt(unittest.TestCase):
             ColorFmt(None, bg_color='BAD_COLOR')
 
         err_msg = str(exc.exception)
-        self.assertIn("Invalid bg_color name", err_msg)
+        self.assertIn("Invalid background color name", err_msg)
         self.assertIn("BAD_COLOR", err_msg)
         self.assertIn(
             'MAGENTA', err_msg,
@@ -134,11 +134,11 @@ class TestColorFmt(unittest.TestCase):
         """Test construction of ColorFmt with invalid colors."""
 
         expected_errors = [
-            (-5, "Invalid int color id -5"),
-            (256, "Invalid int color id 256"),
-            ('g25', "Invalid 'shade of gray' color description 'g25'"),
-            ((1, 1, 6), "Invalid color description tuple"),
-            ((1, 1), "Invalid color description tuple"),
+            (-5, "Invalid int text color id -5"),
+            (256, "Invalid int text color id 256"),
+            ('g25', "Invalid text color name 'g25'"),
+            ((1, 1, 6), "Invalid text color description tuple"),
+            ((1, 1), "Invalid text color description tuple"),
         ]
 
         for arg, expected_msg in expected_errors:
@@ -670,6 +670,72 @@ class TestColorFmtBytes(unittest.TestCase):
 
 #########################
 # Test Palette and ColorsConfig functionality
+
+class TestPaletteColorsParsing(unittest.TestCase):
+    """Test parsing of colors descriptions in the palettes."""
+    class TstColorsConfig(ColorsConfig):
+        # almost empty global colors config
+        BUILT_IN_CONFIG = {
+            "TEXT": "",
+            "SOME_GLOBAL_SYNT": "BLUE",
+        }
+
+    def _test_color_descr(self, color_descr, expected_color_fmt, test_text):
+        # check that given color_descr produces color_fmt with expected properties
+
+        class MyPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                'MP_SYNT': color_descr,
+            }
+            mp_synt = ConfColor('MP_SYNT')
+
+        p = MyPalette()
+
+        result_text = str(p.mp_synt(test_text))
+        expected_text = str(expected_color_fmt(test_text))
+
+        # print(f"{color_descr=:30} {result_text}")
+        self.assertEqual(
+            expected_text, result_text,
+            f"unexpected result text processing color_descr '{color_descr}':\n"
+            f"{expected_text}\n{result_text}")
+
+
+    def test_parsing_color_descriptions(self):
+        """Test different ways to describe colors in palette"""
+
+        test_text = "test text"
+
+        tests = [
+            # only parent color is specified
+            ("SOME_GLOBAL_SYNT", ColorFmt("BLUE")),
+
+            # only color specified
+            ("RED", ColorFmt("RED")),
+            ("(4,1,1)", ColorFmt((4, 1, 1))),
+            ("200", ColorFmt(200)),  # 256-color, same as (r=5, g=0, b=4)
+
+            # only modifiers specified
+            ("crossed", ColorFmt(None, crossed=True)),
+
+            # different underline types
+            ("BLUE:underline=YELLOW", ColorFmt("BLUE", underline="YELLOW")),
+            ("BLUE:underline=DBL", ColorFmt("BLUE", underline="DBL")),
+            ("BLUE:underline=CURL", ColorFmt("BLUE", underline="CURL")),
+            ("BLUE:underline=CURL(g2)", ColorFmt("BLUE", underline=("CURL", "g2"))),
+            ("BLUE:underline=DBL(RED)", ColorFmt("BLUE", underline=("DBL", "RED"))),
+            ("YELLOW:underline=CURL(1,1,5)", ColorFmt("YELLOW", underline=("CURL", (1,1,5)))),
+            ("BLUE:underline=DASH(RED)", ColorFmt("BLUE", underline=("DASH", "RED"))),
+            ("BLUE:underline=DOT(RED)", ColorFmt("BLUE", underline=("DOT", "RED"))),
+        ]
+
+        for color_descr, expected_fmt in tests:
+            try:
+                set_global_colors_config(self.TstColorsConfig())
+                self._test_color_descr(color_descr, expected_fmt, test_text)
+            finally:
+                set_global_colors_config(None)
+
 
 class TestColorsConfigAndGlobalPalette(unittest.TestCase):
     """Test ColorsConfig class and global_palette."""
@@ -1438,6 +1504,7 @@ class TestPalete(unittest.TestCase):
                 "SYNT_1": "SYNT_X_2",  # "SYNT_X_2" will be defined later
                 "SYNT_2": "YELLOW",
                 "SYNT_3": "BLUE",
+                "SYNT_4": "crossed"
             }
 
         colors_conf = MyMinorColorsConfig()

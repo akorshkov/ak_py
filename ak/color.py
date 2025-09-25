@@ -56,8 +56,32 @@ from typing import Iterator
 #########################
 # low-level implementation of colored text
 
-class _ColorSequences:
-    # Constructor of color escape sequences
+class _ColorCodesSet:
+    # Set of codes which affect the decoration of a text on screen.
+    # Actualy using these codes it is possible to modify not only the colors but also
+    # some other properties of the text (such as presence of underline)
+    #
+    # Decorated text looks like this:
+    #
+    # "\033[<CODES>mTHE TEXT\033[0m"
+    #  -------------        -------
+    #        |                closing escape sequence
+    #  opening ansi escape sequence
+    #
+    # where <CODES> is a ';'-separated list of codes (without brackets).
+    # Each code defines some aspect of text decoration (for example text color or
+    # underline style) and is either a number or a ':'- or ';'-separated list of numbers.
+    # Some examples of codes:
+    # - 4     : underline text
+    # - 4:2   : double underline
+    # - 4:3   : curly underline
+    #
+    # Object of this class constructs and keeps codes used to format given text.
+    # It keeps codes associated with different aspects of decoration separately
+    # to make it possible to combine code sets.
+    #
+    # This class also serves as a constructor of color escape sequences: the arguments
+    # of the methods of this class are supposed to be human-readable.
 
     _COLORS = {
         'BLACK'  : "0",
@@ -70,66 +94,181 @@ class _ColorSequences:
         'WHITE'  : "7",
     }
 
+    # All the strings which can represent a color.
+    # These are names of colors from _COLORS and shades of grey 'g0' - 'g23'
+    # Values for the shades of grey are corresponding 256-color-codes
+    _POSSIBLE_COLOR_NAME_STRINGS = {
+        **{f"g{i}": 232 + i for i in range(24)},
+        **_COLORS}
+
+    _UNDERLINE_STYLES = {
+        'SINGLE': "1",
+        'DBL': "2",
+        'CURL': "3",
+        'DOT': "4",
+        'DASH': "5",
+    }
+
+    # possible identificators of color subject. The identificator is the first char
+    # of the color code and specifies what part of the text will have this color.
+    # For example "33" means "yellow text", "43" means "yellow background",
+    # "53" meand "underline will be yellow if there is an underline"
+    _COLORS_SUBJECTS = {
+        '3': "text color",
+        '4': "background color",
+        '5': "underline color",
+    }
+
+    # set of color codes corresponding to "no decorations" format
+    _NO_COLOR_CODES = tuple(None for _ in range(7))
+
+    __slots__ = ('_sequences', )
+
+    def __init__(self, sequences):
+        """Internal constructor. Use _ColorCodesSet.make method as a constructor."""
+        assert len(sequences) == 7
+        self._sequences = sequences
+
+    def make_ansi_sequences(self, make_bytes=False) -> (str, str):
+        """Returns opening and closing ansi-sequenses for text decoration."""
+        if all(s is None for s in self._sequences):
+            prefix, suffix = "", ""
+        else:
+            prefix = "\033[" + ";".join(s for s in self._sequences if s) + "m"
+            suffix = "\033[0m"
+
+        if make_bytes:
+            prefix = prefix.encode()
+            suffix = suffix.encode()
+
+        return prefix, suffix
+
     @classmethod
     def make(cls, color, bg_color=None,
              bold=None, faint=None, underline=None, blink=None, crossed=None,
-             no_color=False, make_bytes=False):
-        # Make prefix and suffix to decorate text with specified effects.
-        #
-        # Check ColorFmt doc for arguments description
+             no_color=False):
+        """_ColorCodesSet constructor.
 
-        color_codes = []
-        if not no_color:
-            if color is not None:
-                color_codes.append(cls._make_seq_element(color, False))
-
-            if bg_color is not None:
-                color_codes.append(cls._make_seq_element(bg_color, True))
-
-            if bold:
-                color_codes.append("1")
-
-            if faint:
-                color_codes.append("2")
-
-            if underline:
-                color_codes.append("4")
-
-            if blink:
-                color_codes.append("5")
-
-            if crossed:
-                color_codes.append("9")
-
-        if color_codes:
-            color_prefix = "\033[" + ";".join(c for c in color_codes) + "m"
-            color_suffix = "\033[0m"
+        Check ColorFmt doc for arguments description
+        """
+        if no_color:
+            color_codes = cls._NO_COLOR_CODES
         else:
-            color_prefix = ""
-            color_suffix = ""
+            color_codes = (
+                cls._make_seq_element(color, "3"),
+                cls._make_seq_element(bg_color, "4"),
+                cls._make_simple_code(bold, "1"),
+                cls._make_simple_code(faint, "2"),
+                cls._make_underline_color_code(underline),
+                cls._make_simple_code(blink, "5"),
+                cls._make_simple_code(crossed, "9"),
+            )
 
-        if make_bytes:
-            color_prefix = color_prefix.encode()
-            color_suffix = color_suffix.encode()
-
-        return color_prefix, color_suffix
+        return cls(color_codes)
 
     @classmethod
-    def _make_seq_element(cls, color, is_bg=False):
-        # create a part of the color escape sequence, the part which defines color
+    def _make_simple_code(cls, bool_opt, value):
+        # to be used to prepare the color code corresponding for a simple bool
+        # text property (such as 'blink' or 'crossed')
+        if bool_opt is None:
+            return None
+        return value if bool_opt else ""
 
-        fg_bg_id = "4" if is_bg else "3"
-        param_name = "bg_color" if is_bg else "color"
+    @classmethod
+    def _make_underline_color_code(cls, opt_value):
+        # constructor of the color code corresponding to the 'underline' aspect of decoration
+
+        # Simple bool value: either single-underline with a text color or no underline
+        if opt_value is None:
+            return None
+        if not opt_value:
+            return ""
+        if opt_value is True:
+            return "4"
+
+        #  of the "underline" option may look like
+        # "RED"                 - standard (single line) underline of RED color
+        # (r, g, b)             - standard underline of specified color
+        # "DBL"                 - double underline, same color as text
+        # ("CURL", (r, g, b))   - curly underline of specified color
+
+        if isinstance(opt_value, str):
+            uline_style = cls._UNDERLINE_STYLES.get(opt_value)
+            if uline_style is not None:
+                # the option is just a style name
+                color_arg = None
+            else:
+                # the option is just a color name
+                if opt_value not in cls._POSSIBLE_COLOR_NAME_STRINGS:
+                    raise ValueError(
+                        f"Invalid underline style description '{opt_value}'. "
+                        f"String value of this option must be either "
+                        f"style ({cls._UNDERLINE_STYLES.keys()}) "
+                        f"or color name ({cls._COLORS.keys()})"
+                        f"or shade of color ('g0' - 'g23')")
+                uline_style = cls._UNDERLINE_STYLES["SINGLE"]
+                color_arg = opt_value
+        elif isinstance(opt_value, (list, tuple)):
+            if all(isinstance(c, int) for c in opt_value):
+                # looks like a color tuple (r, g, b)
+                uline_style = cls._UNDERLINE_STYLES["SINGLE"]
+                color_arg = opt_value
+            else:
+                if len(opt_value) != 2:
+                    raise ValueError(
+                        f"Invalid underline style description '{opt_value}'")
+                uline_style_name, color_arg = opt_value
+                uline_style = cls._UNDERLINE_STYLES.get(uline_style_name)
+                if uline_style is None:
+                    raise ValueError(f"Invalid underline style name '{uline_style_name}'")
+        elif isinstance(opt_value, int):
+            # it must be a 256-color of the underline
+            uline_style = cls._UNDERLINE_STYLES["SINGLE"]
+            color_arg = opt_value
+        else:
+            raise ValueError(f"Invalid underline style '{opt_value}'")
+
+        color_code = cls._make_seq_element(color_arg, "5")
+
+        result_code = "4:" + uline_style
+        if color_code is not None:
+            result_code += ";" + color_code
+
+        return result_code
+
+    @classmethod
+    def _make_seq_element(cls, color, color_subject):
+        # create a part of the color escape sequence, the part which defines color
+        # Arguments:
+        # - color:
+        #   check doc of the ColorFmt constructor for more details about possible formats
+        # - color_sublect:
+        #   "3" - foreground text color
+        #   "4" - background color
+        #   "5" - underline color
+
+        if color is None:
+            return None
+
+        orig_color_arg = color
+
+        param_name = cls._COLORS_SUBJECTS.get(color_subject)
+        assert param_name is not None, f"{color_subject} must be in {cls._COLORS_SUBJECTS}"
 
         # case 1: 'color' is a name of color
-        if color in _ColorSequences._COLORS:
-            return fg_bg_id + _ColorSequences._COLORS[color]
+        if color in _ColorCodesSet._COLORS:
+            if color_subject == "5":
+                # for some reason code of color of underline must be in 256-color format
+                color = int(cls._COLORS[color])
+            else:
+                # simple color code. It looks like "s5" (where s in {"3", "4"})
+                return color_subject + cls._COLORS[color]
 
-        # case 2: 'color' is an (r, g, b) tuple, each compnent in range(5)
+        # case 2: 'color' is an (r, g, b) tuple, each component in range(5)
         if isinstance(color, (list, tuple)):
             if len(color) != 3 or any(c < 0 or c > 5 for c in color):
                 raise ValueError(
-                    f"Invalid {param_name} description tuple {color}. "
+                    f"Invalid {param_name} description tuple {orig_color_arg}. "
                     f"Valid color description tuple should have 3 elements "
                     f"each in range(5)")
             # tuple corresponds to an int color, will be handled in case 4.
@@ -138,19 +277,10 @@ class _ColorSequences:
 
         # case 3: color specifies shade of gray
         if isinstance(color, str):
-            if color.startswith('g'):
-                try:
-                    shade = int(color[1:])
-                except ValueError:
-                    shade = -1
-                if shade < 0 or shade > 24:
-                    raise ValueError(
-                        f"Invalid 'shade of gray' color description '{color}'. "
-                        f"It is supposed to be in form 'g0' - 'g23'")
-                color = 232 + shade
-            else:
+            color = cls._POSSIBLE_COLOR_NAME_STRINGS.get(color)
+            if color is None:
                 raise ValueError(
-                    f"Invalid {param_name} name '{color}'. "
+                    f"Invalid {param_name} name '{orig_color_arg}'. "
                     f"Should be one of {list(cls._COLORS.keys())} "
                     f"or in form 'g0' - 'g23' for shades of gray")
 
@@ -158,11 +288,12 @@ class _ColorSequences:
         if isinstance(color, int):
             if color < 0 or color > 255:
                 raise ValueError(
-                    f"Invalid int {param_name} id {color}. Valid int color id "
+                    f"Invalid int {param_name} id {orig_color_arg}. Valid int color id "
                     f"should be in range(256)")
-            return f"{fg_bg_id}8:5:{color}"
+            return f"{color_subject}8:5:{color}"
 
-        raise ValueError(f"Invalid {param_name} object: {type(color)}: {color!r}")
+        raise ValueError(
+            f"Invalid {param_name} object: {type(orig_color_arg)}: {orig_color_arg!r}")
 
 
 #########################
@@ -315,7 +446,7 @@ class CHText:
     def strip_colors(cls, text: str) -> str:
         """Colorer-formatted string -> same string w/o coloring."""
         if cls._SEQ_RE is None:
-            cls._SEQ_RE = re.compile("\033\\[[;\\d]*m")
+            cls._SEQ_RE = re.compile("\033\\[[;:\\d]*m")
 
         return re.sub(cls._SEQ_RE, "", text)
 
@@ -631,7 +762,7 @@ class CHText:
 class ColorFmt:
     """Objects of this class produce text with specified color."""
 
-    __slots__ = '_color_prefix', '_color_suffix'
+    __slots__ = '_color_codes', '_color_prefix', '_color_suffix'
 
     _NO_COLOR = None  # dummy ColorFmt object, will be initialized on demand
 
@@ -651,12 +782,21 @@ class ColorFmt:
             integer color code 16 + r*36 + g*6 + b
           - string in form 'g0' - 'g23' - indicates shade of gray. Corresponds to
             integer color codes 231-255.
+        - underline: can have following formats:
+          - "STYLE": the STYLE can be one of ['SINGLE', 'DBL', 'CURL', 'DOT', 'DASH']
+          - COLOR: format of the COLOR object is the same as format of 'color' arg
+          - ("STYLE", COLOR)
+          - True: use default style and color
+          Default style is "SINGLE", default color is color of the text.
+        - other arguments: boolean values, if True the corresponding effect is turned on
         - no_color: if True, all other arguments are ignored and
             created object is 'dummy' - it does not add any effects to text.
         """
-        self._color_prefix, self._color_suffix = _ColorSequences.make(
+        self._color_codes = _ColorCodesSet.make(
             color, bg_color, bold, faint, underline, blink, crossed,
             no_color)
+
+        self._color_prefix, self._color_suffix = self._color_codes.make_ansi_sequences()
 
     @classmethod
     def get_plaintext_fmt(cls) -> 'ColorFmt':
@@ -673,7 +813,7 @@ class ColorFmt:
 class ColorBytes:
     """Objects of this class produce bytes with color sequences."""
 
-    __slots__ = '_color_prefix', '_color_suffix'
+    __slots__ = '_color_codes', '_color_prefix', '_color_suffix'
 
     def __init__(
             self, color, *, bg_color=None,
@@ -686,9 +826,11 @@ class ColorBytes:
             - no_color: if True, all other arguments are ignored and
                 created object is 'dummy' - it does not add any effects to text.
         """
-        self._color_prefix, self._color_suffix = _ColorSequences.make(
+        self._color_codes = _ColorCodesSet.make(
             color, bg_color, bold, faint, underline, blink, crossed,
-            no_color, make_bytes=True)
+            no_color)
+
+        self._color_prefix, self._color_suffix = self._color_codes.make_ansi_sequences(True)
 
     def __call__(self, bytes_text):
         return self._color_prefix + bytes_text + self._color_suffix
@@ -723,7 +865,7 @@ class _ColorConfColorDescr:
     }
 
     _COLORS_NAMES = (
-        _ColorSequences._COLORS.keys() | {"", "-"} | {f"g{i}" for i in range(24)})
+        _ColorCodesSet._COLORS.keys() | {"", "-"} | {f"g{i}" for i in range(24)})
 
     __slots__ = (
         'synt_id',
@@ -818,93 +960,109 @@ class _ColorConfColorDescr:
         #
         # "PARENT_SYNTAX:NEW_COLOR/NEW_BG_COLOR:bold,no_crossed"
         #
-        # All the sections are optional, so the parsing process is somewhat
-        # complicated
+        # All the sections are optional, so the parsing process is somewhat complicated
         fg_color = None
         bg_color = None
         parent_syntax_id = None
-        modifiers = {}
 
         chunks = init_str.split(':')
         if len(chunks) > 3:
-            raise ValueError(f"invalid color description: '{init_str}'")
-
-        # 1. the first section must be either "OTHER_SYNTAX" or "COLOR/BG_COLOR"
-        parent_syntax_id, fg_color, bg_color = cls._parse_colors_part(
-            chunks[0], init_str)
-        if parent_syntax_id is None:
-            # there is no reference to other syntax, so the first chunk must
-            # contain information about the colors
-            assert fg_color is not None
-            assert bg_color is not None
-
-        if len(chunks) == 1:
-            return parent_syntax_id, fg_color, bg_color, modifiers
-
-        # 2. analyze the second section
-        chunk = chunks[1]
-        chunk_is_modifiers = None
-        try:
-            parent_1, color_1, bg_color_1 = cls._parse_colors_part(chunk, init_str)
-        except ValueError:
-            # this chunk does not contain colors information. It must be modifiers
-            chunk_is_modifiers = True
-
-        if chunk_is_modifiers:
-            if len(chunks) > 2:
-                raise ValueError(
-                    f"invalid color description: '{init_str}'. "
-                    f"The modifiers section ('{chunk}') must be the last one"
-                )
-            modifiers = cls._parse_modifiers(chunk, init_str)
-            return parent_syntax_id, fg_color, bg_color, modifiers
-
-        # the second section indeed contains colors, not modifiers
-        if parent_1 is not None:
-            # the parent may be present in the first part only
-            raise ValueError(
-                f"invalid color '{parent_1}' in description: '{init_str}'")
-
-        assert color_1 is not None, f"{init_str=}"
-        assert bg_color_1 is not None, f"{init_str=}"
-        if fg_color is not None:
             raise ValueError(
                 f"invalid color description: '{init_str}'. "
-                f"Color is specified both in the first and second sections"
-            )
-        if bg_color is not None:
-            raise ValueError(
-                f"invalid color description: '{init_str}'"
-                f"BgColor is specified both in the first and second sections"
-            )
-        fg_color = color_1
-        bg_color = bg_color_1
+                f"It contains {len(chunks)} sections, maximum is 3")
 
-        if len(chunks) == 2:
-            return parent_syntax_id, fg_color, bg_color, modifiers
+        result_parent_syntax_id = None
+        processed_fg_bg_colors_section = None
+        result_fg_color = None
+        result_bg_color = None
+        processed_modifiers_section = None
+        result_modifiers = None
 
-        # 3. analyze the third section. It must contain modifiers
-        chunk = chunks[2]
-        modifiers = cls._parse_modifiers(chunk, init_str)
+        for color_section in chunks:
+            color_section = color_section.strip()
 
-        return parent_syntax_id, fg_color, bg_color, modifiers
+            if color_section == "":
+                # to find out the type of the empty section we have to check what sections
+                # had been processed already
+                if result_parent_syntax_id is None:
+                    result_parent_syntax_id = ""
+                elif processed_fg_bg_colors_section is None:
+                    processed_fg_bg_colors_section = ""
+                    result_fg_color = ""
+                    result_bg_color = ""
+                elif processed_modifiers_section is None:
+                    processed_modifiers_section = ""
+                    result_modifiers = {}
+                continue
+
+            parent_syntax_id, fg_color, bg_color = cls._parse_colors_part(
+                color_section, init_str)
+
+            if parent_syntax_id is not None:
+                # the parsed section contains the name of parent syntax
+                assert fg_color is None and bg_color is None
+                if result_parent_syntax_id is not None:
+                    raise ValueError(
+                        f"invalid color description: '{init_str}'. "
+                        f"It contains two sections which look like parent syntax id: "
+                        f"{result_parent_syntax_id} and {parent_syntax_id}")
+                result_parent_syntax_id = parent_syntax_id
+                continue
+
+            if fg_color is not None or bg_color is not None:
+                # the parsed section contains foreground/background colors
+                assert fg_color is not None and bg_color is not None
+                if result_fg_color is not None:
+                    raise ValueError(
+                        f"invalid color description: '{init_str}'. "
+                        f"It contains two sections corresponding to foreground/background "
+                        f"colors: '{processed_fg_bg_colors_section}' and '{color_section}'")
+                result_fg_color = fg_color
+                result_bg_color = bg_color
+                processed_fg_bg_colors_section = color_section
+                continue
+
+            # it must be a section with modifiers
+            if result_modifiers is not None:
+                raise ValueError(
+                    f"invalid color description: '{init_str}'. "
+                    f"It contains two sections corresponding to format modifiers "
+                    f"colors: '{processed_modifiers_section}' and '{color_section}'")
+            result_modifiers = cls._parse_modifiers(color_section, init_str)
+
+        if result_modifiers is None:
+            result_modifiers = {}
+
+        if result_fg_color is None:
+            result_fg_color = ""
+        if result_bg_color is None:
+            result_bg_color = ""
+
+        return result_parent_syntax_id, result_fg_color, result_bg_color, result_modifiers
 
     @classmethod
-    def _parse_colors_part(cls, colors_part, orig_init_str):
+    def _parse_colors_part(cls, colors_section, orig_init_str):
         # part of _parse_init_str operation.
         #
-        # Parses the 'color' section of init_str which may look like
+        # Analizes a single section of the color init string
+        # and returns (parent, fg_color, bg_color)
+        #
+        # All three elements of the returned tuple are None if the section does not
+        # corresponds to "OTHER_SYNTAX" or "foreground/background colors" part of the
+        # color init sting.
+        #
+        # Examples of the section:
+        #
         # "OTHER_SYNTAX"
         # "BLUE"
         # "BLUE/YELLOW"
         # "107"             <- int id of the color
         # "(2,3,4)/108"     <- fg_color in rgb format, bg_color - int
         # "g4"              <- shade of grey
-        # and returns (parent, fg_color, bg_color)
-        chunks = colors_part.split('/')
+        chunks = colors_section.split('/')
         if len(chunks) > 2:
             raise ValueError(
-                f"invalid colors description part '{colors_part}'. "
+                f"invalid colors description part '{colors_section}'. "
                 f"Full color description: '{orig_init_str}'")
 
         if len(chunks) == 2:
@@ -913,21 +1071,33 @@ class _ColorConfColorDescr:
             return None, fg_color, bg_color
 
         # it may be either COLOR or OTHER_SYNTAX_NAME or modifiers
-        # 1. check if it is COLOR
+        # 1. check if it is modifiers
+        if cls._is_modifiers_section(colors_section):
+            return None, None, None
+
+        # 2. check if it is COLOR
         try:
-            fg_color = cls._parse_color(colors_part, orig_init_str)
+            fg_color = cls._parse_color(colors_section, orig_init_str)
             return None, fg_color, ""  # "" - means default color
         except ValueError:
             pass
 
-        # 2. check if if it modifiers
-        if "," in colors_part or colors_part in cls._MODIFIERS:
-            raise ValueError(
-                f"unexpected modifiers section '{colors_part}' "
-                f"in colors description '{orig_init_str}'")
-
         # 3. have to interprete it as OTHER_SYNTAX_NAME
-        return colors_part, None, None
+        return colors_section, None, None
+
+    @classmethod
+    def _is_modifiers_section(cls, colors_section) -> bool:
+        # check if the color decription section looks like a section containing
+        # format modifiers
+        if '=' in colors_section:
+            return True
+        if colors_section in cls._MODIFIERS:
+            return True
+        if ',' in colors_section:
+            opts_names = {x.split('=')[0] for x in colors_section.split(',')}
+            if any(opt_name in cls._MODIFIERS for opt_name in opts_names):
+                return True
+        return False
 
     @classmethod
     def _parse_color(cls, color, orig_init_str):
@@ -939,7 +1109,7 @@ class _ColorConfColorDescr:
         # Examples:
         #   "BLUE" -> "BLUE"
         #   "235" -> 235
-        #   "(3,4,5" -> (3,4,5)
+        #   "(3,4,5)" -> (3,4,5)
         #   "g4" -> "g4"
         try:
             return cls._parse_color_impl(color)
@@ -992,25 +1162,138 @@ class _ColorConfColorDescr:
         raise ValueError(f"'{color}' is not a valid color identifier")
 
     @classmethod
-    def _parse_modifiers(cls, modifiers_str, init_str):
+    def _parse_modifiers(cls, modifiers_str, color_descr):
         # part of _parse_init_str operation.
         #
-        # "bold,no_blink" -> {"bold": True, "blink": False}
+        # "bold,no_blink,underline=CURL(5,1,0)"
+        #    -> {"bold": True, "blink": False, "underline": "CURL(5,1,0)"}
+        #
+        # Most of the midifiers are simple: one can turned on, off or not present.
+        # But the 'underline' modifier can contain some some additional options
 
-        chunks = [s.strip() for s in modifiers_str.split(',')]
+        # can not just split by ',' because 'underline' option can contain ','
+        chunks = [s.strip() for s in cls._split_modifiers_section(modifiers_str)]
+
         chunks = [s for s in chunks if s]
         modifiers = {}
         for modifier in chunks:
-            try:
-                mod_name, mod_value = cls._MODIFIERS[modifier]
-            except KeyError:
-                raise ValueError(
-                    f"invalid color description: '{init_str}': "
-                    f"invalid color modifier name '{modifier}'."
-                )
-            modifiers[mod_name] = mod_value
+            if '=' in modifier:
+                modifier, value = modifier.split('=', maxsplit=1)
+                if modifier not in cls._MODIFIERS:
+                    raise ValueError(
+                        f"invalid color description: '{color_descr}': "
+                        f"invalid color modifier name '{modifier}'.")
+                if modifier == 'underline':
+                    modifiers[modifier] = cls._parse_underline_modifier(value)
+                else:
+                    raise ValueError(
+                        f"invalid color description: '{color_descr}': "
+                        f"parameters can not be explicitely specified for "
+                        f"color modifier '{modifier}'.")
+            else:
+                try:
+                    mod_name, mod_value = cls._MODIFIERS[modifier]
+                except KeyError:
+                    raise ValueError(
+                        f"invalid color description: '{color_descr}': "
+                        f"invalid color modifier name '{modifier}'.")
+                modifiers[mod_name] = mod_value
 
         return modifiers
+
+    @classmethod
+    def _split_modifiers_section(cls, modifiers_section):
+        # split the modifiers part of the color description string
+        # The string consists of several comma-delimited parts, the problem is
+        # that some parts may also contain commas.
+        result = []
+        cur_chunk_start_pos = 0
+        inside_parenths = False
+        for cur_pos in range(len(modifiers_section)):
+            cur_char = modifiers_section[cur_pos]
+            if inside_parenths:
+                if cur_char == ')':
+                    inside_parenths = False
+                continue
+            if cur_char == '(':
+                inside_parenths = True
+                continue
+
+            if cur_char == ',':
+                result.append(modifiers_section[cur_chunk_start_pos:cur_pos])
+                cur_chunk_start_pos = cur_pos + 1
+
+        cur_pos = len(modifiers_section)
+        if cur_pos > cur_chunk_start_pos:
+            result.append(modifiers_section[cur_chunk_start_pos:cur_pos])
+
+        return result
+
+    @classmethod
+    def _parse_underline_modifier(cls, option_value):
+        # convert string value of 'underline' option to the form expected
+        # by ColorFmt constructor.
+        #
+        # General form of the input string value is:
+        # - "STYLE(COLOR)"
+        # where all the parts are optional and parentheses are required only
+        # if STYLE is specified or the GOLOR is (r, g, b) tuple.
+
+        # The value may be of different formats:
+        # - "COLOR"
+        # - "STYLE"
+        # - "STYLE(r,g,b)"
+        # - "STYLE(256colorid)"
+
+        value = option_value.strip()
+        if '(' in value:
+            if value[-1] != ')':
+                raise ValueError(
+                    f"Invalid value of 'underline' option: '{option_value}'. "
+                    f"Closing ')' either not found or is not the last char.")
+            uline_style, inner_color_part = value[:-1].split('(', maxsplit=1)
+            inner_color_part = inner_color_part.strip()
+            color_arg = (
+                cls._detect_rgb_tuple(inner_color_part, option_value)
+                or cls._detect_int_code(inner_color_part)
+                or inner_color_part)
+
+            if uline_style == "":
+                return color_arg
+
+            return (uline_style, color_arg)
+
+        # '(' not found, so there is no 'STYLE' part
+        color_arg = cls._detect_int_code(value) or value
+
+        return color_arg
+
+    @classmethod
+    def _detect_rgb_tuple(cls, rgb_str, orig_option_value):
+        # "r,g,b" -> (r, g, b)
+        # Returns None if the arg does not look like an "r,g,b" tuple
+        # ot raises error if it does look like an "r,g,b" but has some problems
+        if ',' in rgb_str:
+            # "r,g,b" -> (r, g, b)
+            try:
+                rgb = tuple(int(x.strip()) for x in rgb_str.split(','))
+                return rgb
+            except ValueError:
+                raise ValueError(
+                    f"Invalid value of 'underline' option: '{orig_option_value}'. "
+                    f"All the items of the '(r,g,b)' section should be integers.")
+        return None
+
+    @classmethod
+    def _detect_int_code(cls, color_str):
+        # 'color_part' -> int or None
+        try:
+            color_code = int(color_str)
+            return color_code
+        except ValueError:
+            pass
+
+        return None
 
 
 class ColorsConfig:
@@ -1476,10 +1759,7 @@ class Palette(metaclass=_PaletteMeta):
     # syntax id.
     text = ConfColor(ColorsConfig.DFLT_SYNTAX_ID)
 
-    def __init__(
-        self, colors_conf=None, no_color=False, _local_colors=None,
-        synced=False,
-    ):
+    def __init__(self, colors_conf=None, no_color=False, _local_colors=None, synced=False):
         """Constructor of Palette.
 
         Arguments:
@@ -1488,6 +1768,9 @@ class Palette(metaclass=_PaletteMeta):
         - no_color: if True creates a palette object which produces text without
             any coloring effects.
         - _local_colors: must never be specified explicitely (*).
+        - synced: if the palette is synced with the colors_config. When a new palette
+            class gets registered in config the config may change. synced palettes will
+            be modified accordingly.
 
         (*) Palette's meta-class intercepts the constructor call and prepares
         arguments for the constructor. When the constructor is actually called
@@ -1541,14 +1824,14 @@ class Palette(metaclass=_PaletteMeta):
         else:
             colors_conf.put_into_cache(cls, palette)
 
-    def get_color(self, synt_id) -> ColorFmt:
+    def get_color(self, plt_synt_id) -> ColorFmt:
         """Get ColorFmt stored in the palette.
 
         Argument:
-        - synt_id: syntax id (as specified in ConfColor in Palette
-            class declaration)
+        - plt_synt_id: syntax id as specified in Palette class declaration:
+            plt_synt_id = ConfColor(...)
         """
-        x = self._local_colors.get(synt_id)
+        x = self._local_colors.get(plt_synt_id)
         if x is None:
             return self.text
         return x[1]
@@ -1582,8 +1865,8 @@ class Palette(metaclass=_PaletteMeta):
     def make_report(self) -> str:
         """Create colored report of self."""
         return "\n".join(
-            f"{local_synt_id}: {CHText(color_fmt(synt_id))}"
-            for local_synt_id, (synt_id, color_fmt)
+            f"{plt_synt_id}: {CHText(color_fmt(syntax_conf))}"
+            for plt_synt_id, (syntax_conf, color_fmt)
             in sorted(self._local_colors.items())
         )
 
@@ -1682,9 +1965,9 @@ class GlobalPalette(Palette):
         super().__init__(colors_conf, no_color, _local_colors, synced=synced)
         self._colors_conf = colors_conf
 
-    def get_color(self, synt_id) -> ColorFmt:
-        """synt_id -> ColorFmt"""
-        return self._colors_conf.get_color(synt_id)
+    def get_color(self, plt_synt_id) -> ColorFmt:
+        """plt_synt_id -> ColorFmt"""
+        return self._colors_conf.get_color(plt_synt_id)
 
     def __getitem__(self, index):
         """same behavior as get_color method"""
