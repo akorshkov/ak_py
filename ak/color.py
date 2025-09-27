@@ -11,7 +11,7 @@ CHText - objects of this class are string-like objects, which can be
 ColorFmt - produces CHText.Chunk object - optimized for a single color version
     of CHText.
 
-Palette - contains mapping {'syntax_type': ColorFmt}
+Palette - contains mapping {'plt_synt_id': ColorFmt}
 
 ColorsConfig - supposed to contain global colors configuration for the whole
     application (so that it would be possible to configure all coloring in
@@ -57,7 +57,7 @@ from typing import Iterator
 # low-level implementation of colored text
 
 class _ColorCodesSet:
-    # Set of codes which affect the decoration of a text on screen.
+    # Set of codes which affect the decoration of some part of text on screen.
     # Actualy using these codes it is possible to modify not only the colors but also
     # some other properties of the text (such as presence of underline)
     #
@@ -76,7 +76,7 @@ class _ColorCodesSet:
     # - 4:2   : double underline
     # - 4:3   : curly underline
     #
-    # Object of this class constructs and keeps codes used to format given text.
+    # Object of _ColorCodesSet class constructs and keeps codes used to format given text.
     # It keeps codes associated with different aspects of decoration separately
     # to make it possible to combine code sets.
     #
@@ -111,30 +111,32 @@ class _ColorCodesSet:
 
     # possible identificators of color subject. The identificator is the first char
     # of the color code and specifies what part of the text will have this color.
-    # For example "33" means "yellow text", "43" means "yellow background",
-    # "53" meand "underline will be yellow if there is an underline"
+    # For example codes "36", "46" and "56" mean cyan color ("6") for text ("3"),
+    # background ("4") and underline ("5") respectively.
     _COLORS_SUBJECTS = {
         '3': "text color",
         '4': "background color",
         '5': "underline color",
     }
 
+    _N_COLOR_CODES = 7
+
     # set of color codes corresponding to "no decorations" format
-    _NO_COLOR_CODES = tuple(None for _ in range(7))
+    _NO_COLOR_CODES = tuple(None for _ in range(_N_COLOR_CODES))
 
-    __slots__ = ('_sequences', )
+    __slots__ = ('_ccodes', )
 
-    def __init__(self, sequences):
+    def __init__(self, color_codes):
         """Internal constructor. Use _ColorCodesSet.make method as a constructor."""
-        assert len(sequences) == 7
-        self._sequences = sequences
+        assert len(color_codes) == self._N_COLOR_CODES
+        self._ccodes = color_codes
 
     def make_ansi_sequences(self, make_bytes=False) -> (str, str):
         """Returns opening and closing ansi-sequenses for text decoration."""
-        if all(s is None for s in self._sequences):
+        if all(s is None for s in self._ccodes):
             prefix, suffix = "", ""
         else:
-            prefix = "\033[" + ";".join(s for s in self._sequences if s) + "m"
+            prefix = "\033[" + ";".join(s for s in self._ccodes if s) + "m"
             suffix = "\033[0m"
 
         if make_bytes:
@@ -167,6 +169,16 @@ class _ColorCodesSet:
         return cls(color_codes)
 
     @classmethod
+    def combine_color_code_sets(cls, color_codes_sets):
+        """Constructor, combines several _ColorCodesSet objects into one."""
+        result_ccodes = [None for _ in range(cls._N_COLOR_CODES)]
+        for code_set in color_codes_sets:
+            for i, ccode in enumerate(code_set._ccodes):
+                if ccode is not None:
+                    result_ccodes[i] = ccode
+        return cls(result_ccodes)
+
+    @classmethod
     def _make_simple_code(cls, bool_opt, value):
         # to be used to prepare the color code corresponding for a simple bool
         # text property (such as 'blink' or 'crossed')
@@ -178,10 +190,11 @@ class _ColorCodesSet:
     def _make_underline_color_code(cls, opt_value):
         # constructor of the color code corresponding to the 'underline' aspect of decoration
 
-        # Simple bool value: either single-underline with a text color or no underline
         if opt_value is None:
             return None
-        if not opt_value:
+
+        # Simple bool value: either single-underline with a text color or no underline
+        if opt_value is False:
             return ""
         if opt_value is True:
             return "4"
@@ -277,6 +290,9 @@ class _ColorCodesSet:
 
         # case 3: color specifies shade of gray
         if isinstance(color, str):
+            # str name of a color may be either one of in cls._COLORS or
+            # a shade of grey. Names from cls._COLORS were processed previously.
+            # Convert shade of grey to 256-color int
             color = cls._POSSIBLE_COLOR_NAME_STRINGS.get(color)
             if color is None:
                 raise ValueError(
@@ -760,16 +776,18 @@ class CHText:
 
 
 class ColorFmt:
-    """Objects of this class produce text with specified color."""
+    """Wraps given text with escape sequences to apply decoration effects."""
 
     __slots__ = '_color_codes', '_color_prefix', '_color_suffix'
 
     _NO_COLOR = None  # dummy ColorFmt object, will be initialized on demand
 
     def __init__(
-            self, color, *, bg_color=None,
-            bold=None, faint=None, underline=None, blink=None, crossed=None,
-            no_color=False):
+        self, color, *, bg_color=None,
+        bold=None, faint=None, underline=None, blink=None, crossed=None,
+        no_color=False,
+        _color_codes_set=None,
+    ):
         """Create an object which converts text to text with specified effects.
 
         Arguments:
@@ -791,8 +809,9 @@ class ColorFmt:
         - other arguments: boolean values, if True the corresponding effect is turned on
         - no_color: if True, all other arguments are ignored and
             created object is 'dummy' - it does not add any effects to text.
+        - _color_codes_set: argument for internal use only
         """
-        self._color_codes = _ColorCodesSet.make(
+        self._color_codes = _color_codes_set or _ColorCodesSet.make(
             color, bg_color, bold, faint, underline, blink, crossed,
             no_color)
 
@@ -1302,17 +1321,20 @@ class ColorsConfig:
     ColorsConfig contains colors for miscelaneous syntax items such as
     numbers in pretty-printed jsons or table borders.
 
-    This configuration may be read from the config file and then be used by
-    miscellaneous application components. In case the application config
-    does not contain information about some syntax items the application components
-    register the syntax items they are using in the ColorsConfig.
+    ColorsConfig contains a mapping: glob_synt_id -> ColorFmt
+    (example: "TABLE.BORDER" -> ColorFmt("GREEN"))
+
+    Miscellaneous application components may register the defult values for the syntax
+    id's they are going to use. The config may be initilised with data for all the
+    syntax ids used by all the components of the application (for example it may be
+    read from a conf file), but this is not required. Application components will
+    add all the required missing syntax ids at runtime.
 
     It is possible to get a report of what colors are used for different syntax
     groups and then use this report as a starting point for colors configuration
     in the application config file.
 
-    Palette objects are created using the data from the global ColorsConfig (by
-    default).
+    Standard users of the ColorsConfig are Palette classes and objects.
 
     Use ak.color.get_global_colors_config() to get information about current state
     of the global ColorsConf.
@@ -1389,7 +1411,10 @@ class ColorsConfig:
             init_config = {}
         self.no_color = no_color
 
-        self._cache = {}
+        self._cache = {}  # place for palette classes to keep palette objects
+                          # created using this config. The ColorsConfig does not care
+                          # what other components keep in this cache, it's only
+                          # responsible to clear the cache if config changes
         self.registered_sources = set()
         self.syntax_map = {}
 
@@ -1526,9 +1551,9 @@ class ColorsConfig:
                     result[f"{key}.{skey}"] = val_and_src
         return result
 
-    def get_color(self, synt_id) -> ColorFmt:
+    def get_color(self, conf_synt_id) -> ColorFmt:
         """syntax name -> ColorFmt"""
-        syntax_color = self.syntax_map.get(synt_id)
+        syntax_color = self.syntax_map.get(conf_synt_id)
         if syntax_color is None:
             syntax_color = self.syntax_map.get(self.DFLT_SYNTAX_ID)
         if syntax_color is None or syntax_color.color_fmt is None:
@@ -1623,8 +1648,8 @@ class ColorsConfig:
 
 class ConfColor:
     """Indicator of the color item to be used in Palette classes declarations."""
-    def __init__(self, synt_id):
-        self.synt_id = synt_id
+    def __init__(self, plt_synt_id):
+        self.plt_synt_id = plt_synt_id
 
     def __call__(self, text) -> CHText.Chunk:
         """Just a trick to persuade IDE that an item is a callable.
@@ -1691,7 +1716,7 @@ class _PaletteMeta(type):
         return palette
 
     def __new__(meta, classname, supers, classdict):
-        # _LOCAL_SYNTAX - {local_synt_name: syntax_id_in_colors_conf}
+        # _LOCAL_SYNTAX - {plt_synt_id: syntax_id_in_colors_conf}
         # contents of this dictionary is created based on 'ConfColor' items in
         # the classdict.
         for attr in ['_LOCAL_SYNTAX', '_PALETTE_NO_COLOR']:
@@ -1709,7 +1734,7 @@ class _PaletteMeta(type):
 
         for name, field in classdict.items():
             if isinstance(field, ConfColor):
-                local_syntax_map[name] = field.synt_id
+                local_syntax_map[name] = field.plt_synt_id
 
         classdict = {n: v for n, v in classdict.items() if n not in local_syntax_map}
         classdict['_LOCAL_SYNTAX'] = local_syntax_map
@@ -1734,19 +1759,34 @@ class Palette(metaclass=_PaletteMeta):
         SYNTAX_DEFAULTS = {
             "ENUM.ID": "GREEN:bold",
             "ENUM.NAME": "KEYWORD",
+
+            "CONNOTATION.WARN": "underline=DBL(RED)
         }
 
         # Declarations of the formatters present in this Palette
-        enum_id = ConfColor("ENUM.ID")
+        enum_id_color = ConfColor("ENUM.ID")
         name = ConfColor("ENUM.NAME")
+
+        # connotations are usual formatters
+        warn_conn = ConfColor("CONNOTATION.WARN")
 
     ...
 
     cp = EnumPalette()
     cp1 = EnumPalette()  # cp is cp1
 
-    cp.enum_id("42")     # produces CHText object representing green bold "42"
-    cp["ENUM.ID"]("42")  # the same
+    You can use the following ways to produce decorated text:
+
+    1. directly using formatters declared in the palette:
+    cp.enum_id_color("42")     # produces CHText object representing green bold "42"
+
+    2. combine formatters and use the result fomatter:
+    fmt = cp.get_color('name', 'warn_conn')  # produces ColorFmt obj which decorated text
+                                             # using a combination of effects defined in
+                                             # 'name' and 'warn_conn' formatters
+    fmt("Arnold")   # produces CHText object representing "Arnold" text same way
+                    # as "KEYWORD" but using double line red underline
+
     """
     # List of other Palette classes this one depends on (uses syntaxes defined
     # in that classes)
@@ -1780,7 +1820,8 @@ class Palette(metaclass=_PaletteMeta):
         assert self._LOCAL_SYNTAX.keys() == _local_colors.keys()
 
         self._synced = synced
-        self._local_colors = _local_colors
+        self._local_colors = _local_colors  # {plt_synt_id: (color_conf_id, ColorFmt)}
+        self._color_fmts = {}  # {(plt_synt_id, (connotation, ...)): ColorFmt}
 
         for n, v in self._local_colors.items():
             setattr(self, n, v[1])
@@ -1824,24 +1865,55 @@ class Palette(metaclass=_PaletteMeta):
         else:
             colors_conf.put_into_cache(cls, palette)
 
-    def get_color(self, plt_synt_id) -> ColorFmt:
+    def get_color(self, plt_synt_id, *connotations) -> ColorFmt:
         """Get ColorFmt stored in the palette.
 
         Argument:
         - plt_synt_id: syntax id as specified in Palette class declaration:
             plt_synt_id = ConfColor(...)
+        - connotations: syntax ids to be used as connotations.
         """
+        key = (plt_synt_id, connotations)
+        color_fmt = self._color_fmts.get(key)
+        if color_fmt is None:
+            color_fmt = self._construct_color_fmt(plt_synt_id, connotations)
+            self._color_fmts[key] = color_fmt
+
+        return color_fmt
+
+    def _construct_color_fmt(self, plt_synt_id, connotations):
+        # combine the ColorFmt objects corresponding to plt_synt_id and connotations
+        # into a single ColorFmt
+
+        main_fmt = self._get_plt_synt_formater(plt_synt_id)
+
+        if len(connotations) == 0:
+            return main_fmt
+
+        fmts = [main_fmt, ]
+
+        for conn in connotations:
+            fmts.append(self._get_plt_synt_formater(conn))
+
+        color_codes_set = _ColorCodesSet.combine_color_code_sets(
+            fmt._color_codes for fmt in fmts)
+
+        return ColorFmt(None, _color_codes_set=color_codes_set)
+
+    def _get_plt_synt_formater(self, plt_synt_id) -> ColorFmt:
+        # plt_synt_id -> ColorFmt
         x = self._local_colors.get(plt_synt_id)
         if x is None:
-            return self.text
+            return self.text  # dummy plain-text formatter
         return x[1]
 
     def _sync_with_config(self, colors_conf):
         # update self after the state of the global config has changed
         assert self._synced
+        self._color_fmts = {}
         self.register_in_colors_conf(colors_conf)
-        for accessor_name, synt_id in self._LOCAL_SYNTAX.items():
-            setattr(self, accessor_name, colors_conf.get_color(synt_id))
+        for accessor_name, conf_synt_id in self._LOCAL_SYNTAX.items():
+            setattr(self, accessor_name, colors_conf.get_color(conf_synt_id))
 
     @classmethod
     def register_in_colors_conf(cls, colors_conf):

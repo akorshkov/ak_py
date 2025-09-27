@@ -695,11 +695,11 @@ class TestPaletteColorsParsing(unittest.TestCase):
         expected_text = str(expected_color_fmt(test_text))
 
         # print(f"{color_descr=:30} {result_text}")
+
         self.assertEqual(
             expected_text, result_text,
             f"unexpected result text processing color_descr '{color_descr}':\n"
             f"{expected_text}\n{result_text}")
-
 
     def test_parsing_color_descriptions(self):
         """Test different ways to describe colors in palette"""
@@ -1684,6 +1684,58 @@ class TestPalete(unittest.TestCase):
             "\n'ctxt', 'border', 'warn' are defined in the parent class; "
             "'new_synt' is defined in DerivedPalette; "
             "'text' is the default present in all palettes"
+        )
+
+        # cleanup global config
+        set_global_colors_config(None)
+
+
+class TestPaletteConnotations(unittest.TestCase):
+    """Test format connotations."""
+
+    def test_connotations(self):
+        """Test conotations."""
+
+        class MyPalette(Palette):
+            SYNTAX_DEFAULTS = {
+                'NORM': "GREEN",
+                'ALT': "YELLOW:underline",
+
+                'CONN_ERR': "underline=CURL(RED)",
+            }
+
+            norm = ConfColor('NORM')
+            alt = ConfColor('ALT')
+
+            err_conn = ConfColor('CONN_ERR')
+
+        p = MyPalette()
+        test_text = "test text"
+
+        # 1. check get_color method for 'usual' formatters (without connotations)
+        norm_fmt = p.norm
+        norm_fmt_1 = p.get_color('norm')
+
+        self.assertIs(
+            norm_fmt, norm_fmt_1,
+            f"p.get_color('plt_synt_id') must be identical to p.plt_synt_id")
+
+        # 2. test formatters with connotation
+        norm_err_fmt = p.get_color('norm', 'err_conn')
+        another_fmt = p.get_color('norm', 'err_conn')
+        self.assertIs(norm_err_fmt, another_fmt)
+
+        self.assertEqual(
+            str(norm_err_fmt(test_text)),
+            str(ColorFmt("GREEN", underline=("CURL", "RED"))(test_text))
+        )
+
+        # 3. connotation overrides some property of the main syntax
+        alt_err_fmt = p.get_color('alt', 'err_conn')
+
+        self.assertEqual(
+            str(alt_err_fmt(test_text)),
+            str(ColorFmt("YELLOW", underline=("CURL", "RED"))(test_text))
         )
 
         # cleanup global config
