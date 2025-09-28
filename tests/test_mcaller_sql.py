@@ -126,7 +126,7 @@ class TestMCallerSQL(unittest.TestCase):
         class CustomFieldType(FieldType):
             """Produce some text, which is not just str(value)"""
             def make_desired_cell_ch_chunks(
-                self, value, fmt_modifier, _c,
+                self, value, fmt_modifier, _c, connotations,
             ) -> ([str|tuple], int):
                 """adds some text to a value """
                 text = [_c.number(str(value) + " custom descr")]

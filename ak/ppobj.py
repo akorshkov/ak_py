@@ -579,11 +579,21 @@ class FieldType(PaletteUser):
             'FIELD.NUMBER': "NUMBER",
             'FIELD.KEYWORD': "KEYWORD",
             'FIELD.WARN': "WARN",
+
+            'FIELD.CONN_NOTE': "underline=DBL(GREEN)",
+            'FIELD.CONN_WARN': "underline=SINGLE(5,1,1)",
+            'FIELD.CONN_ERR': "underline=CURL(RED)",
+            'FIELD.CONN_DELETED': "crossed",
         }
 
         number = ConfColor('FIELD.NUMBER')
         keyword = ConfColor('FIELD.KEYWORD')
         warn = ConfColor('FIELD.WARN')
+
+        note_conn = ConfColor('FIELD.CONN_NOTE')
+        warn_conn = ConfColor('FIELD.CONN_WARN')
+        err_conn = ConfColor('FIELD.CONN_ERR')
+        deleted_conn = ConfColor('FIELD.CONN_DELETED')
 
     PALETTE_CLASS = FieldPalette
 
@@ -595,7 +605,7 @@ class FieldType(PaletteUser):
         self.max_width = self._DFLT_MAX_WIDTH if max_width is None else max_width
         assert self.min_width <= self.max_width
 
-    def get_cell_text_len(self, value, fmt_modifier) -> int:
+    def get_cell_text_len(self, value, fmt_modifier, connotations) -> int:
         """Calculate length of text representation of the value (for usual cell)
 
         This implementation is universal, but inefficient. Override in
@@ -604,11 +614,12 @@ class FieldType(PaletteUser):
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
             value, fmt_modifier,
-            self.PALETTE_CLASS(no_color=True))
+            self.PALETTE_CLASS(no_color=True), connotations,
+        )
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, cell_plt,
+        self, value, fmt_modifier, cell_plt, connotations,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
 
@@ -622,23 +633,23 @@ class FieldType(PaletteUser):
                 f"{type(self)} field type does not support format modifiers. "
                 f"Specified fmt_modifier: '{fmt_modifier}'")
         if PrettyPrinter.is_keyword_value(value):
-            color_fmt = cell_plt.keyword
+            color_fmt = cell_plt.get_color('keyword', *connotations)
             align = self.ALIGN_RIGHT
         elif isinstance(value, Number):
-            color_fmt = cell_plt.number
+            color_fmt = cell_plt.get_color('number', *connotations)
             align = self.ALIGN_RIGHT
         else:
-            color_fmt = cell_plt.text
+            color_fmt = cell_plt.get_color('text', *connotations)
             align = self.ALIGN_LEFT
         return [color_fmt(str(value))], align
 
     def make_cell_ch_chunks(
-        self, value, fmt_modifier, width, cell_plt,
+        self, value, fmt_modifier, width, cell_plt, connotations,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
 
         text, align = self.make_desired_cell_ch_chunks(
-            value, fmt_modifier, cell_plt)
+            value, fmt_modifier, cell_plt, connotations)
 
         return self.fit_to_width(text, width, align, cell_plt)
 
@@ -736,7 +747,7 @@ class _DefaultFieldType(FieldType):
     # Default FieldType to be used for fields with simple values.
     # Implements more efficient get_cell_text_len
 
-    def get_cell_text_len(self, value, fmt_modifier):
+    def get_cell_text_len(self, value, fmt_modifier, connotations):
         """Calculate length of text representation of the value."""
         # caluculate text length w/o constructing CHText object for the cell
         return len(str(value))
@@ -759,12 +770,13 @@ class _DefaultTitleFieldType(_DefaultFieldType):
     PALETTE_CLASS = TitlePalette
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, cell_plt,
+        self, value, fmt_modifier, cell_plt, connotations,
     ) -> ([CHText.Chunk], int):
         """Make desired content for title."""
         if isinstance(value, str) and fmt_modifier is None:
             return cell_plt.col_title(value), self.ALIGN_LEFT
-        return super().make_desired_cell_ch_chunks(value, fmt_modifier, cell_plt)
+        return super().make_desired_cell_ch_chunks(
+            value, fmt_modifier, cell_plt, connotations)
 
 
 class FieldValueType(PaletteUser):
@@ -791,12 +803,12 @@ class FieldValueType(PaletteUser):
     PALETTE_CLASS = FieldType.FieldPalette
 
     def make_desired_cell_ch_chunks(
-        self, fmt_modifier, col_plt,
+        self, fmt_modifier, cell_plt, connotations,
     ) -> ([CHText.Chunk], int):
         raise NotImplementedError(
             f"'make_desired_cell_ch_chunks' is not implemented in '{type(self)}'")
 
-    def get_cell_text_len(self, fmt_modifier):
+    def get_cell_text_len(self, fmt_modifier, connotations):
         """Calculate length of text representation of self (for usual cell)
 
         This implementation is universal, but inefficient. Override in
@@ -804,14 +816,17 @@ class FieldValueType(PaletteUser):
         it is not required to find out text length.
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
-            fmt_modifier, self.PALETTE_CLASS(no_color=True))
+            fmt_modifier, self.PALETTE_CLASS(no_color=True), connotations,
+        )
         return CHText.calc_chunks_len(ch_text_chunks)
 
-    def make_cell_ch_chunks(self, fmt_modifier, width, col_plt) -> [CHText.Chunk]:
+    def make_cell_ch_chunks(
+        self, fmt_modifier, width, cell_plt, connotations,
+    ) -> [CHText.Chunk]:
         """self -> [CHText.Chunk] having exactly specified width."""
 
-        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, col_plt)
-        return FieldType.fit_to_width(text, width, align, col_plt)
+        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, cell_plt, connotations)
+        return FieldType.fit_to_width(text, width, align, cell_plt)
 
 
 class RecordField:
@@ -968,6 +983,49 @@ class RecordStructure:
                 f"Valid fields names: {self.map.keys()}")
 
 
+class RecordWithConnotations:
+    """Contains a record and connotations.
+
+    The record itself may have connotations and in addition to that there may be
+    connotations associated with columns of record's representation.
+
+    Note, that connotations are applied not to the record fields but to the columns of
+    a record representation. Record representation (for example a table) may have
+    several columns associated with the same record field, these columns may have
+    different formats and different annotations associated with them.
+    """
+    def __init__(self, record, record_connotations=None, cols_connotations=None):
+        """RecordWithConnotations constructor.
+
+        Arguments:
+        - record: the record object
+        - record_connotations: str or [str, ] - names of connotations(*) to be applied
+          to all fields.
+        - cols_connotations: {column_name: connotatiions}
+
+        (*) possible names of connotations are the names of ConfColor's in
+        FieldType.FieldPalette.
+        """
+        self.record = record
+        self.record_connotations = record_connotations
+        self.cols_connotations = cols_connotations
+
+    def gen_column_connotations(self, column_name):
+        """Generate names of connotations applicable for a column."""
+        if self.record_connotations is not None:
+            if isinstance(self.record_connotations, str):
+                yield self.record_connotations
+            else:
+                yield from self.record_connotations
+        if self.cols_connotations is not None:
+            col_connotations = self.cols_connotations.get(column_name)
+            if col_connotations is not None:
+                if isinstance(col_connotations, str):
+                    yield col_connotations
+                else:
+                    yield from col_connotations
+
+
 class ReprColumn:
     """Information about a single column of the record's representation.
 
@@ -1041,25 +1099,38 @@ class ReprColumn:
 
         (Actual cell may be shorter or longer).
         """
+        if isinstance(record, RecordWithConnotations):
+            connotations = tuple(record.gen_column_connotations(self.name))
+            record = record.record
+        else:
+            connotations = tuple()
+
         value = self.field.fetch_value(record)
         if isinstance(value, FieldValueType):
-            return value.get_cell_text_len(self.fmt_modifier)
+            return value.get_cell_text_len(self.fmt_modifier, connotations)
 
-        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier)
+        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier, connotations)
 
     def make_cell_ch_chunks(self, record, cell_plt) -> [CHText.Chunk]:
         """Fetch value from record and make colored text for a cell.
 
         Length of created text is exactly self.width.
         """
+        if isinstance(record, RecordWithConnotations):
+            connotations = tuple(record.gen_column_connotations(self.name))
+            record = record.record
+        else:
+            connotations = tuple()
+
         value = self.field.fetch_value(record)
 
         if isinstance(value, FieldValueType):
             cell_plt = cell_plt.get_sub_palette(value.PALETTE_CLASS)
-            return value.make_cell_ch_chunks(self.fmt_modifier, self.width, cell_plt)
+            return value.make_cell_ch_chunks(
+                self.fmt_modifier, self.width, cell_plt, connotations)
 
         return self.field.field_type.make_cell_ch_chunks(
-            value, self.fmt_modifier, self.width, cell_plt,
+            value, self.fmt_modifier, self.width, cell_plt, connotations,
         )
 
     def to_fmt_str(self):
@@ -1454,7 +1525,8 @@ class ReprStructure:
             for col in self.columns:
                 if col.width < col.max_width:
                     col.width = max(
-                        col.width, min(col.max_width, col.get_cell_text_len(rec))
+                        col.width,
+                        min(col.max_width, col.get_cell_text_len(rec))
                     )
             if all(col.width == col.max_width for col in self.columns):
                 break
@@ -1496,8 +1568,8 @@ class ReprStructure:
         """
         assert len(cols_plts) == len(self.columns)
         result = []
-        for col, col_plt in zip(self.columns, cols_plts):
-            result.append(col.make_cell_ch_chunks(record, col_plt))
+        for col, cell_plt in zip(self.columns, cols_plts):
+            result.append(col.make_cell_ch_chunks(record, cell_plt))
         return result
 
     def make_title_line_ch_chunks_all(
@@ -1516,7 +1588,10 @@ class ReprStructure:
             self.title_field_type.PALETTE_CLASS)
 
         return [
-            self.title_field_type.make_cell_ch_chunks(title, None, col.width, cp)
+            self.title_field_type.make_cell_ch_chunks(
+                title, None, col.width, cp,
+                (),  # connotations. Title cells do not have connotations
+            )
             for title, col in zip(cols_titles, self.columns)
         ]
 

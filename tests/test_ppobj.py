@@ -10,6 +10,7 @@ from ak.ppobj import (
     PPObj,
     FieldType, FieldValueType, RecordField,
     PPRecordFmt, PPTable, TableBlock,
+    RecordWithConnotations,
 )
 
 
@@ -939,7 +940,7 @@ class TestPPTable(unittest.TestCase):
         class CustomFieldType(FieldType):
             """Produce some text, which is not just str(value)"""
             def make_desired_cell_ch_chunks(
-                self, value, fmt_modifier, _c,
+                self, value, fmt_modifier, _c, connotations,
             ) -> ([CHText.Chunk], int):
                 """Custom format value for a table column.
 
@@ -1112,6 +1113,58 @@ class TestPPTable(unittest.TestCase):
         err_msg = str(exc.exception)
         self.assertIn("does not have a field with name 'Id'", err_msg)
         self.assertIn("'id'", err_msg)
+
+    def test_pptable_with_connotated_fields(self):
+        """Test table with some cells having connotations."""
+        records = [
+            (1, "usual", 10),
+            (2, "oops, it's missing", False),
+            (3, "del and note", False),
+            (4, "note this", True),
+            (5, "beware!", 120),
+            (6, "all failed", 340),
+        ]
+
+        def _apply_connotations(rr):
+            for r in rr:
+                record_conn = "deleted_conn" if r[2] is False else None
+                if r[0] == 3:
+                    cols_conn = {"descr": "note_conn"}
+                elif r[0] == 4:
+                    cols_conn = {"descr": "note_conn", "status": "note_conn"}
+                elif r[0] == 5:
+                    cols_conn = {"descr": "warn_conn", "status": "warn_conn"}
+                elif r[0] == 6:
+                    cols_conn = {"descr": "err_conn", "status": "err_conn"}
+                else:
+                    cols_conn = None
+                yield RecordWithConnotations(r, record_conn, cols_conn)
+
+        table = PPTable(
+            _apply_connotations(records), fields=['id', 'descr', 'status'],
+            fmt="id, descr, status, descr",
+        )
+
+        # print(table)
+
+        s = str(table)
+
+        # analyse appearence of several cells in the table
+
+        # 1. 'descr' of the record 2
+        # It is normal text with 'deleted_conn' connotation
+        self.assertIn(
+            str(ColorFmt(None, crossed=True)("oops, it's missing")),
+            s,
+        )
+
+        # 2. 'status' of the record 2
+        # It is a keyword, in the built-in config it it BLUE bold.
+        # The record has 'conn_deleted' connotation; that adds 'crossed'
+        self.assertIn(
+            str(ColorFmt("BLUE", bold=True, crossed=True)("False")),
+            s,
+        )
 
 
 class TestCustomTableLines(unittest.TestCase):
@@ -1638,19 +1691,19 @@ class TestCustomFieldValueType(unittest.TestCase):
         """Simple scenario of FieldValueType usage."""
         # 1. create the custom FieldValueType
         class CustomFieldValue(FieldValueType):
-            class CustomFildPalette(FieldValueType.PALETTE_CLASS):
+            class CustomFieldPalette(FieldValueType.PALETTE_CLASS):
                 """For test is is important that the Palette has it's own method"""
                 SYNTAX_DEFAULTS = {
                     "RECORD.CUSTOM": "YELLOW:bold",
                 }
                 custom = ConfColor("RECORD.CUSTOM")
 
-            PALETTE_CLASS = CustomFildPalette
+            PALETTE_CLASS = CustomFieldPalette
 
             def __init__(self, x):
                 self.x = x
 
-            def make_desired_cell_ch_chunks(self, fmt_modifier, field_palette):
+            def make_desired_cell_ch_chunks(self, fmt_modifier, field_palette, connotations):
                 """Creates it's representation."""
                 return [
                     field_palette.text("the value is "),
@@ -1990,6 +2043,37 @@ class TestPPRecordFormatter(unittest.TestCase):
 
         err_msg = str(exc.exception)
         self.assertIn("amount_x", err_msg)
+
+    def test_record_fmt_with_connotations(self):
+        """Test formatiing of a record with conotations."""
+
+        rec_fmt = PPRecordFmt("id:7,description:7,department:9")
+        tupletype = namedtuple("SomeRecord", ["id", "description", "department"])
+        record = tupletype(10, "short", 245)
+
+        # the rec_fmr can print the record (without connotations)
+        s_no_conn = str(rec_fmt(record))
+
+        # and print the same record with connotations applied for some fields
+        s = str(rec_fmt(
+            RecordWithConnotations(
+                record,
+                None,
+                {"department": "err_conn"},
+            )))
+
+        # print(s_no_conn)
+        # print(s)
+        self.assertEqual(
+            CHText.strip_colors(s), CHText.strip_colors(s_no_conn),
+            "'err_conn' affects only text decorations (adds underline).")
+
+        self.assertIn(
+            str(ColorFmt("YELLOW", underline=("CURL", "RED"))("245")),
+            s,
+            # built-in config defins format for number as "yellow color"
+            # 'err_conn' connotation adds red curly underline
+        )
 
 
 #########################

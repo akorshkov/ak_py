@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 
 from ak.color import ColorFmt
-from ak.ppobj import PPTable
+from ak.ppobj import PPTable, RecordWithConnotations
 from ak.pp_fields_types import (
     date_time_field_type, title_field_type,
     PPEnumFieldType, MatrixFieldValueType,
@@ -78,6 +78,33 @@ class TestPPDateTimeFieldType(unittest.TestCase):
                 4,     # "None"
                 4,     # "None"
             ]
+        )
+
+    def test_datetime_field_with_connotations(self):
+        """Test datetime field with connotations."""
+
+        date_value = datetime(2025, 8, 1)
+        table = PPTable(
+            [
+                RecordWithConnotations(
+                    ("some", date_value),
+                    None,
+                    {"date": "note_conn"},
+                ),
+            ],
+            fields=["descr", "date"],
+            fmt="descr,date",
+            fields_types={
+                'date': date_time_field_type,
+            },
+        )
+
+        # print(table)
+        t = str(table)
+        self.assertIn(
+            str(ColorFmt(None, underline=("DBL", "GREEN"))("2025-08-01")),
+            t,
+            # "note_conn" connotation adds double green underline
         )
 
 
@@ -234,6 +261,53 @@ class TestPPEnumFieldType(unittest.TestCase):
             not_contains_text=[
                 "<???>",
             ],
+        )
+
+    def test_enum_field_type_with_connotations(self):
+        """Test behavior of the enum field type when used with connotations."""
+
+        # 0. prepare enum field type
+        statuses_enum = PPEnumFieldType({
+            10: "Ok status",
+            999: ("Error status", "error"), # "error" here is a ConfColor name in EnumPalette
+        })
+
+        records = [
+            (1, "user 01", 10),
+            (2, "user 02", 999),
+        ]
+
+        table = PPTable(
+            (
+                RecordWithConnotations(
+                    r, None,
+                    {'status': 'note_conn'}
+                )
+                for r in records
+            ),
+            fields=['id', 'name', 'status'],
+            fields_types={'status': statuses_enum},
+        )
+
+        s = str(table)
+        # print(s)
+        # "note_conn" connotation has been added to the "Status" column. This connotations
+        # adds green double underline
+        self.assertIn(
+            str(ColorFmt("YELLOW", underline=("DBL", "GREEN"))("10")),
+            s,
+        )
+        self.assertIn(
+            str(ColorFmt(None, underline=("DBL", "GREEN"))("Ok status")),
+            s,
+        )
+        self.assertIn(
+            str(ColorFmt("YELLOW", underline=("DBL", "GREEN"))("999")),
+            s,
+        )
+        self.assertIn(
+            str(ColorFmt("RED", bold=True, underline=("DBL", "GREEN"))("Error status")),
+            s,
         )
 
 
