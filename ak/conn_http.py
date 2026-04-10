@@ -315,6 +315,17 @@ class _HttpConnBase:
 
         self.descr = " ".join(part for part in _parts() if part is not None)
 
+    @staticmethod
+    def _make_adapters_list(adapters, headers):
+        # helper method to be used in constructors of derived classes
+        if isinstance(adapters, RequestAdapter):
+            adapters = [adapters, ]
+        elif adapters is None:
+            adapters = []
+        if headers is not None:
+            adapters.append(HttpConn.Adapter(headers))
+        return adapters
+
     def get_address(self):
         """Get the address of this connection.
 
@@ -393,10 +404,30 @@ class _HttpConnBase:
 
 class HttpConn(_HttpConnBase):
     """Send plain http requests"""
-    def __init__(self, conn_data, *, adapters=None):
-        if adapters is None:
-            adapters = []
-        super().__init__(adapters, conn_data)
+
+    class Adapter(RequestAdapter):
+        """Add specified headers to the request"""
+        def __init__(self, headers):
+            self.headers = headers
+
+        def process_req_args(self, req_args):
+            """Pre-process http(s) request: add auth header"""
+            if self.headers:
+                req_args.headers.update(self.headers)
+
+    def __init__(self, conn_data, *, headers=None, adapters=None):
+        """Create HttpConn object.
+
+        Arguments:
+        - conn_data: may be either one of
+            - url
+            - another _HttpConnBase-derived object to wrap
+        - headers: (optional) dictionary of headers to be sent in all requests (additional
+            headers may be specified for each call)
+        - adapters: optional list of RequestAdapter objects (they will be used to pre-process
+            request and post-process response data)
+        """
+        super().__init__(self._make_adapters_list(adapters, headers), conn_data)
 
 
 class BAuthConn(_HttpConnBase):
@@ -421,8 +452,10 @@ class BAuthConn(_HttpConnBase):
             """Prepare part for connection description"""
             return f"BAuth by '{self.login}'"
 
-    def __init__(self, conn_data, login, password):
-        super().__init__(self.Adapter(login, password), conn_data)
+    def __init__(self, conn_data, login, password, *, headers=None):
+        super().__init__(
+            self._make_adapters_list(self.Adapter(login, password), headers),
+            conn_data)
 
 
 class ClientAuthConn(_HttpConnBase):
@@ -449,9 +482,10 @@ class ClientAuthConn(_HttpConnBase):
             """Prepare part for connection description"""
             return f"with BAuth by client '{self.client_name}'"
 
-    def __init__(self, conn_data, client_name, client_id, client_secret):
+    def __init__(self, conn_data, client_name, client_id, client_secret, *, headers=None):
         super().__init__(
-            self.Adapter(client_name, client_id, client_secret),
+            self._make_adapters_list(
+                self.Adapter(client_name, client_id, client_secret), headers),
             conn_data)
 
 
@@ -478,9 +512,9 @@ class TokenAuthConn(_HttpConnBase):
                 descr += f" '{self.token_descr}'"
             return descr
 
-    def __init__(self, conn_data, token, token_descr=None):
+    def __init__(self, conn_data, token, token_descr=None, *, headers=None):
         super().__init__(
-            self.Adapter(token, token_descr),
+            self._make_adapters_list(self.Adapter(token, token_descr), headers),
             conn_data)
 
 
