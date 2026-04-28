@@ -88,7 +88,7 @@ class MCallerHttp(MCaller):
     """
     _HTTP_PREFIX_MAP = {}  # {component: http_prefix}
 
-    __slots__ = 'http_conn', '_mc_conns_by_prefix'
+    __slots__ = 'http_conn', 'auth_type', '_mc_conns_by_prefix'
 
     def __init__(self, address):
         """Create MCallerHttp object.
@@ -101,28 +101,35 @@ class MCallerHttp(MCaller):
         else:
             self.http_conn = conn_http.HttpConn(address)
 
+        self.auth_type = None
+
         self._mc_conns_by_prefix = {}
 
-    def clone(self, http_conn_adapters=None):
-        """Create a new MCallerHttp with a same method but modified connection.
-
-        F.e. we have a method caller which sends unauthorized http requests,
-        and we want to create a new caller, which would send requests with
-        basic authorization using John's credentials.
-
-        Argument:
-        - http_conn_adapters: list of conn_http.RequestAdapter objects (or
-        a single such object)
-        """
-        if http_conn_adapters is None:
-            http_conn_adapters = []
-        elif isinstance(http_conn_adapters, (list, tuple)):
-            # it's a single adapter
-            http_conn_adapters = [http_conn_adapters]
-
-        cloned_http_conn = conn_http.HttpConn(
-            self.http_conn, adapters=http_conn_adapters)
+    def clone(self):
+        """Create a new MCallerHttp with a same method but modified connection."""
+        cloned_http_conn = conn_http.HttpConn(self.http_conn)
         return type(self)(cloned_http_conn)
+
+    def set_auth_basic(self, login, password):
+        """Add Authorization header with Basic authorization value."""
+        self.http_conn.set_auth_basic(login, password)
+        self.auth_type = 'basic'
+        return self
+
+    def set_auth_client(self, client_name, client_id, client_secret):
+        """Add Authorization header for client authorization.
+
+        Actually Basic Authorization is used in this case.
+        """
+        self.http_conn.set_auth_basic(client_id, client_secret)
+        self.auth_type = 'client'
+        return self
+
+    def set_auth_token(self, token, token_descr):
+        """Add Authorization header with Bearer authorization value."""
+        self.http_conn.set_auth_token(token)
+        self.auth_type = 'token'
+        return self
 
     def get_conn(self):
         """returns HttpConn to be used in currnt http wrapper method.
@@ -182,10 +189,10 @@ class MCallerHttp(MCaller):
                 CHText(_c.warn('<n/a>')),
                 "object has no 'http_conn' attribute")
 
-        auth_ok = self.http_conn.auth_type in method_meta.auth_types
+        auth_ok = self.auth_type in method_meta.auth_types
         auth_descr = (
             f"wrong connection auth type "
-            f"('{self.http_conn.auth_type}' not in '{method_meta.auth_types}')")
+            f"('{self.auth_type}' not in '{method_meta.auth_types}')")
 
         component_ok = True
         component_problem_descr = ""

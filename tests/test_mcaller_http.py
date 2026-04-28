@@ -4,7 +4,6 @@ import unittest
 
 import base64
 
-from ak.conn_http import BAuthConn
 from ak.hdoc import HCommand
 from ak.mcaller_http import MCallerHttp, method_http
 
@@ -136,8 +135,7 @@ class TestMCallerHttp(unittest.TestCase):
 
         # make sure cloned caller works as well. The cloned caller
         # will use authorized connection
-        cloned_caller = my_caller.clone(
-            BAuthConn.Adapter('my_name', 'std_password'))
+        cloned_caller = my_caller.clone().set_auth_basic('my_name', 'std_password')
 
         intercepted_requests = []
         with mock_http(intercepted_requests):
@@ -238,8 +236,7 @@ class TestMCallerHttp(unittest.TestCase):
         self.assertNotIn('m3_bauth', obj_descr)
         self.assertIn('m4_bauth_or_no_auth', obj_descr)
 
-        caller_bauth = caller_no_auth.clone(
-            BAuthConn.Adapter('my_name', 'my_password'))
+        caller_bauth = caller_no_auth.clone().set_auth_basic('my_name', 'my_password')
         obj_descr = h(caller_bauth)
         self.assertNotIn('m1_no_auth', obj_descr)
         self.assertNotIn('m2_no_auth_explicit', obj_descr)

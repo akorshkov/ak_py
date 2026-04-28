@@ -1,8 +1,10 @@
-"""Http requests library."""
+"""Http requests library.
+
+Wrapper for standard python urlib; makes it more convenient to make rest api requests.
+"""
 
 import threading
 import random
-import string
 import base64
 import logging
 
@@ -18,16 +20,50 @@ logger = logging.getLogger(__name__)
 
 
 #########################
-# http connections
+# HttpConn - http connection
 #
-# Send http requests to specified address and process responses
-#
-# Different types of connections (f.e. connection which sends requests with
-# basic authentication) are implemented as wrappers: such connection adds
-# RequestAdapter object to request processing sequence and delegates
-# actual call to the http connection it wraps.
-#
-# Finally the request is processed by _HttpConnImpl object.
+# Send http requests to specified address and process responses.
+
+class RequestIDGenerator:
+    """Generator of requests ids.
+
+    Generator object generates strings with common prefix and a suffix containing counter.
+    Example:
+        bf89954f-6bc6-8177-d574-b2a580000000
+        bf89954f-6bc6-8177-d574-b2a580000001
+    """
+    _CHARS_SET = "0123456789abcdef"
+
+    __slots__ = 'prefix', 'counter', '_counter_as_hex', '_reqid_generator_guard'
+
+    def __init__(self, _counter_as_hex=False):
+        """Constructor of RequestIDGenerator.
+
+        Arguments:
+        - _counter_as_hex: if True formats counter suffix as hex number.
+        """
+        self._reqid_generator_guard = threading.Lock()
+        self._counter_as_hex = _counter_as_hex
+
+        _rand_s = lambda n : "".join(random.choice(self._CHARS_SET) for _ in range(n))
+        self.prefix = "-".join(_rand_s(n) for n in [8, 4, 4, 4, 5])
+
+        self.counter = 0
+
+    def generate_id(self) -> str:
+        """Generate and return next request id"""
+        with self._reqid_generator_guard:
+            request_n = self.counter
+            self.counter += 1
+
+        if self._counter_as_hex:
+            n = request_n & 0xfffffff
+            str_counter = f"{n:07x}"
+        else:
+            n = request_n % 10000000
+            str_counter = f"{n:07}"
+
+        return f"{self.prefix}{str_counter}"
 
 
 class RequestArguments:
@@ -54,7 +90,10 @@ class RequestArguments:
 
 
 class RequestAdapter:
-    """Base class for adapters, used when processing requests by HttpConn"""
+    """Base class for request adapters.
+
+    HttpConn may be configured to use RequestAdapters to pre-process requests
+    """
 
     AUTH_TYPE = None
 
@@ -67,27 +106,85 @@ class RequestAdapter:
         # pylint: disable=unused-argument
         return return_value
 
-    def mk_descr(self):
-        """Prepare adapter's description to be included into connection description"""
-        return None
 
+class HttpConn:
+    """Sends http requests.
 
-class _HttpConnImpl:
-    # actually makes http requests and process results
-    #
-    # it is supposed to be used by 'public' classes (HttpConn, BAuthConn, etc.)
+    Convenient for rest api calls.
+    """
 
-    def __init__(self, address, _send_request_ids=True):
-        self.address = address
-        self.adapters = []  # dummy value. Child connections expect this property
-        self.conn_impl = self
+    _HDR_NAME_REQ_ID = 'X-request-id'
+    _HDR_NAME_CONT_TYPE = 'Content-type'
 
-        self._reqid_generator_guard = threading.Lock()
-        self._reqid_connection_part = "".join(
-            random.choice(string.hexdigits.lower()) for _ in range(4))
-        self._cur_req_id = 0 if _send_request_ids else None
+    def __init__(
+        self,
+        conn_data,
+        *,
+        headers=None,
+        adapters=None,
+        auto_json_cont_type=None,
+        request_ids_generator=None, # None - default, False - do not use
+    ):
+        """HttpConn constructor.
 
-        is_https = address.lower().startswith("https://")
+        Arguments:
+        - conn_data: can be either url string or another HttpConn object. In the second case
+            connection configuration is inherited from it.
+        - headers: headers to be sent with each request. May be:
+            - {header_name: value}
+            - [(header_name, value), ]
+            value == None means that the header should not be sent (thus it is possible to
+            remove header inherited from another HttpConn.
+            Note: value of some headers (for example 'X-request-id' and 'Content-type') can
+            be calculated during actual request.
+        - adapters: list of RequestAdapter-derived objects. Can be used to pre-process request
+        - auto_json_cont_type: HttpConn may automatically add "Content-type" =
+            "application/json" header if the header is not specified with request explicitely
+            and request contains data and the data is not a string or bytes.
+            - True/False: turn on/off this feature
+            - None: use parent's value if it is specified; else True
+        - request_ids_generator: optional RequestIDGenerator object. Other possible values:
+            - False: do not auto-generate 'X-request-id' headers
+            - None: share generator with parent if parent is specified; else create a new
+            generator.
+        """
+        if isinstance(conn_data, str):
+            is_cloning = False
+            self.address = conn_data
+        elif isinstance(conn_data, HttpConn):
+            is_cloning = True
+            self.address = conn_data.address
+        else:
+            raise ValueError(
+                f"HttpConn constructor arg 'conn_data' must be either string or "
+                f"HttpConn. Actual arg: {type(conn_data)} {conn_data}")
+
+        arg_headers = self.make_headers_dict(headers)
+        self.headers = {**conn_data.headers, **arg_headers} if is_cloning else arg_headers
+        if any(v is None for v in self.headers):
+            self.headers = {n: v for n, v in self.headers.items() if v is not None}
+
+        self.adapters = conn_data.adapters[:] if is_cloning else []
+        if adapters is not None:
+            if not isinstance(adapters, (list, tuple)):
+                adapters = [adapters, ]
+            self.adapters.extend(adapters)
+
+        self.auto_json_cont_type = auto_json_cont_type
+        if self.auto_json_cont_type is None:
+            self.auto_json_cont_type = conn_data.auto_json_cont_type if is_cloning else True
+
+        if request_ids_generator is None:
+            if is_cloning:
+                self.request_ids_generator = conn_data.request_ids_generator
+            else:
+                self.request_ids_generator = RequestIDGenerator()
+        elif not request_ids_generator:
+            self.request_ids_generator = None
+        else:
+            self.request_ids_generator = request_ids_generator
+
+        is_https = self.address.lower().startswith("https://")
         self.opener = self._make_opener(is_https)
 
     def __str__(self):
@@ -113,21 +210,131 @@ class _HttpConnImpl:
             http_handler = urllib.request.HTTPHandler(debuglevel=debuglevel)
         return urllib.request.build_opener(http_handler)
 
-    def do_request(self, adapters, path, method=None,
-                    params=None, data=None, headers=None, raw_response=False):
-        """Method which makes the request.
+    @classmethod
+    def make_headers_dict(cls, headers, _ignore_duplicates=False):
+        """Create a dictionary of headers values.
 
-        To be used by the owner connection object. (owner just keeps list of
-        adapters and calls this method with these adapters)
+        Headers names are case-insensitive. urllib.request converts headers names to
+        some 'standard' form: first letter is capital, all others are not.
+        Keys of the dictionary returned by this method are converted to this 'standard' form.
 
-        Descriptions of other arguments are same as in _HttpConnBase.get()
+        Arguments:
+        - headers: either {name: value} or [(name, value), ]
+        - _ignore_duplicates: do not fail in case headers argument contain headers with
+        equivalent names (for example "X-Request-ID" and "X-request-id"). All but one of
+        such headers will be ignored.
         """
+        result = {}
+        fixed_names = {}
+        def _iter_headers():
+            if headers is None:
+                return
+            if isinstance(headers, dict):
+                yield from headers.items()
+            else:
+                yield from headers
+
+        for n, v in _iter_headers():
+            std_name = cls.mk_std_header_name(n)
+            if not _ignore_duplicates and std_name in fixed_names:
+                raise ValueError(
+                    f"Duplicate header names '{n}' and '{fixed_names[std_name]}' detected")
+            fixed_names[std_name] = n
+            result[std_name] = v
+
+        return result
+
+    @classmethod
+    def mk_std_header_name(cls, header_name) -> str:
+        """Return 'standard' form of header_name.
+
+        Headers names are case-insensitive, HttpConn.headers contains header names in some
+        'standard' form.
+        """
+        return header_name.title()
+
+    def set_auth_basic(self, login, password):
+        """Add Authorization header with Basic authorization value."""
+        auth_header_val = b"Basic " + base64.b64encode(f"{login}:{password}".encode('utf-8'))
+        self.headers[self.mk_std_header_name('Authorization')] = auth_header_val
+        return self
+
+    def set_auth_token(self, token):
+        """Add Authorization header with Bearer authorization value."""
+        auth_header_val = f"Bearer {token}"
+        self.headers[self.mk_std_header_name('Authorization')] = auth_header_val
+        return self
+
+    def patch_headers(self, headers):
+        """Update connection headers.
+
+        Argument:
+        - headers: May be
+            - {header_name: value}
+            - [(header_name, value), ]
+            value = None means that the header should not be sent.
+        """
+        self.headers = {**self.headers, **self.make_headers_dict(headers)}
+        if any(v is None for v in headers.values()):
+            self.headers = {n: v for n, v in self.headers.items() if v is not None}
+        return self
+
+    def get(self, path, *, params=None, data=None, headers=None, raw_response=False):
+        """Make GET http(s) request.
+
+        Arguments:
+        - path: request path
+        - params: dictionary of request parameters
+        - data: data for request. Can be bytes, string or any python object, which
+            can be dumped to json.
+        - headers: dict, explicit headers for the request. Will be merged with connection
+            headers. Header value = None means that the header will not be sent.
+        - raw_response: specifies how response is handled.
+            False - (default) method expects that response contains a valid
+               json (or no data) and returns decoded json (or empty str). Exception
+               is thrown if request was not successful.
+            True - urllib Response object is returned "as-is".
+        """
+        return self._do_request(path, 'GET', params, data, headers, raw_response)
+
+    def post(self, path, *, params=None, data=None, headers=None, raw_response=False):
+        """Make POST https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self._do_request(path, 'POST', params, data, headers, raw_response)
+
+    def put(self, path, *, params=None, data=None, headers=None, raw_response=False):
+        """Make PUT https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self._do_request(path, 'PUT', params, data, headers, raw_response)
+
+    def delete(self, path, *, params=None, data=None, headers=None, raw_response=False):
+        """Make DELETE https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self._do_request(path, 'DELETE', params, data, headers, raw_response)
+
+    def patch(self, path, *, params=None, data=None, headers=None, raw_response=False):
+        """Make PATCH https(s) request.
+
+        Check doc of 'get' method for detailed descr of arguments.
+        """
+        return self._do_request(path, 'PATCH', params, data, headers, raw_response)
+
+    def _do_request(
+            self, path, method,
+            params=None, data=None, headers=None, raw_response=False):
+        # do the request
 
         # 1. use adapters to pre-process arguments
         req_args = RequestArguments(
             self.address, path, method, params, data, headers)
 
-        for adapter in adapters:
+        for adapter in self.adapters:
             adapter.process_req_args(req_args)
 
         address, path, method, params, data, headers = req_args.args()
@@ -140,18 +347,18 @@ class _HttpConnImpl:
         url = address + path
 
         # 2. headers
-        if self._cur_req_id is not None:
-            # means req_id should be autogenerated if not specified
-            if 'X-Request-ID' not in headers:
-                headers['X-Request-ID'] = self._generate_request_id()
+        arg_headers = self.make_headers_dict(headers)
+        req_headers = {**self.headers, **arg_headers}
+        if any(v is None for v in req_headers.values()):
+            req_headers = {n: v for n, v in req_headers.items() if v is not None}
 
-        # 3. method (autodetect)
-        if not method:
-            method = 'POST' if data else 'GET'
-        else:
-            method = str(method).upper()
+        # 2.1. request id header
+        if (self.request_ids_generator is not None
+            and self._HDR_NAME_REQ_ID not in req_headers
+        ):
+            req_headers[self._HDR_NAME_REQ_ID] = self.request_ids_generator.generate_id()
 
-        # 4. data
+        # 3. data
         if data is None:
             req_data = None
         elif isinstance(data, bytes):
@@ -161,15 +368,15 @@ class _HttpConnImpl:
                 str_data = data
             else:
                 str_data = json.dumps(data)
-                if 'Content-Type' not in headers:
-                    headers['Content-Type'] = 'application/json'
+                if self.auto_json_cont_type and self._HDR_NAME_CONT_TYPE not in req_headers:
+                    req_headers[self._HDR_NAME_CONT_TYPE] = 'application/json'
             req_data = str_data.encode(encoding='utf-8')
 
         request = urllib.request.Request(
             url,
             data=req_data,
             method=method,
-            headers=headers)
+            headers=req_headers)
 
         # log request.
         # !request is not final yet, urllib may add some headers during the call!
@@ -197,20 +404,10 @@ class _HttpConnImpl:
             ret_val = response
 
         # process return value
-        for adapter in adapters[::-1]:
+        for adapter in self.adapters[::-1]:
             ret_val = adapter.process_response(ret_val)
 
         return ret_val
-
-    def _generate_request_id(self):
-        # generate request id
-        with self._reqid_generator_guard:
-            next_req_id = self._cur_req_id
-            self._cur_req_id += 1
-        return None if next_req_id is None else "{}{}-0000-0000-0000-{}".format(
-            self._reqid_connection_part,
-            "{:04}".format(next_req_id%10000),
-            "{:012}".format(next_req_id))
 
     @staticmethod
     def _log_request(request):
@@ -243,280 +440,9 @@ class _HttpConnImpl:
             response._method, req_path, response.code, headers_descr, response.data)
 
 
-class _HttpConnBase:
-    # Base class for http connection objects.
-    #
-    # Derived classes have only to implement apropriate request adapters
-
-    def __init__(self, adapters, conn_data):
-        # Arguments:
-        # - adapters: list of RequestAdapter objects or a single such object
-        # - conn_data: either another _HttpConnBase object to wrap, or arguments
-        #              for _HttpConnImpl
-
-        if not isinstance(adapters, (list, tuple)):
-            # 'adapters' is not a list, but a single adapter. Make it a list
-            adapters = [adapters, ]
-
-        if isinstance(conn_data, _HttpConnBase):
-            # conn_data is another connection object, self will wrap it
-            parent_conn = conn_data
-        elif isinstance(conn_data, str):
-            # conn_data is an address
-            address = conn_data
-            if address.endswith('/'):
-                address = address[:-1]
-            parent_conn = _HttpConnImpl(address)
-        elif isinstance(conn_data, (list, tuple)):
-            # conn_data is a list of arguments for connection
-            parent_conn = _HttpConnImpl(*conn_data)
-        elif isinstance(conn_data, dict):
-            # conn_data is a dict of arguments for connection
-            parent_conn = _HttpConnImpl(**conn_data)
-        else:
-            assert False, (
-                f"Unexpected value of 'conn_data' arg (type {type(conn_data)}): "
-                f"{conn_data}")
-
-        self.parent_conn = parent_conn
-        self.conn_impl = parent_conn.conn_impl
-
-        self.own_adapters = adapters
-        # prepare final list of adapters(including own adapters and those
-        # used by parent connection)
-        self.adapters = self.own_adapters + self.parent_conn.adapters
-
-        self.descr = None  # to be evaluated on demand
-
-        # string identifier of authentication type used by this connection.
-        # to be used to warn about situations when the connection has unexpected
-        # auth type.
-        # Potentially several adapters may change authentication of the
-        # request - be polite and do not create such connections
-        self.auth_type = next(
-            (a.AUTH_TYPE for a in self.adapters if a.AUTH_TYPE is not None),
-            None)
-
-    def __str__(self):
-        if self.descr is None:
-            self._prepare_self_descr()
-        return self.descr
-
-    def __repr__(self):
-        return str(self)
-
-    def _prepare_self_descr(self):
-        # create description of self. It includes descriptions of adapters
-        def _parts():
-            # prepare parts of description
-            for adapter in self.own_adapters[::-1]:
-                yield adapter.mk_descr()
-            yield str(self.parent_conn)
-
-        self.descr = " ".join(part for part in _parts() if part is not None)
-
-    @staticmethod
-    def _make_adapters_list(adapters, headers):
-        # helper method to be used in constructors of derived classes
-        if isinstance(adapters, RequestAdapter):
-            adapters = [adapters, ]
-        elif adapters is None:
-            adapters = []
-        if headers is not None:
-            adapters.append(HttpConn.Adapter(headers))
-        return adapters
-
-    def get_address(self):
-        """Get the address of this connection.
-
-        The returned address is the address specified during the connection construction.
-        So it may (or may not) contain port/path information.
-        """
-        if hasattr(self.parent_conn, 'address'):
-            return self.parent_conn.address
-        return self.parent_conn.get_address()
-
-    def add_adapter(self, adapter):
-        """Add adapter to self.
-
-        Adapter is an object that can process request and returned value.
-        """
-        self.adapters.append(adapter)
-        self.descr = None  # to be re-evaluated by demand
-
-    def get(self, path, *,
-            params=None, data=None, headers=None, raw_response=False):
-        """Make GET https(s) request.
-
-        Arguments:
-        - path: request path
-        - params: dictionary of request parameters
-        - data: data for request. Can be bytes, string or any python object, which
-            can be dumped to json.
-        - headers: dict, explicit headers for request
-        - raw_response: specifies how response is handled.
-            False - (default) method expects that response contains a valid
-               json (or no data) and returns decoded json (or empty str). Exception
-               is thrown if request was not successful.
-            True - urllib Response object is returned "as-is".
-        """
-        # small shortcut: instead of calling self.parent_conn call the final
-        # element of the chain immediately
-        return self.conn_impl.do_request(
-            self.adapters, path, "GET", params, data, headers, raw_response)
-
-    def post(self, path, *,
-             params=None, data=None, headers=None, raw_response=False):
-        """Make POST https(s) request.
-
-        Check doc of 'get' method for detailed descr of arguments.
-        """
-        return self.conn_impl.do_request(
-            self.adapters, path, "POST", params, data, headers, raw_response)
-
-    def put(self, path, *,
-            params=None, data=None, headers=None, raw_response=False):
-        """Make PUT https(s) request.
-
-        Check doc of 'get' method for detailed descr of arguments.
-        """
-        return self.conn_impl.do_request(
-            self.adapters, path, "PUT", params, data, headers, raw_response)
-
-    def delete(self, path, *,
-               params=None, data=None, headers=None, raw_response=False):
-        """Make DELETE https(s) request.
-
-        Check doc of 'get' method for detailed descr of arguments.
-        """
-        return self.conn_impl.do_request(
-            self.adapters, path, "DELETE", params, data, headers, raw_response)
-
-    def patch(self, path, *,
-               params=None, data=None, headers=None, raw_response=False):
-        """Make PATCH https(s) request.
-
-        Check doc of 'get' method for detailed descr of arguments.
-        """
-        return self.conn_impl.do_request(
-            self.adapters, path, "PATCH", params, data, headers, raw_response)
-
-
-class HttpConn(_HttpConnBase):
-    """Send plain http requests"""
-
-    class Adapter(RequestAdapter):
-        """Add specified headers to the request"""
-        def __init__(self, headers):
-            self.headers = headers
-
-        def process_req_args(self, req_args):
-            """Pre-process http(s) request: add auth header"""
-            if self.headers:
-                req_args.headers.update(self.headers)
-
-    def __init__(self, conn_data, *, headers=None, adapters=None):
-        """Create HttpConn object.
-
-        Arguments:
-        - conn_data: may be either one of
-            - url
-            - another _HttpConnBase-derived object to wrap
-        - headers: (optional) dictionary of headers to be sent in all requests (additional
-            headers may be specified for each call)
-        - adapters: optional list of RequestAdapter objects (they will be used to pre-process
-            request and post-process response data)
-        """
-        super().__init__(self._make_adapters_list(adapters, headers), conn_data)
-
-
-class BAuthConn(_HttpConnBase):
-    """Send http requests with basic authentication"""
-
-    class Adapter(RequestAdapter):
-        """Add Basic Authorization header to http(s) request."""
-        AUTH_TYPE = "basic"
-
-        def __init__(self, login, password):
-            self.login = login
-            self.password = password
-            self.bauth_header = b"Basic " + base64.b64encode(
-                f"{login}:{password}".encode('utf-8'))
-
-        def process_req_args(self, req_args):
-            """Pre-process http(s) request: add auth header"""
-            assert 'Authorization' not in req_args.headers
-            req_args.headers['Authorization'] = self.bauth_header
-
-        def mk_descr(self):
-            """Prepare part for connection description"""
-            return f"BAuth by '{self.login}'"
-
-    def __init__(self, conn_data, login, password, *, headers=None):
-        super().__init__(
-            self._make_adapters_list(self.Adapter(login, password), headers),
-            conn_data)
-
-
-class ClientAuthConn(_HttpConnBase):
-    """Send http requests with client basic authentication"""
-
-    class Adapter(RequestAdapter):
-        """Add Client authorization to http(s) request."""
-        AUTH_TYPE = "client"
-
-        def __init__(self, client_name, client_id, client_secret):
-            self.client_name = client_name
-            self.client_id = client_id
-            self.client_secret = client_secret
-
-            self.bauth_header = b"Basic " + base64.b64encode(
-                f"{client_id}:{client_secret}".encode('utf-8'))
-
-        def process_req_args(self, req_args):
-            """Pre-process http(s) request: add auth header"""
-            assert 'Authorization' not in req_args.headers
-            req_args.headers['Authorization'] = self.bauth_header
-
-        def mk_descr(self):
-            """Prepare part for connection description"""
-            return f"with BAuth by client '{self.client_name}'"
-
-    def __init__(self, conn_data, client_name, client_id, client_secret, *, headers=None):
-        super().__init__(
-            self._make_adapters_list(
-                self.Adapter(client_name, client_id, client_secret), headers),
-            conn_data)
-
-
-class TokenAuthConn(_HttpConnBase):
-    """Send http requests with token authentication"""
-
-    class Adapter(RequestAdapter):
-        """Add token authorization to http(s) request."""
-        AUTH_TYPE = "token"
-
-        def __init__(self, token, token_descr=None):
-            self.token_descr = token_descr
-            self.header = f"Bearer {token}"
-
-        def process_req_args(self, req_args):
-            """Pre-process http(s) request: add auth header"""
-            assert 'Authorization' not in req_args.headers
-            req_args.headers['Authorization'] = self.header
-
-        def mk_descr(self):
-            """Prepare part for connection description"""
-            descr = "with auth by token"
-            if self.token_descr is not None:
-                descr += f" '{self.token_descr}'"
-            return descr
-
-    def __init__(self, conn_data, token, token_descr=None, *, headers=None):
-        super().__init__(
-            self._make_adapters_list(self.Adapter(token, token_descr), headers),
-            conn_data)
-
+#########################
+# Request adapters
+#
 
 class RequestAdapterAddPathPrefix(RequestAdapter):
     """Request adapter which adds specified prefix to request path."""
@@ -532,6 +458,3 @@ class RequestAdapterAddPathPrefix(RequestAdapter):
             suffix_path = suffix_path[1:]
 
         req_args.path = self.prefix + suffix_path
-
-    def mk_descr(self):
-        return f"with path prefix '{self.prefix}'"
