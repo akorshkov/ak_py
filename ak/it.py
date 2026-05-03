@@ -16,7 +16,7 @@ class _PPrintCommand:
     _GLOBAL_PP = None
 
     def __init__(self):
-        self._pprinter = ppobj.PrettyPrinter()
+        self._pprinter = ppobj.PPStdFormatter(style="py")
 
     def __call__(self, obj_to_print):
         if isinstance(obj_to_print, ppobj.PPObjBase):

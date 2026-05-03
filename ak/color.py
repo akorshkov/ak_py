@@ -11,7 +11,9 @@ CHText - objects of this class are string-like objects, which can be
 ColorFmt - produces CHText.Chunk object - optimized for a single color version
     of CHText.
 
-Palette - contains mapping {'plt_synt_id': ColorFmt}
+Palette - contains collection of color formatters (ColorFmt) for printing some type
+    of objects; provides convenient access to the formatters.
+    table_palette.border -> ColorFmt for printing table border
 
 ColorsConfig - supposed to contain global colors configuration for the whole
     application (so that it would be possible to configure all coloring in

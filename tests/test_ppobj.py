@@ -1,11 +1,12 @@
-"""Test PrettyPrinter """
+"""Test pretty-printing."""
 
 import unittest
 import io
+import json
 from collections import namedtuple
 
 from ak.color import CHText, ConfColor, ColorFmt, Palette, CompoundPalette
-from ak.ppobj import CHTextResult, PrettyPrinter, pp
+from ak.ppobj import CHTextResult, PPStdFormatter, pp
 from ak.ppobj import (
     PPObj,
     FieldType, FieldValueType, RecordField,
@@ -15,10 +16,10 @@ from ak.ppobj import (
 
 
 #########################
-# Test json-like objects PrettyPrinter
+# Test json-like objects PPStdFormatter
 
 class TestPrettyPrinter(unittest.TestCase):
-    """Test PrettyPrinter"""
+    """Test PPStdFormatter"""
 
     def _verify_format(self, text):
         # perform some common checks of the json-looing obj printing result
@@ -41,7 +42,7 @@ class TestPrettyPrinter(unittest.TestCase):
         """Test processing of good json-looking object"""
 
         # check that some text produced w/o errors
-        s = str(pp({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]}))
+        s = str(pp.format({"a": 1, "some_name": True, "c": None, "d": [42, "aa"]}))
         # print(s)
 
         self._verify_format(s)
@@ -53,24 +54,24 @@ class TestPrettyPrinter(unittest.TestCase):
         self.assertIn('"a": 1', plain_text)
 
     def test_printing_notjson(self):
-        """Test that PrettyPrinter can handle not-json objects."""
+        """Test that PPStdFormatter can handle not-json objects."""
 
-        s = str(pp(42))
+        s = str(pp.format(42))
         self.assertIn("42", s)
 
-        s = str(pp("some text"))
+        s = str(pp.format("some text"))
         self.assertIn("some text", s)
 
-        s = str(pp(True))
-        self.assertIn("True", s)
+        s = str(pp.format(True))
+        self.assertIn("true", s)
 
-        s = str(pp(None))
-        self.assertIn("None", s)
+        s = str(pp.format(None))
+        self.assertIn("null", s)
 
     def test_complex_object(self):
         """Test printing 'complex' object where keys have different types."""
 
-        s = str(pp({
+        s = str(pp.format({
             "d": {1: 23, "a": 17, "c": [1, 20, 2]},
             "ddd": "aaa",
             "a": 2, "ccc": 80,
@@ -86,7 +87,7 @@ class TestPrettyPrinter(unittest.TestCase):
 
     def test_ppobj_long_list(self):
         """Test pretty-printing a very long list of items."""
-        s = str(pp({
+        s = str(pp.format({
             "items": [
                 {
                     "name": "x1",
@@ -123,24 +124,55 @@ class TestPrettyPrinter(unittest.TestCase):
         self.assertIn('"aaaaaaa", "bbbbbbb",', plain_text)
 
     def test_pprint_in_json_fmt(self):
-        """Test pprinter in json mode: result string should be colored valid json.
+        """Test pprinter in 'json' mode: result string should be colored valid json.
 
         (well, it will be a valid json after color sequences are removed)
         """
-        pp_custom = PrettyPrinter(fmt_json=True)
+        # quite complicated json-looking structure
+        test_struct = {
+            "a": [1, "b", "c"],
+            "b": {"x": 10, "y": 20},
+            "c": [
+                {"a5": 5, "b7": 7},
+                {"x": 13, "c15": "y"},
+            ]
+        }
 
-        s = str(pp_custom({
+        s = pp.format(test_struct).plain_text()
+        restored_struct = json.loads(s)
+
+        self.assertEqual(test_struct, restored_struct)
+
+    def test_pprint_in_py_fmt(self):
+        """Test pprinter in 'py' mode: result should contain constans as in python code."""
+
+        pp_custom = pp.clone(style='py')
+
+        s = str(pp_custom.format({
             "n": None,
             "t": True,
             "f": False,
         }))
-        # print(s)
 
         self._verify_format(s)
 
-        self.assertIn("null", s)
-        self.assertIn("true", s)
-        self.assertIn("false", s)
+        self.assertIn("None", s)
+        self.assertIn("True", s)
+        self.assertIn("False", s)
+
+        # cloning should have not affected original pp
+
+        s = str(pp.format({
+            "n": None,
+            "t": True,
+            "f": False,
+        }))
+
+        self._verify_format(s)
+
+        self.assertNotIn("None", s)
+        self.assertNotIn("True", s)
+        self.assertNotIn("False", s)
 
     def test_different_printing_methods(self):
         """Test that different printing methods produce the same result."""
@@ -155,9 +187,9 @@ class TestPrettyPrinter(unittest.TestCase):
             3: None
         }
 
-        ch_result = pp(obj_to_print)
+        ch_result = pp.format(obj_to_print)
 
-        # 1. converting pp(...) result to str.
+        # 1. converting pp.format(...) result to str.
         # new-line symbol is appended because other methods append this symbol
         converted_result = str(ch_result) + "\n"
         # print(converted_result)
@@ -171,8 +203,13 @@ class TestPrettyPrinter(unittest.TestCase):
                 print(ch_line, file=output)
             by_line_print_result = output.getvalue()
 
+        with io.StringIO() as output:
+            pp(obj_to_print, file=output)
+            pp_result = output.getvalue()
+
         self.assertEqual(converted_result, print_result)
         self.assertEqual(converted_result, by_line_print_result)
+        self.assertEqual(converted_result, pp_result)
 
 
 class TestCHTextResult(unittest.TestCase):
@@ -182,7 +219,7 @@ class TestCHTextResult(unittest.TestCase):
     """
     def test_fetch_ch_text(self):
         """Test fetching CHText object from CHTextResult."""
-        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        ch_text_result = pp.format({"a": None, "b": 17, "c": "d"})
         self.assertIsInstance(ch_text_result, CHTextResult)
 
         ch_text = ch_text_result.get_ch_text()
@@ -195,7 +232,7 @@ class TestCHTextResult(unittest.TestCase):
         """Test printing of CHTextResult object."""
 
         # small CHTextResult object, consists of one line only.
-        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        ch_text_result = pp.format({"a": None, "b": 17, "c": "d"})
 
         # colored string '{"a": None, "b": 17, "c": "d"}' is expected
         colored_str = str(ch_text_result)
@@ -212,14 +249,14 @@ class TestCHTextResult(unittest.TestCase):
 
         plain_text = CHText.strip_colors(print_result)
         self.assertNotEqual(plain_text, print_result)
-        self.assertIn("None", plain_text)
+        self.assertIn("null", plain_text)
 
     def test_iterating(self):
         """It should also be possible to iterate the result line by line.
 
         Even though the rusult consists of a single line.
         """
-        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        ch_text_result = pp.format({"a": None, "b": 17, "c": "d"})
         colored_str = str(ch_text_result)
 
         s = str(CHText("\n").join(l for l in ch_text_result))
@@ -227,7 +264,7 @@ class TestCHTextResult(unittest.TestCase):
 
     def test_concatenation(self):
         """Test concatenation operations"""
-        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        ch_text_result = pp.format({"a": None, "b": 17, "c": "d"})
         colored_str = str(ch_text_result)
 
         t = "text " + ch_text_result
@@ -256,7 +293,7 @@ class TestCHTextResult(unittest.TestCase):
 
     def test_immutable(self):
         """CHTextResult behaves as immutable object."""
-        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        ch_text_result = pp.format({"a": None, "b": 17, "c": "d"})
 
         orig_ref = ch_text_result
 
@@ -266,7 +303,7 @@ class TestCHTextResult(unittest.TestCase):
 
     def test_slicing(self):
         """Test slicing"""
-        ch_text_result = pp({"a": None, "b": 17, "c": "d"})
+        ch_text_result = pp.format({"a": None, "b": 17, "c": "d"})
 
         substring = ch_text_result[1:-1]
         self.assertEqual(len(substring), len(ch_text_result) - 2)
@@ -276,7 +313,7 @@ class TestCHTextResult(unittest.TestCase):
 
     def test_formatting(self):
         """Test string-formatting operations"""
-        t = pp([1234567890])  # colored "[1234567890]"
+        t = pp.format([1234567890])  # colored "[1234567890]"
 
         s1 = f"{t:10}"
         self.assertEqual(
@@ -290,7 +327,7 @@ class TestCHTextResult(unittest.TestCase):
 
     def test_fixed_len_method(self):
         """Make sure CHTextResult.fixed_len method exists and works."""
-        t = pp([1234567890])  # colored "[1234567890]"
+        t = pp.format([1234567890])  # colored "[1234567890]"
 
         result = t.fixed_len(5)
         self.assertEqual(len(result), 5)
@@ -302,8 +339,8 @@ class TestCHTextResult(unittest.TestCase):
 
     def test_equality(self):
         """Test equality checks."""
-        t1 = pp({"a": None, "b": 17, "c": "d"})
-        t2 = pp({"a": None, "b": 17, "c": "d"})
+        t1 = pp.format({"a": None, "b": 17, "c": "d"})
+        t2 = pp.format({"a": None, "b": 17, "c": "d"})
 
         self.assertEqual(t1, t1)
         self.assertEqual(t1, t2)
@@ -339,6 +376,10 @@ class TestSimplePPObj(unittest.TestCase):
             Alternatively it is possible to implement 'gen_ch_lines' method.
             """
             return palette.color_1(self.val1) + palette.color_2(self.val2)
+
+        def gen_ch_lines(self, palette):
+            """ToDo: make this method not required"""
+            yield self.make_ch_text(palette)
 
     def test_simple_ppobj(self):
         """Test behavior of a simple PPObj."""
@@ -417,6 +458,15 @@ class TestSimplePPObj(unittest.TestCase):
             chtext,
             ColorFmt("CYAN")("aaa") + ColorFmt("MAGENTA")("bbb"),
         )
+
+    def test_printing_ppobj_with_pp(self):
+        """Test that pp can print not only simple python structures, but also PPObj."""
+
+        obj = self.SimplePPObj("aa", "bb")
+
+        ct = pp.format(True, obj)
+
+        self.assertEqual(ct.plain_text(), "true aabb")
 
 
 #########################

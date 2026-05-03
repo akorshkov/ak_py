@@ -1,8 +1,11 @@
 """Methods for pretty-printing tables and json-like python objects.
 
 Classes provided by this module:
-- PrettyPrinter - pretty-printer of json-like python structures
-- PPObj - base class for objects which have colored text representation
+- PPStdFormatter - produces pretty-printable representations of json-like python structures
+- PPObj - base class for objects which have colored text representation.
+    my_ppobj.ch_text(...) -> CHTextResult
+    Arguments are optional palette context; result can be printed/used as CHText, or
+    used as CHText lines generator.
 - PPWrap - Pretty-printable wrapper to be used in interactive console
 - PPTable - pretty-printable 2-D tables
 - PPRecordFmt - makes line of colored text from a record. Is used by PPTable.
@@ -20,6 +23,7 @@ Classes provided by this module:
 # - ReprStructure   - RecordStructure + columns. Described by 'fmt'
 
 
+import sys
 from typing import Iterator
 from numbers import Number
 from dataclasses import dataclass
@@ -152,30 +156,36 @@ class CHTextFixedListResult(CHTextResult):
 #########################
 # generic pretty-printing
 
-class PrettyPrinter(PaletteUser):
-    """Print json-like python objects with color highliting."""
+class PPStdFormatter(PaletteUser):
+    """Produces pretty-printable (colored) representation of json-like python objects."""
 
-    _CONSTANTS_LITERALS = (
-        {True: 'True', False: 'False', None: 'None'},
-        {True: 'true', False: 'false', None: 'null'},
-    )
+    _CONSTANTS_LITERALS = {
+        "py": {True: 'True', False: 'False', None: 'None'},
+        "json": {True: 'true', False: 'false', None: 'null'},
+    }
 
     class PPPalette(Palette):
-        """Palette to be used by PrettyPrinter."""
+        """Palette to be used by PPStdFormatter."""
         name = ConfColor("NAME")
         number = ConfColor("NUMBER")
         keyword = ConfColor("KEYWORD")
 
     PALETTE_CLASS = PPPalette
 
-    def __init__(self, *, fmt_json=False):
-        """Create PrettyPrinter for printing json-like objects.
+    def __init__(self, *, style="json"):
+        """Create PPStdFormatter for formatting json-like objects.
 
         Arguments:
-        - fmt_json: if True generate output in json form, else - in python form.
-            The difference is in value of constans only ('true' vs 'True', etc.)
+        - style: prossible values are "json" and "py". Affects only
+            the way constants are printed ('true' vs 'True', etc.)
         """
-        self._consts = self._CONSTANTS_LITERALS[1 if fmt_json else 0]
+        consts = self._CONSTANTS_LITERALS.get(style)
+        if consts is None:
+            raise ValueError(
+                f"unexpected value '{style}' of 'style' argument. "
+                f"Valid values: {self._CONSTANTS_LITERALS.keys()}")
+
+        self._consts = consts
 
     def __call__(
         self, obj_to_print, *,
@@ -188,7 +198,7 @@ class PrettyPrinter(PaletteUser):
 
         Arguments:
         - obj_to_print: object to print
-        - palette: optional PrettyPrinter.PPPalette-derived class or an object of
+        - palette: optional PPStdFormatter.PPPalette-derived class or an object of
             such class, contains colors to be used
         - no_color: optional bool; True indicates that produced text will contain
             no colors
@@ -486,8 +496,156 @@ class PPObj(PaletteUser):
         raise NotImplementedError(f"'gen_ch_lines' not implemented in '{type(self)}'")
 
 
-# ready to use PrettyPrinter with default configuration
-pp = PrettyPrinter()
+class _MultiObjCHTextResult(CHTextResult):
+    # Pretty-print several objects to CHTextResult
+
+    def __init__(
+            self, *objs,
+            palette=None, no_color=False, compound_palette=None, shade_name=None,
+            style="json", sep=' ',
+    ):
+        super().__init__()
+        self.objs = objs
+        self.no_color = no_color
+        self.compound_palette = compound_palette
+        self.shade_name = shade_name
+        self.style = style
+
+        self.dflt_formatter = PPStdFormatter(style=style)
+        self.simple_obj_palette = self.dflt_formatter.make_palette(
+            palette=palette,
+            no_color=self.no_color,
+            compound_palette=self.compound_palette,
+            shade_name=self.shade_name)
+        # None is later used as an indicator of new line
+        self.sep = self.simple_obj_palette.text(sep) if sep is not None else None
+
+    def _make_ch_text(self) -> CHText:
+        # implementation of base class method
+        return CHText("\n").join(self._make_ch_lines_iter())
+
+    def _make_ch_lines_iter(self) -> Iterator[CHText]:
+        # implementation of base class method
+        cur_line = None
+        for item in self._iter_print_objects_ch_lines():
+            if item is None: # indicator of new line
+                yield CHText() if cur_line is None else cur_line
+                cur_line = None
+                continue
+            # item is CHText
+            if cur_line is None:
+                cur_line = item
+            else:
+                cur_line += item
+        if cur_line is not None:
+            yield cur_line
+
+    def _iter_print_objects_ch_lines(self) -> Iterator[CHText]:
+        # provide chunks of colored text to _make_ch_lines_iter, which will combine these
+        # chunks to lines of the combined pretty-printed text.
+        # yields lines of pretty-printed self.objs, separators between objects
+        # and new-line indicators (None objects)
+        is_first_obj = True
+        for obj in self.objs:
+            if is_first_obj:
+                is_first_obj = False
+            else:
+                yield self.sep
+
+            if isinstance(obj, PPObj):
+                obj_lines_iter = obj.ch_text(
+                    no_color=self.no_color, compound_palette=self.compound_palette,
+                    shade_name=self.shade_name)
+            else:
+                obj_lines_iter = self.dflt_formatter(obj, palette=self.simple_obj_palette)
+
+            is_first_line = True
+            for line in obj_lines_iter:
+                if is_first_line:
+                    is_first_line = False
+                else:
+                    yield None
+                yield line
+
+
+class PPCommand:
+    """Callable object for pretty-printing.
+
+    Arguments are similar to arguments of the standard 'print' command.
+    """
+    def __init__(
+            self, *,
+            palette=None, no_color=False, compound_palette=None, shade_name=None,
+            style="json",
+    ):
+        """Constructor of PPCommand.
+
+        Arguments:
+        - palette: (optional) Palette to be used to print json-like structures (or other
+            objects not derived from PPObj)
+        - no_color, compound_palette, shade_name: optional context for creating palettes
+            for printing PPObj-derived objects. For more detailed description of these
+            arguments check PPObj.ch_text doc.
+        - style: 'json' (default) or 'py'; affects the way some constants are printed;
+            check doc of PPStdFormatter for more details.
+        """
+        self._palette = palette
+        self._no_color = no_color
+        self._compound_palette = compound_palette
+        self._shade_name = shade_name
+        self._style = style
+
+    def clone(self, *,
+              palette=None, no_color=False, compound_palette=None, shade_name=None,
+              style=None):
+        """Return clone of self with overridden settings."""
+        return PPCommand(
+                palette=palette if palette is not None else self._palette,
+                no_color=no_color if no_color is not None else self._no_color,
+                compound_palette=
+                    compound_palette if compound_palette is not None
+                    else self._compound_palette,
+                shade_name=shade_name if shade_name is not None else self._shade_name,
+                style=style if style is not None else self._style,
+        )
+
+    def __call__(self, *args, sep=' ', end='\n', file=None, flush=False):
+        """Pretty-Print given args.
+
+        Other arguments have same meaning as arguments of 'print'.
+        """
+
+        is_first_line = True
+        for l in self.format(*args, sep=sep):
+            if is_first_line:
+                is_first_line = False
+            else:
+                print("\n", file=file, end="")
+            print(l, file=file, end="")
+
+        if end:
+            print(end, file=file, end="")
+
+        (file if file is not None else sys.stdout).flush()
+
+    def format(self, *args, sep=' ') -> CHTextResult:
+        """*args -> colored text (CHTextResult)
+
+        Similar to __call__, but instead of printing out returns the result.
+        """
+        return _MultiObjCHTextResult(
+            *args,
+            palette=self._palette,
+            no_color=self._no_color,
+            compound_palette=self._compound_palette,
+            shade_name=self._shade_name,
+            style=self._style,
+            sep=sep)
+
+
+# Ready to use command which can be used to pretty-print json-like python objects
+# Argumnts are similar to arguments of standard 'print' function
+pp = PPCommand()
 
 
 #########################
@@ -511,7 +669,7 @@ class PPWrap:
     """
 
     __slots__ = ('r', )
-    _PPRINTER = PrettyPrinter()
+    _PPRINTER = PPStdFormatter(style="py")
 
     def __init__(self, obj_to_print):
         self.r = obj_to_print
@@ -632,7 +790,7 @@ class FieldType(PaletteUser):
             raise ValueError(
                 f"{type(self)} field type does not support format modifiers. "
                 f"Specified fmt_modifier: '{fmt_modifier}'")
-        if PrettyPrinter.is_keyword_value(value):
+        if PPStdFormatter.is_keyword_value(value):
             color_fmt = cell_plt.get_color('keyword', *connotations)
             align = self.ALIGN_RIGHT
         elif isinstance(value, Number):
