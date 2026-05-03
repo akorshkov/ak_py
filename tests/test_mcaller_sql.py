@@ -2,13 +2,12 @@
 
 import unittest
 
-import sqlite3
-
 from ak.hdoc import HCommand
 from ak.mcaller_sql import MCallerSql, SqlMethodT, method_sql
 from ak.ppobj import FieldType, PPTable
 
 from .test_ppobj import verify_table_format
+from .db_test_utils import using_memory_db
 
 
 class TestMCallerSQL(unittest.TestCase):
@@ -31,9 +30,8 @@ class TestMCallerSQL(unittest.TestCase):
             db_conn = self.get_sql_conn()
             return self._MTD_SQL_GET_ACCOUNT.one(db_conn, id=account_id)
 
-    def _make_sample_db_accts(self):
-        # create sample sqlite3 db for tests
-        db = sqlite3.connect(":memory:")
+    def _init_sample_db_accts(self, db):
+        # populate sample sqlite3 db for tests
         cur = db.cursor()
         cur.execute(
             "CREATE TABLE accounts "
@@ -51,12 +49,11 @@ class TestMCallerSQL(unittest.TestCase):
         )
         db.commit()
 
-        return db
-
-    def test_sql_method_no_component(self):
+    @using_memory_db
+    def test_sql_method_no_component(self, db):
         """Test scenarios when component property is not used."""
         # create and populate database
-        db = self._make_sample_db_accts()
+        self._init_sample_db_accts(db)
 
         h = HCommand()._make_help_text
 
@@ -83,7 +80,8 @@ class TestMCallerSQL(unittest.TestCase):
 
         db.close()
 
-    def test_sql_select_with_joins(self):
+    @using_memory_db
+    def test_sql_select_with_joins(self, db):
         """Test behavior SqlMethodT with request with joins."""
 
         class MySqlCallerSingleConn(self.MethodsCollection1):
@@ -100,7 +98,7 @@ class TestMCallerSQL(unittest.TestCase):
                 db_conn = self.get_sql_conn()
                 return self._MTD_SQL_GET_USERS.list(db_conn)
 
-        db = self._make_sample_db_accts()
+        self._init_sample_db_accts(db)
         my_sql_caller = MySqlCallerSingleConn(db)
 
         users = my_sql_caller.get_users()
@@ -119,7 +117,8 @@ class TestMCallerSQL(unittest.TestCase):
 
         db.close()
 
-    def test_sql_select_with_custom_format(self):
+    @using_memory_db
+    def test_sql_select_with_custom_format(self, db):
         """Test behavior SqlMethodT with not-default format."""
 
         # 0. prepare custom field type
@@ -153,7 +152,7 @@ class TestMCallerSQL(unittest.TestCase):
                 db_conn = self.get_sql_conn()
                 return self._MTD_SQL_GET_USERS.list(db_conn)
 
-        db = self._make_sample_db_accts()
+        self._init_sample_db_accts(db)
         my_sql_caller = MySqlCallerSingleConn(db)
 
         users = my_sql_caller.get_users()
@@ -175,10 +174,11 @@ class TestMCallerSQL(unittest.TestCase):
 
         db.close()
 
-    def test_arbitrary_sql_call(self):
+    @using_memory_db
+    def test_arbitrary_sql_call(self, db):
         """MCallerSql should can execute arbitary 'manual' sql requests."""
         # create and populate database
-        db = self._make_sample_db_accts()
+        self._init_sample_db_accts(db)
 
         # this MCallerSql does not wrap any methods, but can execute arbitrary
         # sql requests and return results as a PPTable

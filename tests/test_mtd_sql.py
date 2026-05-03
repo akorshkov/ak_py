@@ -2,9 +2,10 @@
 
 import unittest
 from collections import namedtuple
-import sqlite3
 
 from ak.mtd_sql import SqlMethod
+
+from .db_test_utils import using_memory_db
 
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
@@ -13,15 +14,14 @@ from ak.mtd_sql import SqlMethod
 class TestSQLMethod(unittest.TestCase):
     """Test SqlMethod class."""
 
-    def _make_sample_db_accounts(self, records=None):
-        # create and populate sample sqlite db to use in tests
+    def _init_sample_db_accounts(self, db, records=None):
+        # populate sample sqlite db to use in tests
         if records is None:
             records = [
                 (1, "MI6", 7),
                 (2, "MathLab", 42),
             ]
 
-        db = sqlite3.connect(":memory:")
         cur = db.cursor()
         cur.execute(
             """CREATE TABLE accounts
@@ -33,17 +33,14 @@ class TestSQLMethod(unittest.TestCase):
             )
         db.commit()
 
-        return db
-
-    def _make_sample_db_users(self, records=None):
-        # create and populate sample sqlite db to use in tests
+    def _init_sample_db_users(self, db, records=None):
+        # populate sample sqlite db to use in tests
         if records is None:
             records = [
                 (1, "James", 1),
                 (2, "Arnold", 1),
             ]
 
-        db = sqlite3.connect(":memory:")
         cur = db.cursor()
         cur.execute(
             """CREATE TABLE users
@@ -55,12 +52,11 @@ class TestSQLMethod(unittest.TestCase):
             )
         db.commit()
 
-        return db
-
-    def test_sql_select_single_record(self):
+    @using_memory_db
+    def test_sql_select_single_record(self, db):
         """Test sql-select method. Single record is expected to be selected."""
 
-        db = self._make_sample_db_accounts()
+        self._init_sample_db_accounts(db)
 
         # test method which selects one record
         account_by_id = SqlMethod(
@@ -97,10 +93,11 @@ class TestSQLMethod(unittest.TestCase):
 
         db.close()
 
-    def test_sql_select_multiple_records(self):
+    @using_memory_db
+    def test_sql_select_multiple_records(self, db):
         """Test sql select when there are multiple or no records to return."""
 
-        db = self._make_sample_db_users()
+        self._init_sample_db_users(db)
 
         get_users_by_account = SqlMethod(
             "SELECT id, name FROM users",
@@ -129,9 +126,10 @@ class TestSQLMethod(unittest.TestCase):
 
         db.close()
 
-    def test_as_scalar_option(self):
+    @using_memory_db
+    def test_as_scalar_option(self, db):
         """Test SqlMethod as_scalars option."""
-        db = self._make_sample_db_users()
+        self._init_sample_db_users(db)
 
         # 1. check method, which returns records by default
         get_users = SqlMethod(
@@ -174,10 +172,11 @@ class TestSQLMethod(unittest.TestCase):
 
         db.close()
 
-    def test_arguments_processing(self):
+    @using_memory_db
+    def test_arguments_processing(self, db):
         """Test test arguments and keyword arguments processing."""
 
-        db = self._make_sample_db_users()
+        self._init_sample_db_users(db)
 
         get_users_ids = SqlMethod(
             "SELECT id FROM users ",
@@ -266,10 +265,12 @@ class TestSQLMethod(unittest.TestCase):
 
         db.close()
 
-    def test_complex_conditions(self):
+    @using_memory_db
+    def test_complex_conditions(self, db):
         """Test SqlMethod._or and SqlMethod._and conditions."""
 
-        db = self._make_sample_db_users(
+        self._init_sample_db_users(
+            db,
             [
                 (1, "James", 1),
                 (2, "Arnold", 1),
@@ -326,10 +327,12 @@ class TestSQLMethod(unittest.TestCase):
 
         db.close()
 
-    def test_ignore_condition_value(self):
+    @using_memory_db
+    def test_ignore_condition_value(self, db):
         """Test special IGNORE value of sql condition."""
 
-        db = self._make_sample_db_users(
+        self._init_sample_db_users(
+            db,
             [
                 #id, name, account_id
                 (1, "James", 1),
@@ -357,10 +360,12 @@ class TestSQLMethod(unittest.TestCase):
             {1, 2, 3, 4, 5}, set(recs_ids),
             "the 'name=...' conditions should be ignored")
 
-    def test_aggregation(self):
+    @using_memory_db
+    def test_aggregation(self, db):
         """Test requests with 'GROUP BY' clause."""
 
-        db = self._make_sample_db_users(
+        self._init_sample_db_users(
+            db,
             [
                 (1, "James", 1),
                 (2, "Arnold", 1),
