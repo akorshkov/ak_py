@@ -377,10 +377,6 @@ class TestSimplePPObj(unittest.TestCase):
             """
             return palette.color_1(self.val1) + palette.color_2(self.val2)
 
-        def gen_ch_lines(self, palette):
-            """ToDo: make this method not required"""
-            yield self.make_ch_text(palette)
-
     def test_simple_ppobj(self):
         """Test behavior of a simple PPObj."""
 
@@ -493,6 +489,65 @@ class TestPPObjWithDefaultPalette(unittest.TestCase):
 
         self.assertNotEqual(colored_str, plaintext)
         self.assertEqual(plaintext, "test object: 175")
+
+
+class TestPPObjWithOnlyOneCHTextMethodImplemented(unittest.TestCase):
+    """It should be sufficient to implement only one of 'make_ch_text' or 'gen_ch_lines'"""
+
+    class PPObjWithWholeText(PPObj):
+        """PPObj which does not implement 'gen_ch_lines'."""
+        def __init__(self, name, status):
+            self.name = name
+            self.status = status
+
+        def make_ch_text(self, palette):
+            """Method which produces color representaion of self."""
+            return f"{palette.name(self.name)}: {palette.keyword(str(self.status))}"
+
+    class PPObjWithByLineText(PPObj):
+        """PPObj which does not implement 'make_ch_text'."""
+        def __init__(self, name, status):
+            self.name = name
+            self.status = status
+
+        def gen_ch_lines(self, palette):
+            """Method which produces color representaion of self."""
+            yield f"{palette.name(self.name)}: {palette.keyword(str(self.status))}"
+
+    class PPObjWithNotImplementedGenMethods(PPObj):
+        """PPObj which does not implement 'make_ch_text'."""
+        def __init__(self, name, status):
+            self.name = name
+            self.status = status
+
+    def test_ppobjs_with_different_gen_text_methods(self):
+        """Test PPObj with different implemented methods."""
+
+        obj1 = self.PPObjWithWholeText("Arnold", 17)
+        obj2 = self.PPObjWithByLineText("Arnold", 17)
+
+        self.assertEqual(str(obj1.ch_text()), str(obj2.ch_text()))
+
+        lines1 = [str(line) for line in obj1.ch_text()]
+        lines2 = [str(line) for line in obj2.ch_text()]
+
+        self.assertEqual(lines1, lines2)
+
+    def test_bad_ppobj(self):
+        """Check behavior of obj with not imlemented text generation methods."""
+        obj = self.PPObjWithNotImplementedGenMethods("Arnold", 17)
+
+        with self.assertRaises(NotImplementedError) as exc:
+            str(obj.ch_text())
+
+        err_msg = str(exc.exception)
+        self.assertIn("PPObjWithNotImplementedGenMethods", err_msg)
+
+        with self.assertRaises(NotImplementedError) as exc:
+            _ = [t for t in obj.ch_text()]
+
+        err_msg = str(exc.exception)
+        self.assertIn("PPObjWithNotImplementedGenMethods", err_msg)
 
 
 #########################

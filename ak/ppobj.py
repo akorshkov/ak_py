@@ -120,18 +120,56 @@ class CHTextPPobjResult(CHTextResult):
 
     Implementation of CHTextResult when the source of CHText is PPObj.
     """
-    __slots__ = 'ppobj', 'cp'
+    __slots__ = 'ppobj', 'cp', '_ppbj_cls_name'
 
     def __init__(self, ppobj, cp):
         self.ppobj = ppobj
         self.cp = cp
+
+        # to be used in the procedure of detection of not-implemented methods
+        self._ppbj_cls_name = f" '{type(self.ppobj)}'"
+
         super().__init__()
 
     def _make_ch_text(self) -> CHText:
-        return self.ppobj.make_ch_text(self.cp)
+        # try to make the CHText using either self.ppobj.make_ch_text
+        # or self.ppobj.gen_ch_lines
+        try:
+            return self.ppobj.make_ch_text(self.cp)
+        except NotImplementedError as err:
+            if any(t not in str(err) for t in['make_ch_text', self._ppbj_cls_name]):
+                raise
+
+        try:
+            return CHText("\n").join(self.ppobj.gen_ch_lines(self.cp))
+        except NotImplementedError as err:
+            if any(t not in str(err) for t in['gen_ch_lines', self._ppbj_cls_name]):
+                raise
+
+        raise NotImplementedError(
+            f"Neither 'make_ch_text' nor 'gen_ch_lines' method implemented "
+            f"in '{type(self.ppobj)}'")
 
     def _make_ch_lines_iter(self) -> Iterator[CHText]:
-        return self.ppobj.gen_ch_lines(self.cp)
+        # try to generate CHText line using either self.ppobj.gen_ch_lines
+        # or self.ppobj.make_ch_text
+        try:
+            yield from self.ppobj.gen_ch_lines(self.cp)
+            return
+        except NotImplementedError as err:
+            if any(t not in str(err) for t in['gen_ch_lines', self._ppbj_cls_name]):
+                raise
+
+        try:
+            yield self.ppobj.make_ch_text(self.cp)
+            return
+        except NotImplementedError as err:
+            if any(t not in str(err) for t in['make_ch_text', self._ppbj_cls_name]):
+                raise
+
+        raise NotImplementedError(
+            f"Neither 'gen_ch_lines' nor 'make_ch_text' method implemented "
+            f"in '{type(self.ppobj)}'")
 
 
 class CHTextFixedListResult(CHTextResult):
@@ -482,13 +520,6 @@ class PPObj(PaletteUser):
 
     def make_ch_text(self, cp: Palette) -> CHText:
         """Return CHText - colored representation of self"""
-        try:
-            lines = self.gen_ch_lines(cp)
-            return CHText("\n").join(lines)
-        except NotImplementedError as err:
-            if 'gen_ch_lines' not in str(err):
-                raise
-
         raise NotImplementedError(f"'make_ch_text' not implemented in '{type(self)}'")
 
     def gen_ch_lines(self, cp: Palette) -> Iterator[CHText]:
