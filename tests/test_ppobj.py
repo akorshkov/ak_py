@@ -469,6 +469,32 @@ class TestSimplePPObj(unittest.TestCase):
         self.assertEqual(ct.plain_text(), "true aabb")
 
 
+class TestPPObjWithDefaultPalette(unittest.TestCase):
+    """Test simpliest PPObj which uses default palette."""
+
+    class SimplestPPObj(PPObj):
+        """Simpliest PPObj which uses default palette."""
+        # PALETTE_CLASS - not explicitely specified
+        # In this case the same palette is used as used by PPStdFormatter
+
+        def __init__(self, name, status):
+            self.name = name
+            self.status = status
+
+        def make_ch_text(self, palette):
+            """Method which produces color representaion of self."""
+            return f"{palette.name(self.name)}: {palette.keyword(str(self.status))}"
+
+    def test_ppobj_dflt_palette(self):
+        """PPObj can produce ch_text even though PALETTE_CLASS is not specified in class."""
+        obj = self.SimplestPPObj("test object", 175)
+        colored_str = str(obj.ch_text())
+        plaintext = CHText.strip_colors(colored_str)
+
+        self.assertNotEqual(colored_str, plaintext)
+        self.assertEqual(plaintext, "test object: 175")
+
+
 #########################
 # Test PPTable
 

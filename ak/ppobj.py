@@ -455,6 +455,8 @@ class PPObj(PaletteUser):
     (See PaletteUser class documentation for more details).
     """
 
+    PALETTE_CLASS = PPStdFormatter.PPPalette
+
     def __str__(self):
         return str(self.ch_text())
 
