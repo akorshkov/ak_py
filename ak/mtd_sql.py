@@ -29,7 +29,7 @@ class SqlFilterCondition:
 
     IGNORE = object()
 
-    # to be used when constructing WHERE cluase
+    # to be used when constructing WHERE clause
     _SQL_CLAUSES = {
         PLACEHOLDER_TYPE_QUESTION: {
             'PLACEHOLDER': '?',
@@ -62,6 +62,11 @@ class SqlFilterCondition:
             '<=': ' <= %s',
         },
     }
+
+    # Auxiliary structure which helps to guess type of sql requests placeholders.
+    # It should not belong here.
+    # If any of indictors is str(type(conn)) - PLACEHOLDER_TYPE_PERCENT_S should be used
+    _TYPE_PERCENT_S_INDICATORS = ['mysql.connector', 'MySQLdb']
 
     @classmethod
     def make(cls, src_obj):
@@ -293,7 +298,7 @@ class SqlMethod:
         # autodetect sql placeholders format
         # probably there shoud be a better way. temporary solution.
         conn_type_name = str(type(conn))
-        if 'mysql.connector' in conn_type_name:
+        if any(s in conn_type_name for s in SqlFilterCondition._TYPE_PERCENT_S_INDICATORS):
             placeholders_type = SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
         else:
             placeholders_type = SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
