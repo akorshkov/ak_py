@@ -25,13 +25,13 @@ logger = logging.getLogger(__name__)
 class SqlFilterCondition:
     """Contains information required to construct condition for WHERE clause"""
 
-    PLACEHOLDER_TYPE_QUESTION, PLACEHOLDER_TYPE_PERCENT_S = 0, 1
+    PARAMSTYLE_QMARK, PARAMSTYLE_FORMAT = 'qmark', 'format'
 
     IGNORE = object()
 
     # to be used when constructing WHERE clause
     _SQL_CLAUSES = {
-        PLACEHOLDER_TYPE_QUESTION: {
+        PARAMSTYLE_QMARK: {
             'PLACEHOLDER': '?',
             '=': ' = ?',
             '!=': ' != ?',
@@ -46,7 +46,7 @@ class SqlFilterCondition:
             '>=': ' >= ?',
             '<=': ' <= ?',
         },
-        PLACEHOLDER_TYPE_PERCENT_S: {
+        PARAMSTYLE_FORMAT: {
             'PLACEHOLDER': '%s',
             '=': ' = %s',
             '!=': ' != %s',
@@ -62,11 +62,6 @@ class SqlFilterCondition:
             '<=': ' <= %s',
         },
     }
-
-    # Auxiliary structure which helps to guess type of sql requests placeholders.
-    # It should not belong here.
-    # If any of indictors is str(type(conn)) - PLACEHOLDER_TYPE_PERCENT_S should be used
-    _TYPE_PERCENT_S_INDICATORS = ['mysql.connector', 'MySQLdb']
 
     @classmethod
     def make(cls, src_obj):
@@ -103,7 +98,7 @@ class SqlFilterCondition:
         """ !!! """
         return False
 
-    def make_text_update_values(self, values_list, placeholders_type) -> str:
+    def make_text_update_values(self, values_list, paramstyle) -> str:
         """Prepare the part of WHERE condition.
 
         This method returns a string corresponding to the part of the WHERE clause
@@ -111,9 +106,9 @@ class SqlFilterCondition:
 
         Arguments:
         - values_list: the list to append actual arguments values to
-        - placeholders_type: one of
-            SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
-            SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
+        - paramstyle: one of
+            SqlFilterCondition.PARAMSTYLE_QMARK
+            SqlFilterCondition.PARAMSTYLE_FORMAT
 
         Returns sql clause string and appends arguments values to 'values_list'
         """
@@ -171,9 +166,9 @@ class SqlFieldValCondition(SqlFilterCondition):
     def is_ignored(self) -> bool:
         return self.value is self.IGNORE
 
-    def make_text_update_values(self, values_list, placeholders_type) -> str:
+    def make_text_update_values(self, values_list, paramstyle) -> str:
         assert isinstance(values_list, list)
-        sql_clauses = self._SQL_CLAUSES[placeholders_type]
+        sql_clauses = self._SQL_CLAUSES[paramstyle]
         if self.field_name is None:
             sql = self.op
         elif self.op in ('=', '!=', '>', '<', '>=', '<='):
@@ -209,12 +204,12 @@ class SqlOrCondition(SqlFilterCondition):
         self.operands = [SqlFilterCondition.make(arg) for arg in args]
         self.operands = [x for x in self.operands if not x.is_ignored()]
 
-    def make_text_update_values(self, values_list, placeholders_type) -> str:
+    def make_text_update_values(self, values_list, paramstyle) -> str:
         if not self.operands:
             return "FALSE"
         result = "("
         result += " OR ".join(
-            op.make_text_update_values(values_list, placeholders_type)
+            op.make_text_update_values(values_list, paramstyle)
             for op in self.operands)
         result += ")"
         return result
@@ -230,12 +225,12 @@ class SqlAndCondition(SqlFilterCondition):
         self.operands = [SqlFilterCondition.make(arg) for arg in args]
         self.operands = [x for x in self.operands if not x.is_ignored()]
 
-    def make_text_update_values(self, values_list, placeholders_type) -> str:
+    def make_text_update_values(self, values_list, paramstyle) -> str:
         if not self.operands:
             return "TRUE"
         result = "("
         result += " AND ".join(
-            op.make_text_update_values(values_list, placeholders_type)
+            op.make_text_update_values(values_list, paramstyle)
             for op in self.operands)
         result += ")"
         return result
@@ -258,6 +253,14 @@ class SqlMethod:
     _or = SqlOrCondition
     _and = SqlAndCondition
     IGNORE = SqlFilterCondition.IGNORE
+
+    PARAMSTYLE_QMARK, PARAMSTYLE_FORMAT = (
+            SqlFilterCondition.PARAMSTYLE_QMARK, SqlFilterCondition.PARAMSTYLE_FORMAT)
+
+    # Auxiliary structure which helps to guess paramstyle which should be used with
+    # a database connection.
+    # If any of indictors is str(type(conn)) - PARAMSTYLE_FORMAT should be used
+    _PARAMSTYLE_FORMAT_INDICATOR = ['mysql.connector', 'MySQLdb']
 
     def __init__(self, sql_select_from, *,
                  group_by=None, order_by=None, record_name=None, as_scalars=False,
@@ -295,13 +298,7 @@ class SqlMethod:
     def _execute(self, conn, args, kwargs):
         # Execute sql request, and yield result records (or scalars)
 
-        # autodetect sql placeholders format
-        # probably there shoud be a better way. temporary solution.
-        conn_type_name = str(type(conn))
-        if any(s in conn_type_name for s in SqlFilterCondition._TYPE_PERCENT_S_INDICATORS):
-            placeholders_type = SqlFilterCondition.PLACEHOLDER_TYPE_PERCENT_S
-        else:
-            placeholders_type = SqlFilterCondition.PLACEHOLDER_TYPE_QUESTION
+        paramstyle = self.detect_paramstyle(conn)
 
         order_by_clause = kwargs.pop('_order_by', self.default_order_by)
         as_scalars = kwargs.pop('_as_scalars', self.default_as_scalars)
@@ -318,7 +315,7 @@ class SqlMethod:
         req_params = []
         if filters:
             sql += " WHERE " + " AND ".join(
-                f.make_text_update_values(req_params, placeholders_type)
+                f.make_text_update_values(req_params, paramstyle)
                 for f in filters)
         if self.group_by:
             sql += " GROUP BY " + self.group_by
@@ -350,6 +347,40 @@ class SqlMethod:
             else:
                 for row in cur:
                     yield self.rec_type._make(row)  # namedtuple way
+
+    @classmethod
+    def detect_paramstyle(cls, conn):
+        """Detect paramstyle of the database connection.
+
+        (paramstyle defines format of query parameters placeholders)
+
+        Note: ak.mtd_sql supports two paramstyles: 'qmark' and 'format'.
+        """
+        # For some reason this information is not available in the db connection object.
+        # It is available only in the module (?) which creates connection. For example:
+        # import sqlite3
+        # sqlite3.paramstyle  -> 'qmark'
+        #
+        # Not sure how robust this method is.
+        #
+        # If the 'conn' argument is a wrapper, it is not even possible to detect
+        # the module corresponding to the conn object. In this case the
+        # paramstyle should be explicitely present in it:
+        paramstyle = getattr(conn, '_ak_paramstyle', None)
+        if paramstyle is not None:
+            assert paramstyle in SqlFilterCondition._SQL_CLAUSES, (
+                f"db connection object {type(conn)} has unexpected {_ak_paramstyle=}. "
+                f"Valid values are: {SqlFilterCondition._SQL_CLAUSES.keys()}")
+            return paramstyle
+
+        # do autodetect paramstyle by type of the connection
+        conn_type_name = str(type(conn))
+        if any(s in conn_type_name for s in cls._PARAMSTYLE_FORMAT_INDICATOR):
+            paramstyle = cls.PARAMSTYLE_FORMAT
+        else:
+            paramstyle = cls.PARAMSTYLE_QMARK
+
+        return paramstyle
 
     def _init_record_type(self, cur):
         # fill self.fields and self.rec_type during the first sql request
