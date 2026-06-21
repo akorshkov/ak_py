@@ -771,10 +771,10 @@ class FieldType(PaletteUser):
             'FIELD.KEYWORD': "KEYWORD",
             'FIELD.WARN': "WARN",
 
-            'FIELD.CONN_NOTE': "underline=DBL(GREEN)",
-            'FIELD.CONN_WARN': "underline=SINGLE(5,1,1)",
-            'FIELD.CONN_ERR': "underline=CURL(RED)",
-            'FIELD.CONN_DELETED': "crossed",
+            'FIELD.CONN_NOTE': "CONNOTATION.NOTE",
+            'FIELD.CONN_WARN': "CONNOTATION.WARN",
+            'FIELD.CONN_ERR': "CONNOTATION.ERR",
+            'FIELD.CONN_DELETED': "CONNOTATION.DELETED",
         }
 
         number = ConfColor('FIELD.NUMBER')

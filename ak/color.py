@@ -1353,6 +1353,11 @@ class ColorsConfig:
         "OK": "GREEN:bold",
         "WARN": "RED",
         "ERROR": "RED:bold",
+
+        "CONNOTATION.NOTE": "underline=DBL(GREEN)",
+        "CONNOTATION.WARN": "underline=SINGLE(5,1,1)",
+        "CONNOTATION.ERR": "underline=CURL(RED)",
+        "CONNOTATION.DELETED": "crossed",
     }
 
     __slots__ = (
@@ -1762,7 +1767,7 @@ class Palette(metaclass=_PaletteMeta):
             "ENUM.ID": "GREEN:bold",
             "ENUM.NAME": "KEYWORD",
 
-            "CONNOTATION.WARN": "underline=DBL(RED)
+            "CONNOTATION.WARN": "underline=DBL(RED)"
         }
 
         # Declarations of the formatters present in this Palette
@@ -1770,7 +1775,7 @@ class Palette(metaclass=_PaletteMeta):
         name = ConfColor("ENUM.NAME")
 
         # connotations are usual formatters
-        warn_conn = ConfColor("CONNOTATION.WARN")
+        conn_warn = ConfColor("CONNOTATION.WARN")
 
     ...
 
@@ -2028,6 +2033,11 @@ class GlobalPalette(Palette):
     ok = ConfColor("OK")
     warn = ConfColor("WARN")
     error = ConfColor("ERROR")
+
+    conn_note = ConfColor("CONNOTATION.NOTE")
+    conn_warn = ConfColor("CONNOTATION.WARN")
+    conn_err = ConfColor("CONNOTATION.ERR")
+    conn_del = ConfColor("CONNOTATION.DELETED")
 
     def __init__(
         self, colors_conf=None, no_color=None, _local_colors=None, synced=False

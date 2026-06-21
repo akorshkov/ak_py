@@ -5,10 +5,10 @@ import unittest
 from datetime import datetime
 
 from ak.color import ColorFmt
-from ak.ppobj import PPTable, RecordWithConnotations
+from ak.ppobj import FieldType, PPTable, RecordWithConnotations
 from ak.pp_fields_types import (
     date_time_field_type, title_field_type,
-    PPEnumFieldType, MatrixFieldValueType,
+    PPDecimalFieldType, PPEnumFieldType, MatrixFieldValueType,
 )
 from .test_ppobj import verify_table_format
 
@@ -106,6 +106,106 @@ class TestPPDateTimeFieldType(unittest.TestCase):
             t,
             # "note_conn" connotation adds double green underline
         )
+
+
+class TestPPDecimalFieldType(unittest.TestCase):
+    """Test TestPPDecimalFieldType."""
+
+    def test_pp_decimal_field_type(self):
+        """Test TestPPDecimalFieldType."""
+
+        records = [
+            ("No Value", None),
+            ("Norm Dec", 1234.56),
+            ("Overflow", 1234.567),
+            ("Int", 1234),
+        ]
+
+        table = PPTable(
+            records,
+            fmt="Name<-0,V1<-1,P0<-1,Grp<-1,P3<-1,Owf<-1",
+            fields_types={
+                "V1": PPDecimalFieldType(),
+                "P0": PPDecimalFieldType(0),
+                "Grp": PPDecimalFieldType(grouping=True),
+                "P3": PPDecimalFieldType(3),
+                "Owf": PPDecimalFieldType(extra_digits_as_err=True),
+            },
+        )
+
+        verify_table_format(
+            self, table,
+            cols_names=["Name", "V1", "P0", "Grp", "P3", "Owf"]
+        )
+
+        color_text = str(table)
+        plain_text = table.ch_text().plain_text()
+
+        table_lines = plain_text.split("\n")
+        titles_line = table_lines[1]
+        body_lines = table_lines[3:-2]
+
+        titles = [c.strip() for c in titles_line.split('|')[1:-1]]
+        cells_values = [
+            [c.strip() for c in line.split('|')[1:-1]]
+            for line in body_lines]
+
+        cells = {
+            cells_line[0]: {
+                title: cell
+                for (title, cell) in zip(titles, cells_line)
+                if title != "Name"
+            } for cells_line in cells_values
+        }
+
+        values_titles = ["V1", "P0", "Grp", "P3", "Owf"]
+
+        # check line with 'None' values.
+        rd = cells["No Value"]
+        for t in values_titles:
+            self.assertEqual(
+                rd[t], "None",
+                f"Column {t}: None value should be printed as 'None':\n{color_text}")
+
+        # check line with 'Norm Dec' values
+        rd = cells["Norm Dec"]
+        self.assertEqual(rd["V1"], "1234.56", f"Column V1:\n{color_text}")
+        self.assertEqual(rd["P0"], "1235", f"Column P0, round to 0:\n{color_text}")
+        self.assertEqual(rd["Grp"], "1,234.56", f"Column Grp:\n{color_text}")
+        self.assertEqual(rd["P3"], "1234.560", f"Column P3:\n{color_text}")
+        self.assertEqual(rd["Owf"], "1234.56", f"Column Owf:\n{color_text}")
+
+        # check line with 'Owerflow' values
+        rd = cells["Overflow"]
+        self.assertEqual(
+            rd["V1"], "1234.57",
+            f"Column V1, 1234.567 round(2) -> 1234.57:\n{color_text}")
+        self.assertEqual(
+            rd["P0"], "1235",
+            f"Column P0, 1234.567 round(0) -> 1235:\n{color_text}")
+        self.assertEqual(rd["Grp"], "1,234.57", f"Column Grp:\n{color_text}")
+        self.assertEqual(rd["P3"], "1234.567", f"Column P3:\n{color_text}")
+        self.assertEqual(
+            rd["Owf"], "1234.567",
+            f"Column Owf, Value 1234.567 has :\n{color_text}")
+
+        # check line with 'Int' values
+        rd = cells["Int"]
+        self.assertEqual(rd["V1"], "1234.00", f"Column V1:\n{color_text}")
+        self.assertEqual(rd["P0"], "1234", f"Column P0, round to 0:\n{color_text}")
+        self.assertEqual(rd["Grp"], "1,234.00", f"Column Grp:\n{color_text}")
+        self.assertEqual(rd["P3"], "1234.000", f"Column P3:\n{color_text}")
+        self.assertEqual(rd["Owf"], "1234.00", f"Column Owf:\n{color_text}")
+
+        # make sure overflowed value is properly highlighted
+        default_palette = FieldType._mk_palette(None, None, None, None)
+        fmt = default_palette.get_color('number', 'err_conn')
+        expected_text = str(fmt("1234.567")) # formatted as number and underlined
+        self.assertIn(
+            expected_text, color_text,
+            f"Value at line 'Overflow' column 'Ovf' should be formatted as error because "
+            f"the precision is not sufficient to print all digits:"
+            f"\n Value:{expected_text}\n{color_text}")
 
 
 class TestPPEnumFieldType(unittest.TestCase):

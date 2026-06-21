@@ -15,6 +15,7 @@ use already created instances of these objects:
 """
 
 from datetime import datetime
+from numbers import Number
 
 from ak.color import CHText, ConfColor
 from ak.ppobj import FieldType, FieldValueType, _DefaultTitleFieldType
@@ -82,6 +83,40 @@ class PPDateTimeFieldType(FieldType):
 
 
 date_time_field_type = PPDateTimeFieldType()
+
+
+# PPDecimalFieldType
+
+class PPDecimalFieldType(FieldType):
+    """Formats numbers as decimals with specified precision
+
+    Behaves as default FieldType for other values.
+    """
+    def __init__(self, precision=2, *,
+             min_width=None, max_width=None, grouping=False, extra_digits_as_err=False):
+        self.precision = precision
+        self._grp = "," if grouping else ""
+        self.extra_digits_as_err = extra_digits_as_err
+        super().__init__(min_width, max_width)
+
+    def make_desired_cell_ch_chunks(
+        self, value, fmt_modifier, cell_plt, connotations
+    ) -> ([CHText.Chunk], int):
+
+        if not isinstance(value, Number):
+            return super().make_desired_cell_ch_chunks(
+                    value, fmt_modifier, cell_plt, connotations)
+
+        if (not self.extra_digits_as_err) or value == round(value, self.precision):
+            str_val = f"{value:{self._grp}.{self.precision}f}"
+        else:
+            str_val = f"{value:{self._grp}.{self.precision+6}f}".rstrip('0')
+            connotations = list(connotations)
+            connotations.append('err_conn')
+
+        fmt = cell_plt.get_color('number', *connotations)
+
+        return [fmt(str_val)], self.ALIGN_RIGHT
 
 
 # PPEnumFieldType - format enums
