@@ -89,7 +89,7 @@ class TestPPDateTimeFieldType(unittest.TestCase):
                 RecordWithConnotations(
                     ("some", date_value),
                     None,
-                    {"date": "note_conn"},
+                    {"date": "conn_note"},
                 ),
             ],
             fields=["descr", "date"],
@@ -104,7 +104,7 @@ class TestPPDateTimeFieldType(unittest.TestCase):
         self.assertIn(
             str(ColorFmt(None, underline=("DBL", "GREEN"))("2025-08-01")),
             t,
-            # "note_conn" connotation adds double green underline
+            # "conn_note" connotation adds double green underline
         )
 
 
@@ -199,7 +199,7 @@ class TestPPDecimalFieldType(unittest.TestCase):
 
         # make sure overflowed value is properly highlighted
         default_palette = FieldType._mk_palette(None, None, None, None)
-        fmt = default_palette.get_color('number', 'err_conn')
+        fmt = default_palette.get_color('number', 'conn_err')
         expected_text = str(fmt("1234.567")) # formatted as number and underlined
         self.assertIn(
             expected_text, color_text,
@@ -381,7 +381,7 @@ class TestPPEnumFieldType(unittest.TestCase):
             (
                 RecordWithConnotations(
                     r, None,
-                    {'status': 'note_conn'}
+                    {'status': 'conn_note'}
                 )
                 for r in records
             ),
@@ -391,7 +391,7 @@ class TestPPEnumFieldType(unittest.TestCase):
 
         s = str(table)
         # print(s)
-        # "note_conn" connotation has been added to the "Status" column. This connotations
+        # "conn_note" connotation has been added to the "Status" column. This connotations
         # adds green double underline
         self.assertIn(
             str(ColorFmt("YELLOW", underline=("DBL", "GREEN"))("10")),

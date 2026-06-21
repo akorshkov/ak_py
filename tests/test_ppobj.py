@@ -1258,15 +1258,15 @@ class TestPPTable(unittest.TestCase):
 
         def _apply_connotations(rr):
             for r in rr:
-                record_conn = "deleted_conn" if r[2] is False else None
+                record_conn = "conn_deleted" if r[2] is False else None
                 if r[0] == 3:
-                    cols_conn = {"descr": "note_conn"}
+                    cols_conn = {"descr": "conn_note"}
                 elif r[0] == 4:
-                    cols_conn = {"descr": "note_conn", "status": "note_conn"}
+                    cols_conn = {"descr": "conn_note", "status": "conn_note"}
                 elif r[0] == 5:
-                    cols_conn = {"descr": "warn_conn", "status": "warn_conn"}
+                    cols_conn = {"descr": "conn_warn", "status": "conn_warn"}
                 elif r[0] == 6:
-                    cols_conn = {"descr": "err_conn", "status": "err_conn"}
+                    cols_conn = {"descr": "conn_err", "status": "conn_err"}
                 else:
                     cols_conn = None
                 yield RecordWithConnotations(r, record_conn, cols_conn)
@@ -1283,7 +1283,7 @@ class TestPPTable(unittest.TestCase):
         # analyse appearence of several cells in the table
 
         # 1. 'descr' of the record 2
-        # It is normal text with 'deleted_conn' connotation
+        # It is normal text with 'conn_deleted' connotation
         self.assertIn(
             str(ColorFmt(None, crossed=True)("oops, it's missing")),
             s,
@@ -2190,20 +2190,20 @@ class TestPPRecordFormatter(unittest.TestCase):
             RecordWithConnotations(
                 record,
                 None,
-                {"department": "err_conn"},
+                {"department": "conn_err"},
             )))
 
         # print(s_no_conn)
         # print(s)
         self.assertEqual(
             CHText.strip_colors(s), CHText.strip_colors(s_no_conn),
-            "'err_conn' affects only text decorations (adds underline).")
+            "'conn_err' affects only text decorations (adds underline).")
 
         self.assertIn(
             str(ColorFmt("YELLOW", underline=("CURL", "RED"))("245")),
             s,
             # built-in config defins format for number as "yellow color"
-            # 'err_conn' connotation adds red curly underline
+            # 'conn_err' connotation adds red curly underline
         )
 
 

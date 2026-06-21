@@ -1788,9 +1788,9 @@ class Palette(metaclass=_PaletteMeta):
     cp.enum_id_color("42")     # produces CHText object representing green bold "42"
 
     2. combine formatters and use the result fomatter:
-    fmt = cp.get_color('name', 'warn_conn')  # produces ColorFmt obj which decorated text
+    fmt = cp.get_color('name', 'conn_warn')  # produces ColorFmt obj which decorated text
                                              # using a combination of effects defined in
-                                             # 'name' and 'warn_conn' formatters
+                                             # 'name' and 'conn_warn' formatters
     fmt("Arnold")   # produces CHText object representing "Arnold" text same way
                     # as "KEYWORD" but using double line red underline
 

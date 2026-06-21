@@ -1707,7 +1707,7 @@ class TestPaletteConnotations(unittest.TestCase):
             norm = ConfColor('NORM')
             alt = ConfColor('ALT')
 
-            err_conn = ConfColor('CONN_ERR')
+            conn_err = ConfColor('CONN_ERR')
 
         p = MyPalette()
         test_text = "test text"
@@ -1721,8 +1721,8 @@ class TestPaletteConnotations(unittest.TestCase):
             f"p.get_color('plt_synt_id') must be identical to p.plt_synt_id")
 
         # 2. test formatters with connotation
-        norm_err_fmt = p.get_color('norm', 'err_conn')
-        another_fmt = p.get_color('norm', 'err_conn')
+        norm_err_fmt = p.get_color('norm', 'conn_err')
+        another_fmt = p.get_color('norm', 'conn_err')
         self.assertIs(norm_err_fmt, another_fmt)
 
         self.assertEqual(
@@ -1731,7 +1731,7 @@ class TestPaletteConnotations(unittest.TestCase):
         )
 
         # 3. connotation overrides some property of the main syntax
-        alt_err_fmt = p.get_color('alt', 'err_conn')
+        alt_err_fmt = p.get_color('alt', 'conn_err')
 
         self.assertEqual(
             str(alt_err_fmt(test_text)),

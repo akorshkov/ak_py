@@ -781,10 +781,10 @@ class FieldType(PaletteUser):
         keyword = ConfColor('FIELD.KEYWORD')
         warn = ConfColor('FIELD.WARN')
 
-        note_conn = ConfColor('FIELD.CONN_NOTE')
-        warn_conn = ConfColor('FIELD.CONN_WARN')
-        err_conn = ConfColor('FIELD.CONN_ERR')
-        deleted_conn = ConfColor('FIELD.CONN_DELETED')
+        conn_note = ConfColor('FIELD.CONN_NOTE')
+        conn_warn = ConfColor('FIELD.CONN_WARN')
+        conn_err = ConfColor('FIELD.CONN_ERR')
+        conn_deleted = ConfColor('FIELD.CONN_DELETED')
 
     PALETTE_CLASS = FieldPalette
 

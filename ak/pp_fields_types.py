@@ -112,7 +112,7 @@ class PPDecimalFieldType(FieldType):
         else:
             str_val = f"{value:{self._grp}.{self.precision+6}f}".rstrip('0')
             connotations = list(connotations)
-            connotations.append('err_conn')
+            connotations.append('conn_err')
 
         fmt = cell_plt.get_color('number', *connotations)
 
