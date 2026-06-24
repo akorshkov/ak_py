@@ -949,6 +949,7 @@ class _DefaultTitleFieldType(_DefaultFieldType):
     # title cells of a table)
 
     class TitlePalette(FieldType.PALETTE_CLASS):
+        """Default palette to be used to print table/records titles"""
         SYNTAX_DEFAULTS = {
             # synt_id: default_color
             'RECORD.TITLE': "GREEN:bold",
@@ -1026,20 +1027,17 @@ class RecordField:
     Keeps information about the type of the field and it's location in the record.
     """
 
-    __slots__ = 'name', 'field_type', 'value_path', 'title_lines'
+    __slots__ = 'name', 'field_type', 'value_path'
 
     _V_PATH_ATTR, _V_PATH_KEY, _V_PATH_CONST = range(3)
 
-    def __init__(self, name, field_type, value_path, title):
+    def __init__(self, name, field_type, value_path):
         """RecordField constructor.
 
         Arguments:
         - name: str, field name. Human-readable unique identifier of the field.
         - field_type: instance of FieldType
         - value_path: str, desribes location of the field value in the record object
-        - title: str|list, title of the field. If it is a list or if it is a string
-            containing new-line characters, it is interpreted as a multi-line title.
-            By default is the same as the name.
         """
         self.name = name
         assert not isinstance(field_type, type), (
@@ -1047,7 +1045,6 @@ class RecordField:
             f"a class object: {field_type}")
         self.field_type = field_type
         self.value_path = self._prepare_value_path(value_path, name)
-        self.title_lines = list(self._gen_title_lines(title, self.name))
 
     def fetch_value(self, record):
         """get value from a record according to the rules specified by value_path."""
@@ -1061,33 +1058,6 @@ class RecordField:
                 assert v_path_type == self._V_PATH_CONST
                 val = key
         return val
-
-    def get_title_cell_text_len(self, fmt_modifier):
-        """Get length of the field's title."""
-        # Default implementation does not use fmt_modifier argument
-        # pylint: disable=unused-argument
-        return max(len(str(l)) for l in self.title_lines)
-
-    @classmethod
-    def _gen_title_lines(cls, title, field_name):
-        # constructor helper.
-        # converts the 'title' argument into a list of objects to be displayed
-        # in title lines
-        intermediary = None
-        if title is None:
-            intermediary = [field_name]
-        elif isinstance(title, str):
-            intermediary = [title]
-        elif isinstance(title, (list, tuple)):
-            intermediary = title
-        else:
-            intermediary = [title]
-
-        for item in intermediary:
-            if isinstance(item, str):
-                yield from (l.strip() for l in item.split('\n'))
-            else:
-                yield item
 
     @classmethod
     def _prepare_value_path(cls, value_path, field_name):
@@ -1227,13 +1197,15 @@ class ReprColumn:
 
     __slots__ = (
         'field', 'name', 'fmt_modifier', 'break_by', 'shade_name',
-        'min_width', 'max_width', 'width',
+        'title_lines', 'min_width', 'max_width', 'width',
     )
 
     def __init__(
         self, field, fmt_modifier=None, break_by=False,
         min_width=None, max_width=None,
-        shade_name=None,
+        shade_name=None, *,
+        name=None,
+        title=None,
     ):
         """ReprColumn constructor.
 
@@ -1250,11 +1222,20 @@ class ReprColumn:
         - shade_name: optional name of the shade to be used when fetching
             the color palette for the current column from the record's
             palette (see CompoundPalette).
+        - name: str, identificator of the column. By default name of the column is
+            the same as the name of corresponding field. It makes sence to explicitely
+            specify different name in case there are several columns corresponding
+            to the same field.
+        - title: str|list, title of the field. If it is a list or if it is a string
+            containing new-line characters, it is interpreted as a multi-line title.
+            By default is the same as the field name.
         """
         self.field = field  # RecordField
-        self.name = self.field.name
+        self.name = name if name is not None else self.field.name
 
         ftype = self.field.field_type
+
+        self.title_lines = list(self._gen_title_lines(title, self.name))
 
         self.shade_name = shade_name
 
@@ -1275,6 +1256,7 @@ class ReprColumn:
             self.min_width,
             self.max_width,
             self.shade_name,
+            title=self.title_lines,
         )
 
     def get_title_width(self):
@@ -1283,7 +1265,7 @@ class ReprColumn:
         As of now columns do not have own titles, so the title of the corresponding
         field is used.
         """
-        return self.field.get_title_cell_text_len(self.fmt_modifier)
+        return max(len(str(l)) for l in self.title_lines)
 
     def get_cell_text_len(self, record):
         """Get desired cell length for this column when displaying given record.
@@ -1342,6 +1324,27 @@ class ReprColumn:
 
         return fmt_str
 
+    @classmethod
+    def _gen_title_lines(cls, title, field_name):
+        # constructor helper.
+        # converts the 'title' argument into a list of objects to be displayed
+        # in title lines
+        intermediary = None
+        if title is None:
+            intermediary = [field_name]
+        elif isinstance(title, str):
+            intermediary = [title]
+        elif isinstance(title, (list, tuple)):
+            intermediary = title
+        else:
+            intermediary = [title]
+
+        for item in intermediary:
+            if isinstance(item, str):
+                yield from (l.strip() for l in item.split('\n'))
+            else:
+                yield item
+
 
 @dataclass(frozen=True)
 class RecordReprStyle:
@@ -1365,11 +1368,11 @@ class _ColumnsParsedFmt:
         __slots__ = ['fmt', 'field_name', 'fmt_modifier', 'break_by',
                      'value_path', 'min_w', 'max_w']
 
-        def mk_repr_column(self, field) -> ReprColumn:
+        def mk_repr_column(self, field, column_name, column_title) -> ReprColumn:
             """self -> ReprColumn object."""
             return ReprColumn(
                 field, self.fmt_modifier, self.break_by,
-                self.min_w, self.max_w)
+                self.min_w, self.max_w, name=column_name, title=column_title)
 
     __slots__ = 'fmt', 'columns'
 
@@ -1557,7 +1560,7 @@ class ReprStructure:
 
     @classmethod
     def make(
-        cls, fmt, fields, fields_types, fields_titles, sample_record,
+        cls, fmt, fields, fields_types, columns_titles, sample_record,
         style=None,
     ):
         """Alternative constructor of ReprStructure.
@@ -1568,7 +1571,7 @@ class ReprStructure:
         - fields: [RecordField|str], describes record structure, that is location
             of field values in the record object.
         - fields_types: {field_name: FieldType}. Optional.
-        - fields_titles: {field_name: title_items}. Optional. The title_items may be:
+        - columns_titles: {column_name: title_items}. Optional. The title_items may be:
             - simple string
             - string containing new-line characters (for multi-line title)
             - list of strings or other simple objects (for multi-line title)
@@ -1583,7 +1586,7 @@ class ReprStructure:
         style = style or cls._DFLT_REPR_STYLE
         parsed_fmt = cls._parse_fmt(fmt)
         fields_types_dict = {} if fields_types is None else fields_types
-        fields_titles_dict = {} if fields_titles is None else fields_titles
+        columns_titles_dict = {} if columns_titles is None else columns_titles
 
         record_structure = None
         repr_columns = None
@@ -1602,8 +1605,7 @@ class ReprStructure:
                 f_name = obj
                 return RecordField(
                     f_name,
-                    fields_types_dict.get(f_name, cls._DFLT_FIELD_TYPE),
-                    pos, fields_titles_dict.get(f_name))
+                    fields_types_dict.get(f_name, cls._DFLT_FIELD_TYPE), pos)
             record_structure = RecordStructure([
                 _local_mk_rec_fld(pos, obj)
                 for (pos, obj) in enumerate(fields)])
@@ -1613,8 +1615,7 @@ class ReprStructure:
             record_structure = RecordStructure([
                 RecordField(
                     name,
-                    fields_types_dict.get(name, cls._DFLT_FIELD_TYPE),
-                    pos, fields_titles_dict.get(name))
+                    fields_types_dict.get(name, cls._DFLT_FIELD_TYPE), pos)
                 for pos, name in enumerate(sample_record._fields)])
 
         if record_structure is not None:
@@ -1647,17 +1648,26 @@ class ReprStructure:
                                            # interprete it as
                                            # 'the field name itself is the path'
                         ),
-                        fields_titles_dict.get(c.field_name),
                     ))
                 record_structure = RecordStructure(fields_list)
-            repr_columns = [
-                c.mk_repr_column(record_structure.get_field(c.field_name))
-                for c in parsed_fmt.columns
-                # nagative width specified in the 'fmt' indicates that the field
-                # exists and it is possible to change format to display it, but
-                # right now the column for this field is not required.
-                if c.max_w is None or c.max_w >= 0
-            ]
+
+            columns_names = cls._make_unique_columns_names(
+                [record_structure.get_field(c.field_name).name for c in parsed_fmt.columns])
+
+            repr_columns = []
+
+            for c, c_name in zip(parsed_fmt.columns, columns_names):
+                if c.max_w is not None and c.max_w < 0:
+                    # negative width specified in the 'fmt' indicates that the field
+                    # exists and it is possible to change format to display it, but
+                    # right now the column for this field is not required.
+                    continue
+
+                field = record_structure.get_field(c.field_name)
+
+                c_title = columns_titles_dict.get(c_name, field.name)
+
+                repr_columns.append(c.mk_repr_column(field, c_name, c_title))
 
         if record_structure is None and sample_record is not None:
             # the only information about record structure is the sample record.
@@ -1680,9 +1690,7 @@ class ReprStructure:
             # was supposed to be built based on the sample record, but there are
             # no records. Still need to display some dummy table
             record_structure = RecordStructure([
-                RecordField(
-                    '-                              -', cls._DFLT_FIELD_TYPE,
-                    0, None)
+                RecordField('-                              -', cls._DFLT_FIELD_TYPE, 0)
             ])
 
         if repr_columns is None:
@@ -1793,10 +1801,10 @@ class ReprStructure:
         Length on each list is equal to the number of columns.
 
         """
-        num_title_lines = max(len(col.field.title_lines) for col in self.columns)
+        num_title_lines = max(len(col.title_lines) for col in self.columns)
         for i in range(num_title_lines):
             yield [
-                col.field.title_lines[i] if i < len(col.field.title_lines) else ""
+                col.title_lines[i] if i < len(col.title_lines) else ""
                 for col in self.columns]
 
     def __repr__(self):
@@ -1869,6 +1877,30 @@ class ReprStructure:
         assert isinstance(fmt, str), f"{type(fmt)}: {fmt}"
         return _ColumnsParsedFmt(fmt)
 
+    @staticmethod
+    def _make_unique_columns_names(names):
+        # ["descr", "status", "descr"] -> ["descr", "status", "descr_1"]
+        used_names = set()
+        counters = {} # {"prefix": counter}
+        result = []
+
+        for i, n in enumerate(names):
+            candidate = n
+            if n in used_names:
+                counter = counters.get(n, 0)
+                counter += 1
+                while True:
+                    candidate = f"{n}_{counter}"
+                    if candidate not in used_names and candidate not in names[i+1:]:
+                        break
+                    counter += 1
+                counters[n] = counter
+                n = candidate
+            used_names.add(candidate)
+            result.append(candidate)
+
+        return result
+
 
 #########################
 # PPRecord
@@ -1891,14 +1923,14 @@ class PPRecordFmt(PaletteUser):
 
     def __init__(
         self, fmt, *,
-        fields=None, fields_types=None, fields_titles=None, sample_record=None,
+        fields=None, fields_types=None, columns_titles=None, sample_record=None,
         style=None,
         repr_structure=None,
         palette=None, no_color=None, compound_palette=None, shade_name=None,
     ):
         """ PPRecordFmt constructor.
 
-        - fmt, fields, fields_types, fields_titles, sample_record, style: arguments
+        - fmt, fields, fields_types, columns_titles, sample_record, style: arguments
             required to construct ReprStructure: object which contains information
             about record fields and representation columns. Check ReprStructure
             doc for more detailed description.
@@ -1912,14 +1944,14 @@ class PPRecordFmt(PaletteUser):
         """
         if repr_structure is None:
             repr_structure = ReprStructure.make(
-                fmt, fields, fields_types, fields_titles, sample_record,
+                fmt, fields, fields_types, columns_titles, sample_record,
                 style=style or self._DFLT_STYLE,
             )
         else:
             assert fmt is None
             assert fields is None
             assert fields_types is None
-            assert fields_titles is None
+            assert columns_titles is None
             assert sample_record is None
             assert style is None
 
@@ -2272,7 +2304,7 @@ class PPRecordFmt(PaletteUser):
                 field_type = ReprStructure._DFLT_FIELD_TYPE
 
             width = end_pos - start_pos - 1
-            field = RecordField(name, field_type, value_path, name)
+            field = RecordField(name, field_type, value_path)
             column = ReprColumn(field, min_width=width, max_width=width)
             fields.append(field)
             columns.append(column)
@@ -2394,7 +2426,7 @@ class PPTable(PPObj):
             skip_columns=None,
             fields=None,
             fields_types=None,
-            fields_titles=None,
+            columns_titles=None,
             style=None,
     ):
         """Constructor of PPTable object - this object prints table.
@@ -2419,7 +2451,7 @@ class PPTable(PPObj):
         - skip_columns: list of columns to skip. Overrides fmt argument.
         - fields: (optional) list of names of fileds in a record, or list
             of RecordField objects
-        - fields_titles: optional {field_name: title_items}. The title_items may be:
+        - columns_titles: optional {column_name: title_items}. The title_items may be:
             - simple string
             - string containing new-line characters (for multi-line title)
             - list of strings or other simple objects (for multi-line title)
@@ -2474,12 +2506,12 @@ class PPTable(PPObj):
             assert fields is None
             assert fields_types is None
             assert fmt is None
-            assert fields_titles is None
+            assert columns_titles is None
             assert style is None
             self._ppt_fmt = fmt_obj.clone()
         else:
             self._ppt_fmt = PPTableFormat.make(
-                fmt, fields, fields_types, fields_titles,
+                fmt, fields, fields_types, columns_titles,
                 self.records[0] if self.records else None,
                 style=style or self._DFLT_STYLE)
 
@@ -2828,7 +2860,7 @@ class PPTableFormat:
 
     @classmethod
     def make(
-        cls, fmt, fields, fields_types, fields_titles,
+        cls, fmt, fields, fields_types, columns_titles,
         sample_record=None, style=PPTable._DFLT_STYLE,
     ):
         """Alternative PPTableFormat constructor.
@@ -2842,7 +2874,7 @@ class PPTableFormat:
         return PPTableFormat(
             ReprStructure.make(
                 parsed_fmt.cols_parsed_fmt,
-                fields, fields_types, fields_titles, sample_record, style),
+                fields, fields_types, columns_titles, sample_record, style),
             style, limit_flines, limit_llines,
         )
 

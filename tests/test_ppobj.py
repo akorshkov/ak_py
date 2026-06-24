@@ -557,7 +557,7 @@ def verify_table_format(
         testcase, table,
         has_header=False,
         is_colored=None,
-        cols_names=None,
+        cols_titles=None,
         n_extra_title_lines=None,
         n_body_lines=None,
         cols_widths=None,
@@ -625,13 +625,13 @@ def verify_table_format(
     table_width = len(text_lines[0])
 
     # 1. verify column names
-    if cols_names is not None:
+    if cols_titles is not None:
         actual_col_names = []
         if len(column_names_line) > 2:
             actual_col_names = [
                 x.strip() for x in column_names_line[1:-1].split('|')]
         testcase.assertEqual(
-            actual_col_names, cols_names,
+            actual_col_names, cols_titles,
             f"unexpected column names in table:\n{orig_ttext}")
 
     # 2. verify number of lines
@@ -718,7 +718,7 @@ class TestPPTable(unittest.TestCase):
         # print(table)
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4, # all 4 records expected to be visible
         )
 
@@ -730,7 +730,7 @@ class TestPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4, # all 4 records expected to be visible
         )
 
@@ -741,7 +741,7 @@ class TestPPTable(unittest.TestCase):
         ttext_0 = str(table)
         verify_table_format(
             self, table,
-            cols_names=['id', 'id', 'level', 'name', 'level'],
+            cols_titles=['id', 'id', 'level', 'name', 'level'],
             n_body_lines=4, # all 4 records expected to be visible
             cols_widths=[5, 10, 11, 15, 20],
         )
@@ -776,7 +776,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = ";1:0"
         verify_table_format(
             self, table,
-            cols_names=['id', 'id', 'level', 'name', 'level'],
+            cols_titles=['id', 'id', 'level', 'name', 'level'],
             n_body_lines=2, # 1 line with resord + a line with number of skipped
             cols_widths=[5, 10, 11, 15, 20],
         )
@@ -785,7 +785,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "*;*"
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4,
         )
 
@@ -801,7 +801,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "id:5, level:10, name:15 ;0:0"
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=1, # no visible records, but there is a "num skipped"
             cols_widths=[5, 10, 15],
         )
@@ -810,7 +810,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "id:1-2,level:1-2,name:1-2;*"
         verify_table_format(
             self, table,
-            # cols_names=['id', 'level', 'name'], - not enough space to print them
+            # cols_titles=['id', 'level', 'name'], - not enough space to print them
             n_body_lines=4,
             cols_widths=[2, 2, 2],  # actual widths are min or max allowed
         )
@@ -818,7 +818,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "id:15-20,level:15-20,name:15-20;*"
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4,
             cols_widths=[15, 15, 15],  # actual widths are min allowed
         )
@@ -839,7 +839,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "id, name, level"
         verify_table_format(
             self, table,
-            cols_names=['id', 'name', 'level'],
+            cols_titles=['id', 'name', 'level'],
             n_body_lines=4,
         )
 
@@ -847,7 +847,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "*;*"
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4,
             cols_widths=[
                 2,  # defined by length of name
@@ -868,20 +868,36 @@ class TestPPTable(unittest.TestCase):
         ]
         table = PPTable(
             records, fields=['id', 'level', 'name'],
-            fmt="id:5,id:10,  level:11,name:15, level:20",
+            fmt="id:5,id:10,  level:11,name:15, level:20,id:7",
         )
         verify_table_format(
             self, table,
-            cols_names=['id', 'id', 'level', 'name', 'level'],
-            cols_widths=[5, 10, 11, 15, 20],
+            cols_titles=['id', 'id', 'level', 'name', 'level', 'id'],
+            cols_widths=[5, 10, 11, 15, 20, 7],
         )
 
-        # 1. remove some columns by name
+        # actual columns names are:
+        # id, id_1, level, name, level_1, id_2
+
+        # 1. remove column by name
+        # 'invalid_column' does not exist and should be ignored
+        # 'level' corresponds to the third column. One more column corresponding to
+        # field 'level' has name 'level_1' and should not be deleted.
         table.remove_columns({'level', 'invalid_column'})
         verify_table_format(
             self, table,
-            cols_names=['id', 'id', 'name'],
-            cols_widths=[5, 10, 15],
+            cols_titles=['id', 'id', 'name', 'level', 'id'],
+            cols_widths=[5, 10, 15, 20, 7],
+        )
+
+        # 2. now columns names are:
+        # id, id_1, level, name, level_1, id_2
+        # Let's remove columns 'id_2'
+        table.remove_columns({'id_2'})
+        verify_table_format(
+            self, table,
+            cols_titles=['id', 'id', 'name', 'level'],
+            cols_widths=[5, 10, 15, 20],
         )
 
     def test_multi_line_titles(self):
@@ -894,7 +910,7 @@ class TestPPTable(unittest.TestCase):
         ]
         table = PPTable(
             records, fields=['id', 'level', 'name'],
-            fields_titles={
+            columns_titles={
                 'id': ('id\niddescr', 555),
                 'level': ('level\nll', 777),
                 'name': ('name\nnnnn', None),
@@ -903,7 +919,7 @@ class TestPPTable(unittest.TestCase):
         )
         verify_table_format(
             self, table,
-            cols_names=['id', 'id', 'level', 'name', 'level'],
+            cols_titles=['id', 'id', 'level', 'name', 'level'],
             cols_widths=[
                 7,  # len of title line 'iddescr'
                 10,  # explicit value from fmt
@@ -912,6 +928,47 @@ class TestPPTable(unittest.TestCase):
                 20,  # explicit value from fmt
             ],
             contains_text=['iddescr', 'll', 'nnnn', '555', '777'],
+        )
+
+    def test_titles_duplicated_columns(self):
+        """Test titles of columns corresponding to the same field."""
+        records = [
+            (1, 10, "Linus"),
+            (2, 10, "Arnold"),
+            (3, 17, "Jerry"),
+            (4, 7, "Elizer"),
+        ]
+
+        # all the columns titles are default
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            fmt="id,name,id,name,name",
+        )
+        verify_table_format(
+            self, table,
+            cols_titles=['id', 'name', 'id', 'name', 'name'],
+        )
+
+        # specify title for the first 'name' column
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            fmt="id,name,id,name,name",
+            columns_titles={'name': "alt name"},
+        )
+        verify_table_format(
+            self, table,
+            cols_titles=['id', 'alt name', 'id', 'name', 'name'],
+        )
+
+        # specify title for the second 'name' column
+        table = PPTable(
+            records, fields=['id', 'level', 'name'],
+            fmt="id,name,id,name,name",
+            columns_titles={'name_1': "alt name"},
+        )
+        verify_table_format(
+            self, table,
+            cols_titles=['id', 'name', 'id', 'alt name', 'name'],
         )
 
     def test_lines_limits(self):
@@ -1001,7 +1058,7 @@ class TestPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['', 'name'],
+            cols_titles=['', 'name'],
             n_body_lines=4,  # 3 records and a 'break by' line
             cols_widths=[0, len("Arnold")],
         )
@@ -1024,7 +1081,6 @@ class TestPPTable(unittest.TestCase):
                 field_name,
                 dflt_field_type,
                 pos,
-                field_name,
             ) for pos, field_name in [
                 (0, 'id'),
                 (2, 'name'),
@@ -1034,7 +1090,7 @@ class TestPPTable(unittest.TestCase):
         table = PPTable(records, fields=fields)
         verify_table_format(
             self, table,
-            cols_names=['id', 'name'],
+            cols_titles=['id', 'name'],
             n_body_lines=4, # all 4 records expected to be visible
             cols_widths=[2, 6],
         )
@@ -1056,7 +1112,7 @@ class TestPPTable(unittest.TestCase):
         table = PPTable(records)
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4,  # all 4 records expected to be visible
             cols_widths=[2, 5, 6],
         )
@@ -1116,7 +1172,7 @@ class TestPPTable(unittest.TestCase):
         # 1. check how table looks
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4, # all 4 records expected to be visible
             cols_widths=[
                 2,
@@ -1130,7 +1186,7 @@ class TestPPTable(unittest.TestCase):
         table.fmt = "id,level,name,level/cust_msg"
         verify_table_format(
             self, table,
-            cols_names=['id', 'level', 'name', 'level'],
+            cols_titles=['id', 'level', 'name', 'level'],
             n_body_lines=4, # all 4 records expected to be visible
             cols_widths=[
                 2,
@@ -1167,7 +1223,7 @@ class TestPPTable(unittest.TestCase):
         verify_table_format(
             self, table,
             has_header=True,
-            cols_names=['id', 'level', 'name'],
+            cols_titles=['id', 'level', 'name'],
             n_body_lines=4,  # all 4 records expected to be visible
             contains_text="My Table",  # begining of the header must be present
         )
@@ -1191,7 +1247,7 @@ class TestPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['name', 'status', 'id'],
+            cols_titles=['name', 'status', 'id'],
             n_body_lines=6,  # 5 visible records + 1 'break by' line
         )
 
@@ -1203,7 +1259,7 @@ class TestPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['status', 'name', 'id'],
+            cols_titles=['status', 'name', 'id'],
             n_body_lines=9,  # 5 visible records + 4 'break by' lines
         )
 
@@ -1220,7 +1276,7 @@ class TestPPTable(unittest.TestCase):
             self, table,
             has_header=True,
             # ugly single column name used by dummy format of empty table
-            cols_names=['-                              -'],
+            cols_titles=['-                              -'],
             n_body_lines = 0,
             contains_text=[
                 "empty list of something",
@@ -1488,7 +1544,7 @@ class TestEnhancedPPTable(unittest.TestCase):
             "id<-0.0:10, name<-0.2,country<-1.1"))
         verify_table_format(
             self, table,
-            cols_names=['id', 'name', 'country'],
+            cols_titles=['id', 'name', 'country'],
             n_body_lines=4,
             cols_widths=[10, len("Arnold"), len('Neverland')],
         )
@@ -1512,7 +1568,7 @@ class TestEnhancedPPTable(unittest.TestCase):
             "level<-0.level, c_code<-1.[c_code]"))
         verify_table_format(
             self, table,
-            cols_names=['name', 'id', 'c_name', 'level', 'c_code'],
+            cols_titles=['name', 'id', 'c_name', 'level', 'c_code'],
             n_body_lines=4,
             cols_widths=[
                 len("Arnold"), len('id'), len('Neverland'),
@@ -1552,7 +1608,7 @@ class TestEnhancedPPTable(unittest.TestCase):
         ))
         verify_table_format(
             self, table,
-            cols_names=['id', 'name', 'country', 'id', 'id'],
+            cols_titles=['id', 'name', 'country', 'id', 'id'],
             n_body_lines=4,
             cols_widths=[10, len("Arnold"), len('Neverland'), 20, 15],
         )
@@ -1580,7 +1636,7 @@ class TestEnhancedPPTable(unittest.TestCase):
         table = PPTable(records, fmt="seat!<-0.0:3-10,owner<-0.1")
         verify_table_format(
             self, table,
-            cols_names=['seat', 'owner'],
+            cols_titles=['seat', 'owner'],
             n_body_lines=4,  # 3 records and 1 break_by
             cols_widths=[len('seat'), len("Arnold")],
         )
@@ -1603,7 +1659,7 @@ class TestEnhancedPPTable(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['owner'],
+            cols_titles=['owner'],
             n_body_lines=3,
             cols_widths=[len("Arnold")],
         )
@@ -1612,7 +1668,7 @@ class TestEnhancedPPTable(unittest.TestCase):
         table.fmt = "seat, owner"
         verify_table_format(
             self, table,
-            cols_names=['seat', 'owner'],
+            cols_titles=['seat', 'owner'],
             n_body_lines=3,
             cols_widths=[len('seat'), len("Arnold")],
         )
@@ -1857,7 +1913,7 @@ class TestCustomFieldValueType(unittest.TestCase):
         # CustomFieldValue.make_desired_cell_ch_chunks is present in the table
         verify_table_format(
             self, table,
-            cols_names=['id', 'descr'],
+            cols_titles=['id', 'descr'],
             n_body_lines=2,
             cols_widths=[len('id'), len("the value is 10!")],
             contains_text="the value is 10!",
@@ -1944,7 +2000,7 @@ class TestPPRecordFormatter(unittest.TestCase):
         # 2. Test formatter with explicitely specified titles
         rec_fmt = PPRecordFmt(
             "id:5,descr:10,amount:7,comment:5,balance:7,suffix:5",
-            fields_titles={
+            columns_titles={
                 'id': "ID",
                 'descr': "Description",
                 'amount': "Amt.",

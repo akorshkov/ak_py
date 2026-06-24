@@ -65,7 +65,7 @@ class TestPPDateTimeFieldType(unittest.TestCase):
         # print(table)
         verify_table_format(
             self, table,
-            cols_names=['Date', 'Date', 'DateT', 'DateT', 'DateT', 'Nth', 'Nth'],
+            cols_titles=['Date', 'Date', 'DateT', 'DateT', 'DateT', 'Nth', 'Nth'],
             cols_widths=[
                 #         123456789 123456789 123456
                 # Date without time part
@@ -135,7 +135,7 @@ class TestPPDecimalFieldType(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=["Name", "V1", "P0", "Grp", "P3", "Owf"]
+            cols_titles=["Name", "V1", "P0", "Grp", "P3", "Owf"]
         )
 
         color_text = str(table)
@@ -234,7 +234,7 @@ class TestPPEnumFieldType(unittest.TestCase):
         # 1. chech how table looks
         verify_table_format(
             self, table,
-            cols_names=['id', 'name', 'status'],
+            cols_titles=['id', 'name', 'status'],
             n_body_lines = 2,
             cols_widths = [
                 2, # column name 'id'
@@ -250,7 +250,7 @@ class TestPPEnumFieldType(unittest.TestCase):
         table.fmt = "id, status/name, status/full, status/val, status"
         verify_table_format(
             self, table,
-            cols_names=['id', 'status', 'status', 'status', 'status'],
+            cols_titles=['id', 'status', 'status', 'status', 'status'],
             n_body_lines=2,
             cols_widths=[
                 2, # column name 'id'
@@ -273,7 +273,7 @@ class TestPPEnumFieldType(unittest.TestCase):
         table.fmt = "id, status/name"
         verify_table_format(
             self, table,
-            cols_names=['id', 'status'],
+            cols_titles=['id', 'status'],
             n_body_lines = 2,
             cols_widths = [
                 2, # column name 'id'
@@ -292,7 +292,7 @@ class TestPPEnumFieldType(unittest.TestCase):
         table.fmt = "id, status/val"
         verify_table_format(
             self, table,
-            cols_names=['id', 'status'],
+            cols_titles=['id', 'status'],
             n_body_lines = 2,
             cols_widths = [
                 2, # column name 'id'
@@ -322,7 +322,7 @@ class TestPPEnumFieldType(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['id', 'name', 'status'],
+            cols_titles=['id', 'name', 'status'],
             n_body_lines = 3,
             cols_widths = [
                 2, # column name 'id'
@@ -348,7 +348,7 @@ class TestPPEnumFieldType(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['id', 'name', 'status'],
+            cols_titles=['id', 'name', 'status'],
             n_body_lines = 2,
             cols_widths = [
                 2, # column name 'id'
@@ -443,7 +443,7 @@ class TestMatrixFieldType(unittest.TestCase):
         # print(table)
         verify_table_format(
             self, table,
-            cols_names=['Key', 'Value'],
+            cols_titles=['Key', 'Value'],
             cols_widths=[
                 #         123456789 123456789 123456
                 10,    # "Login Date"
@@ -475,7 +475,7 @@ class TestMatrixFieldType(unittest.TestCase):
 
         verify_table_format(
             self, table,
-            cols_names=['Key', 'Value'],
+            cols_titles=['Key', 'Value'],
         )
 
         # print(table)

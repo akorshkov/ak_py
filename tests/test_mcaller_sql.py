@@ -109,7 +109,7 @@ class TestMCallerSQL(unittest.TestCase):
             self, users,
             has_header=True,
             n_body_lines=2,
-            cols_names=['u_id', 'name', 'id', 'name_1'],
+            cols_titles=['u_id', 'name', 'id', 'name_1'],
             contains_text=[
                 "users_dets",  # record name should be present in default header
             ]
@@ -164,7 +164,7 @@ class TestMCallerSQL(unittest.TestCase):
             self, users,
             has_header=True,
             n_body_lines=2,
-            cols_names=['u_id', 'id', 'name_1'],
+            cols_titles=['u_id', 'id', 'name_1'],
             contains_text=[
                 "CustHeader",  # explicitely specified custom header
                 " custom descr",  # text added by custom_field_type to visible
@@ -193,7 +193,7 @@ class TestMCallerSQL(unittest.TestCase):
         verify_table_format(
             self, t,
             n_body_lines=2,
-            cols_names=['u_id', 'name', 'id', 'name_1'],
+            cols_titles=['u_id', 'name', 'id', 'name_1'],
         )
 
         db.close()
