@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime
 
 from ak.color import ColorFmt
-from ak.ppobj import FieldType, PPTable, RecordWithConnotations
+from ak.ppobj import FieldType, PPTable, RecordWithTraits
 from ak.pp_fields_types import (
     date_time_field_type, title_field_type,
     PPDecimalFieldType, PPEnumFieldType, MatrixFieldValueType,
@@ -86,10 +86,10 @@ class TestPPDateTimeFieldType(unittest.TestCase):
         date_value = datetime(2025, 8, 1)
         table = PPTable(
             [
-                RecordWithConnotations(
+                RecordWithTraits(
                     ("some", date_value),
-                    None,
-                    {"date": "conn_note"},
+                    None,  # no record traits
+                    {"date": "conn_note"}, # fields traits
                 ),
             ],
             fields=["descr", "date"],
@@ -373,41 +373,69 @@ class TestPPEnumFieldType(unittest.TestCase):
         })
 
         records = [
-            (1, "user 01", 10),
-            (2, "user 02", 999),
+            RecordWithTraits((1, "user 01", 10), None, {'status': 'conn_note'}),
+            RecordWithTraits((2, "user 02", 999), None, {'status': 'conn_note'}),
+            (3, "user 03", 10),
         ]
 
         table = PPTable(
-            (
-                RecordWithConnotations(
-                    r, None,
-                    {'status': 'conn_note'}
-                )
-                for r in records
-            ),
+            records,
             fields=['id', 'name', 'status'],
             fields_types={'status': statuses_enum},
         )
 
-        s = str(table)
-        # print(s)
-        # "conn_note" connotation has been added to the "Status" column. This connotations
-        # adds green double underline
+        # print(table)
+
+        # "conn_note" connotation has been added to the "Status" column of the first
+        # two records. This connotations adds green double underline
+
+        table_lines = [str(l) for l in table.ch_text()]
+
+        lines_by_user = {}
+        for user_text in ['user 01', 'user 02', 'user 03']:
+            for l in table_lines:
+                if user_text in l:
+                    lines_by_user[user_text] = l
+
+        # 'user 01' - status field has 'note' connotation
+        l = lines_by_user['user 01']
+
         self.assertIn(
             str(ColorFmt("YELLOW", underline=("DBL", "GREEN"))("10")),
-            s,
+            l,
         )
         self.assertIn(
             str(ColorFmt(None, underline=("DBL", "GREEN"))("Ok status")),
-            s,
+            l,
         )
+
+        # 'user 02' - status field has 'note' connotation
+        l = lines_by_user['user 02']
         self.assertIn(
             str(ColorFmt("YELLOW", underline=("DBL", "GREEN"))("999")),
-            s,
+            l,
         )
+        # this value formatted as error and has 'note' connotation
         self.assertIn(
             str(ColorFmt("RED", bold=True, underline=("DBL", "GREEN"))("Error status")),
-            s,
+            l,
+        )
+
+        # 'user 03' - no connotations
+        # enum value is the same as for 'user 01', but values on this record should not
+        # have connotaions, that is no underlined values here
+        l = lines_by_user['user 03']
+        self.assertIn(
+            str(ColorFmt("YELLOW")("10")),
+            l,
+        )
+        self.assertIn(
+            str(ColorFmt(None)("Ok status")),
+            l,
+        )
+        self.assertNotIn(
+            str(ColorFmt(None, underline=("DBL", "GREEN"))("Ok status")),
+            l,
         )
 
 

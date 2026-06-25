@@ -733,6 +733,33 @@ class PPWrap:
 # processing records and presenting data from the records on screen.
 
 
+class PPTrait:
+    """Additional information that can be associated with fields, columns and records.
+
+    Examples of such additional information:
+    - "this record is marked deleted"
+    - "this value has unexpected value"
+    - "currency corresponding to this value is 'SGD' and has precision of 2 dec. places"
+
+    The information is traits may be used by FieldType to present the value.
+    By dfault FieldType just applies connotations defined in the PPTrait.
+    """
+
+    __slots__ = ('connotations', )
+
+    def __init__(self, *connotations):
+        self.connotations = connotations
+
+    @staticmethod
+    def get_connotations(traits):
+        """Get all the connotations from given traits."""
+        return [
+            c
+            for trait in traits
+            for c in trait.connotations
+        ]
+
+
 #########################
 # class FieldType
 
@@ -796,7 +823,7 @@ class FieldType(PaletteUser):
         self.max_width = self._DFLT_MAX_WIDTH if max_width is None else max_width
         assert self.min_width <= self.max_width
 
-    def get_cell_text_len(self, value, fmt_modifier, connotations) -> int:
+    def get_cell_text_len(self, value, fmt_modifier, traits) -> int:
         """Calculate length of text representation of the value (for usual cell)
 
         This implementation is universal, but inefficient. Override in
@@ -805,12 +832,12 @@ class FieldType(PaletteUser):
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
             value, fmt_modifier,
-            self.PALETTE_CLASS(no_color=True), connotations,
+            self.PALETTE_CLASS(no_color=True), traits,
         )
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, cell_plt, connotations,
+        self, value, fmt_modifier, cell_plt, traits,
     ) -> ([CHText.Chunk], int):
         """value -> desired text and alignment for usual (not title) table row.
 
@@ -819,6 +846,7 @@ class FieldType(PaletteUser):
         Implementation for general field type: value printed almost as is.
         To be overiden in derived classes.
         """
+        connotations = PPTrait.get_connotations(traits)
         if fmt_modifier is not None:
             raise ValueError(
                 f"{type(self)} field type does not support format modifiers. "
@@ -835,12 +863,12 @@ class FieldType(PaletteUser):
         return [color_fmt(str(value))], align
 
     def make_cell_ch_chunks(
-        self, value, fmt_modifier, width, cell_plt, connotations,
+        self, value, fmt_modifier, width, cell_plt, traits,
     ) -> [CHText.Chunk]:
         """value -> [CHText.Chunk] having exactly specified width."""
 
         text, align = self.make_desired_cell_ch_chunks(
-            value, fmt_modifier, cell_plt, connotations)
+            value, fmt_modifier, cell_plt, traits)
 
         return self.fit_to_width(text, width, align, cell_plt)
 
@@ -938,7 +966,7 @@ class _DefaultFieldType(FieldType):
     # Default FieldType to be used for fields with simple values.
     # Implements more efficient get_cell_text_len
 
-    def get_cell_text_len(self, value, fmt_modifier, connotations):
+    def get_cell_text_len(self, value, fmt_modifier, traits):
         """Calculate length of text representation of the value."""
         # caluculate text length w/o constructing CHText object for the cell
         return len(str(value))
@@ -962,13 +990,13 @@ class _DefaultTitleFieldType(_DefaultFieldType):
     PALETTE_CLASS = TitlePalette
 
     def make_desired_cell_ch_chunks(
-        self, value, fmt_modifier, cell_plt, connotations,
+        self, value, fmt_modifier, cell_plt, traits,
     ) -> ([CHText.Chunk], int):
         """Make desired content for title."""
         if isinstance(value, str) and fmt_modifier is None:
             return cell_plt.col_title(value), self.ALIGN_LEFT
         return super().make_desired_cell_ch_chunks(
-            value, fmt_modifier, cell_plt, connotations)
+            value, fmt_modifier, cell_plt, traits)
 
 
 class FieldValueType(PaletteUser):
@@ -995,12 +1023,12 @@ class FieldValueType(PaletteUser):
     PALETTE_CLASS = FieldType.FieldPalette
 
     def make_desired_cell_ch_chunks(
-        self, fmt_modifier, cell_plt, connotations,
+        self, fmt_modifier, cell_plt, traits,
     ) -> ([CHText.Chunk], int):
         raise NotImplementedError(
             f"'make_desired_cell_ch_chunks' is not implemented in '{type(self)}'")
 
-    def get_cell_text_len(self, fmt_modifier, connotations):
+    def get_cell_text_len(self, fmt_modifier, traits):
         """Calculate length of text representation of self (for usual cell)
 
         This implementation is universal, but inefficient. Override in
@@ -1008,16 +1036,16 @@ class FieldValueType(PaletteUser):
         it is not required to find out text length.
         """
         ch_text_chunks, _ = self.make_desired_cell_ch_chunks(
-            fmt_modifier, self.PALETTE_CLASS(no_color=True), connotations,
+            fmt_modifier, self.PALETTE_CLASS(no_color=True), traits,
         )
         return CHText.calc_chunks_len(ch_text_chunks)
 
     def make_cell_ch_chunks(
-        self, fmt_modifier, width, cell_plt, connotations,
+        self, fmt_modifier, width, cell_plt, traits,
     ) -> [CHText.Chunk]:
         """self -> [CHText.Chunk] having exactly specified width."""
 
-        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, cell_plt, connotations)
+        text, align = self.make_desired_cell_ch_chunks(fmt_modifier, cell_plt, traits)
         return FieldType.fit_to_width(text, width, align, cell_plt)
 
 
@@ -1144,47 +1172,92 @@ class RecordStructure:
                 f"Valid fields names: {self.map.keys()}")
 
 
-class RecordWithConnotations:
-    """Contains a record and connotations.
+class RecordWithTraits:
+    """Contains a record and traits.
 
-    The record itself may have connotations and in addition to that there may be
-    connotations associated with columns of record's representation.
-
-    Note, that connotations are applied not to the record fields but to the columns of
-    a record representation. Record representation (for example a table) may have
-    several columns associated with the same record field, these columns may have
-    different formats and different annotations associated with them.
+    Traits contain additional information of record, see PPTrait for more details.
+    Each trait may be associated with either one of:
+    - the record itself (for example: "the record is marked deleted")
+    - a field of the record (for example: "field value is invalid")
+    - a value of this record in a specific column. If some record field is displayed in
+        several columns you may associate the trait with a specific column.
     """
-    def __init__(self, record, record_connotations=None, cols_connotations=None):
-        """RecordWithConnotations constructor.
+    def __init__(self, record, record_traits=None, fields_traits=None, cols_traits=None):
+        """RecordWithTraits constructor.
 
         Arguments:
         - record: the record object
-        - record_connotations: str or [str, ] - names of connotations(*) to be applied
-          to all fields.
-        - cols_connotations: {column_name: connotatiions}
+        - record_traits: traits(*) applicable to the whole record
+        - fields_traits: {field_name: traits(*)}
+        - cols_traits: {column_name: traits(*)}
 
-        (*) possible names of connotations are the names of ConfColor's in
-        FieldType.FieldPalette.
+        (*) in all arguments 'traits' means either a single trait or list of traits.
+        'trait' in the argument is either a PPTrait object or a string. String in this
+        context is interpreted as a connotation name.
+
+        Possible names of connotations are the names of ConfColor's in FieldType.FieldPalette.
         """
         self.record = record
-        self.record_connotations = record_connotations
-        self.cols_connotations = cols_connotations
+        self.record_traits = self._parse_traits_arg(record_traits)
+        self.fields_traits = fields_traits
+        if self.fields_traits is not None:
+            self.fields_traits = {
+                field_name: self._parse_traits_arg(field_traits)
+                for field_name, field_traits in self.fields_traits.items()
+            }
+        self.cols_traits = cols_traits
+        if self.cols_traits is not None:
+            self.cols_traits = {
+                col_name: self._parse_traits_arg(col_traits)
+                for col_name, col_traits in self.cols_traits.items()
+            }
 
-    def gen_column_connotations(self, column_name):
-        """Generate names of connotations applicable for a column."""
-        if self.record_connotations is not None:
-            if isinstance(self.record_connotations, str):
-                yield self.record_connotations
+    @staticmethod
+    def _parse_traits_arg(traits) -> [PPTrait]:
+        # traits argument -> list of PPTrait objects
+        # The argument may be a list of PPTrait and string objects
+        if traits is None:
+            return tuple()
+        if isinstance(traits, str):
+            # in this case 'traits' is a name of a single connotation
+            return [PPTrait(traits)]
+        if isinstance(traits, PPTrait):
+            return [traits]
+
+        # 'traits' is a list of strings and PPTrait objects
+        result = []
+        accumulated_connotations = []
+        for arg in traits:
+            if isinstance(arg, str):
+                accumulated_connotations.append(arg)
+            elif isinstance(arg, PPTrait):
+                if accumulated_connotations:
+                    result.append(PPTrait(*accumulated_connotations))
+                    accumulated_connotations = []
+                result.append(arg)
             else:
-                yield from self.record_connotations
-        if self.cols_connotations is not None:
-            col_connotations = self.cols_connotations.get(column_name)
-            if col_connotations is not None:
-                if isinstance(col_connotations, str):
-                    yield col_connotations
-                else:
-                    yield from col_connotations
+                assert False, (
+                    f"Unexpected trait argument '{arg}'. Type is '{type(arg)}'; "
+                    f"expected 'str' or 'PPTrait'")
+        if accumulated_connotations:
+            result.append(PPTrait(*accumulated_connotations))
+
+        return result
+
+    def gen_traits(self, field_name, column_name):
+        """Generate traits applicable for a column."""
+        if self.record_traits is not None:
+            yield from self.record_traits
+
+        if self.fields_traits is not None:
+            tt = self.fields_traits.get(field_name)
+            if tt is not None:
+                yield from tt
+
+        if self.cols_traits is not None:
+            tt = self.cols_traits.get(colum_name)
+            if tt is not None:
+                yield from tt
 
 
 class ReprColumn:
@@ -1272,38 +1345,38 @@ class ReprColumn:
 
         (Actual cell may be shorter or longer).
         """
-        if isinstance(record, RecordWithConnotations):
-            connotations = tuple(record.gen_column_connotations(self.name))
+        if isinstance(record, RecordWithTraits):
+            traits = tuple(record.gen_traits(self.field.name, self.name))
             record = record.record
         else:
-            connotations = tuple()
+            traits = tuple()
 
         value = self.field.fetch_value(record)
         if isinstance(value, FieldValueType):
-            return value.get_cell_text_len(self.fmt_modifier, connotations)
+            return value.get_cell_text_len(self.fmt_modifier, traits)
 
-        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier, connotations)
+        return self.field.field_type.get_cell_text_len(value, self.fmt_modifier, traits)
 
     def make_cell_ch_chunks(self, record, cell_plt) -> [CHText.Chunk]:
         """Fetch value from record and make colored text for a cell.
 
         Length of created text is exactly self.width.
         """
-        if isinstance(record, RecordWithConnotations):
-            connotations = tuple(record.gen_column_connotations(self.name))
+        if isinstance(record, RecordWithTraits):
+            traits = tuple(record.gen_traits(self.field.name, self.name))
             record = record.record
         else:
-            connotations = tuple()
+            traits = tuple()
 
         value = self.field.fetch_value(record)
 
         if isinstance(value, FieldValueType):
             cell_plt = cell_plt.get_sub_palette(value.PALETTE_CLASS)
             return value.make_cell_ch_chunks(
-                self.fmt_modifier, self.width, cell_plt, connotations)
+                self.fmt_modifier, self.width, cell_plt, traits)
 
         return self.field.field_type.make_cell_ch_chunks(
-            value, self.fmt_modifier, self.width, cell_plt, connotations,
+            value, self.fmt_modifier, self.width, cell_plt, traits,
         )
 
     def to_fmt_str(self):
@@ -1789,7 +1862,7 @@ class ReprStructure:
         return [
             self.title_field_type.make_cell_ch_chunks(
                 title, None, col.width, cp,
-                (),  # connotations. Title cells do not have connotations
+                (),  # traits. Title cells do not have traits
             )
             for title, col in zip(cols_titles, self.columns)
         ]

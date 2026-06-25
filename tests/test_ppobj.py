@@ -11,7 +11,7 @@ from ak.ppobj import (
     PPObj,
     FieldType, FieldValueType, RecordField,
     PPRecordFmt, PPTable, TableBlock,
-    RecordWithConnotations,
+    RecordWithTraits,
 )
 
 
@@ -1325,7 +1325,7 @@ class TestPPTable(unittest.TestCase):
                     cols_conn = {"descr": "conn_err", "status": "conn_err"}
                 else:
                     cols_conn = None
-                yield RecordWithConnotations(r, record_conn, cols_conn)
+                yield RecordWithTraits(r, record_conn, cols_conn)
 
         table = PPTable(
             _apply_connotations(records), fields=['id', 'descr', 'status'],
@@ -2243,7 +2243,7 @@ class TestPPRecordFormatter(unittest.TestCase):
 
         # and print the same record with connotations applied for some fields
         s = str(rec_fmt(
-            RecordWithConnotations(
+            RecordWithTraits(
                 record,
                 None,
                 {"department": "conn_err"},
