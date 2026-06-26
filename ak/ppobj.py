@@ -750,15 +750,6 @@ class PPTrait:
     def __init__(self, *connotations):
         self.connotations = connotations
 
-    @staticmethod
-    def get_connotations(traits):
-        """Get all the connotations from given traits."""
-        return [
-            c
-            for trait in traits
-            for c in trait.connotations
-        ]
-
 
 #########################
 # class FieldType
@@ -846,7 +837,7 @@ class FieldType(PaletteUser):
         Implementation for general field type: value printed almost as is.
         To be overiden in derived classes.
         """
-        connotations = PPTrait.get_connotations(traits)
+        connotations = self.traits_to_connotations(traits)
         if fmt_modifier is not None:
             raise ValueError(
                 f"{type(self)} field type does not support format modifiers. "
@@ -871,6 +862,15 @@ class FieldType(PaletteUser):
             value, fmt_modifier, cell_plt, traits)
 
         return self.fit_to_width(text, width, align, cell_plt)
+
+    @staticmethod
+    def traits_to_connotations(traits):
+        """Get all the connotations from given traits."""
+        return [
+            c
+            for trait in traits
+            for c in trait.connotations
+        ]
 
     def _verify_fmt_modifier(self, fmt_modifier):
         # Raise exc if 'fmt_modifier' is not compatible with this field type.

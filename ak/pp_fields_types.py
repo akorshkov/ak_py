@@ -58,7 +58,7 @@ class PPDateTimeFieldType(FieldType):
 
         assert isinstance(value, datetime)
 
-        connotations = PPTrait.get_connotations(traits)
+        connotations = self.traits_to_connotations(traits)
 
         fmt = lambda fmt_name: cell_plt.get_color(fmt_name, *connotations)
 
@@ -109,7 +109,7 @@ class PPDecimalFieldType(FieldType):
             return super().make_desired_cell_ch_chunks(
                     value, fmt_modifier, cell_plt, traits)
 
-        connotations = PPTrait.get_connotations(traits)
+        connotations = self.traits_to_connotations(traits)
 
         if (not self.extra_digits_as_err) or value == round(value, self.precision):
             str_val = f"{value:{self._grp}.{self.precision}f}"
@@ -208,7 +208,7 @@ class PPEnumFieldType(FieldType):
         if by_value_cache is None:
             self._verify_fmt_modifier(fmt_modifier)
 
-        connotations = tuple(PPTrait.get_connotations(traits))
+        connotations = tuple(self.traits_to_connotations(traits))
         cache_key = (value, connotations)
 
         if cache_key not in by_value_cache:
