@@ -789,6 +789,7 @@ class ColorFmt:
         bold=None, faint=None, underline=None, blink=None, crossed=None,
         no_color=False,
         _color_codes_set=None,
+        _sample_color_fmt=None,
     ):
         """Create an object which converts text to text with specified effects.
 
@@ -812,12 +813,22 @@ class ColorFmt:
         - no_color: if True, all other arguments are ignored and
             created object is 'dummy' - it does not add any effects to text.
         - _color_codes_set: argument for internal use only
+        - _sample_color_fmt: argument for internal use only
         """
-        self._color_codes = _color_codes_set or _ColorCodesSet.make(
-            color, bg_color, bold, faint, underline, blink, crossed,
-            no_color)
+        if _sample_color_fmt is not None:
+            color_codes = _sample_color_fmt._color_codes
+            color_prefix = _sample_color_fmt._color_prefix
+            color_suffix = _sample_color_fmt._color_suffix
+        else:
+            color_codes = _color_codes_set or _ColorCodesSet.make(
+                color, bg_color, bold, faint, underline, blink, crossed,
+                no_color)
 
-        self._color_prefix, self._color_suffix = self._color_codes.make_ansi_sequences()
+            color_prefix, color_suffix = color_codes.make_ansi_sequences()
+
+        self._color_codes = color_codes
+        self._color_prefix = color_prefix
+        self._color_suffix = color_suffix
 
     @classmethod
     def get_plaintext_fmt(cls) -> 'ColorFmt':
@@ -1666,6 +1677,34 @@ class ConfColor:
         assert False
 
 
+class PaletteColorFmt(ColorFmt):
+    """ColorFmt which belongs to Palette.
+
+    Provides more convenient method of combinig color formatter with connotations.
+    """
+
+    __slots__ = ('_palette', )
+
+    def __init__(self, palette, color_fmt):
+        super().__init__(None, _sample_color_fmt=color_fmt)
+        self._palette = palette
+
+    def with_connotations(self, *connotations):
+        """Return PaletteColorFmt which is a combination of self and connotations.
+
+        Only connotations from the same palette as self can be applied.
+
+        Arguments:
+        - connotations: each connotation may be either a string (name of the connotation)
+        or a PaletteColorFmt object which belongs to the same palette as self.
+        String arguments which are not names of the connotations are ignored and not
+        result in an error.
+        However if PaletteColorFmt argument does not belong to the same palette an exception
+        if thrown.
+        """
+        return self._palette.get_color(self, *connotations)
+
+
 class _PaletteMeta(type):
     # Meta class for Palette-derived classes.
     #
@@ -1825,10 +1864,39 @@ class Palette(metaclass=_PaletteMeta):
         """
         # pylint: disable=unused-argument
         assert self._LOCAL_SYNTAX.keys() == _local_colors.keys()
+        assert 'text' in _local_colors, (
+            f"'text' must be present in any palette: {_local_colors=}")
 
         self._synced = synced
-        self._local_colors = _local_colors  # {plt_synt_id: (color_conf_id, ColorFmt)}
-        self._color_fmts = {}  # {(plt_synt_id, (connotation, ...)): ColorFmt}
+
+        # information mostly necessary to prepare self-report.
+        # Note that _local_colors argument contains ColorFmt objects,
+        # need to make PaletteColorFmt objects from them.
+        #
+        # {'keyword': ('FIELD.KEYWORD', palette_color_fmt)}
+        self._local_colors = {
+            plt_synt_id: (color_conf_id, PaletteColorFmt(self, fmt))
+            for plt_synt_id, (color_conf_id, fmt) in _local_colors.items()
+        }
+
+        # all the registered fomatters
+        # The key of this dictionary:
+        # - string: plt_synt_id for formatters explicitely described in the palette
+        # - tuple of id's of components: for formatters created as a combination
+        #   of connotations
+        self._color_fmts = {
+            plt_synt_id: fmt
+            for plt_synt_id, (color_conf_id, fmt) in self._local_colors.items()
+        }
+
+        # reverse self._color_fmts dictionary
+        self._fmts_keys = {
+            fmt: key
+            for key, fmt in self._color_fmts.items()
+        }
+
+        # special item: default formatter
+        self._color_fmts[None] = self._color_fmts['text']
 
         for n, v in self._local_colors.items():
             setattr(self, n, v[1])
@@ -1872,7 +1940,7 @@ class Palette(metaclass=_PaletteMeta):
         else:
             colors_conf.put_into_cache(cls, palette)
 
-    def get_color(self, plt_synt_id, *connotations) -> ColorFmt:
+    def get_color(self, plt_synt_id, *connotations) -> PaletteColorFmt:
         """Get ColorFmt stored in the palette.
 
         Argument:
@@ -1880,39 +1948,56 @@ class Palette(metaclass=_PaletteMeta):
             plt_synt_id = ConfColor(...)
         - connotations: syntax ids to be used as connotations.
         """
-        key = (plt_synt_id, connotations)
+        srcs = list(connotations)
+        srcs.insert(0, plt_synt_id)
+
+        components = []  # [(key_item, fmt)]
+        for src in srcs:
+            if src is None or isinstance(src, str):
+                # name of a connotation
+                # It is ok if there is no such item in current palette.
+                components.append((src, self._color_fmts.get(src)))
+            elif isinstance(src, PaletteColorFmt):
+                assert src._palette is self, (
+                    f"Connotation object {src} belongs to a different palette "
+                    f"{src._palette} != {self}")
+                key = self._fmts_keys[src]
+                components.append((key, src))
+            else:
+                assert False, (
+                    f"Unexpected color component ({type(src)}): '{src}'")
+
+        key = tuple(c[0] for c in components)
+        if len(key) == 1:
+            key = key[0]
+
         color_fmt = self._color_fmts.get(key)
         if color_fmt is None:
-            color_fmt = self._construct_color_fmt(plt_synt_id, connotations)
+            # components w/o unknown connotations
+            stripped_components = [c for c in components if c[1] is not None]
+
+            stripped_key = tuple(c[0] for c in stripped_components)
+            color_fmt = self._color_fmts.get(stripped_key)
+            if color_fmt is None:
+                # we do need to create new formatter
+                fmts_to_combine = [c[1] for c in stripped_components]
+                color_fmt = self._construct_color_fmt(fmts_to_combine)
+                color_fmt = PaletteColorFmt(self, color_fmt)
+                self._color_fmts[stripped_key] = color_fmt
+                self._fmts_keys[color_fmt] = stripped_key
+
             self._color_fmts[key] = color_fmt
 
         return color_fmt
 
-    def _construct_color_fmt(self, plt_synt_id, connotations):
+    def _construct_color_fmt(self, components):
         # combine the ColorFmt objects corresponding to plt_synt_id and connotations
         # into a single ColorFmt
 
-        main_fmt = self._get_plt_synt_formater(plt_synt_id)
-
-        if len(connotations) == 0:
-            return main_fmt
-
-        fmts = [main_fmt, ]
-
-        for conn in connotations:
-            fmts.append(self._get_plt_synt_formater(conn))
-
         color_codes_set = _ColorCodesSet.combine_color_code_sets(
-            fmt._color_codes for fmt in fmts)
+            fmt._color_codes for fmt in components)
 
         return ColorFmt(None, _color_codes_set=color_codes_set)
-
-    def _get_plt_synt_formater(self, plt_synt_id) -> ColorFmt:
-        # plt_synt_id -> ColorFmt
-        x = self._local_colors.get(plt_synt_id)
-        if x is None:
-            return self.text  # dummy plain-text formatter
-        return x[1]
 
     def _sync_with_config(self, colors_conf):
         # update self after the state of the global config has changed

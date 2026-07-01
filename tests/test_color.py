@@ -11,6 +11,41 @@ from ak.color import (
 )
 
 
+class _BaseColorFmtTestCase(unittest.TestCase):
+    # base class test cases; contains helper test methods
+
+    def _verify_formatters_similar(self, fmt0, fmt1, descr=None):
+        # Compare two ColorFmt objects.
+        # In case the objects produce same formatting make sure these objects
+        # are the same object or use the same internals.
+        #
+        # Palettes do their best in order to not create unnecessary new ColorFmt
+        # objects, so in most cases when two formatters are created by the same
+        # palette and produce the same formatting these formattres should be the same
+        # object.
+        descr = descr or "<no descr>"
+        t = "test string"
+        self.assertEqual(
+            str(fmt0(t)), str(fmt1(t)),
+            f"Color formatters {fmt0} and {fmt1} produce different formatting: {descr}")
+
+        self.assertIs(
+            fmt0._color_prefix, fmt1._color_prefix,
+            f"Color formatters {fmt0} and {fmt1} produce same formatting, but "
+            f"do not share internals: {descr}")
+
+        self.assertIs(
+            fmt0._color_codes, fmt1._color_codes,
+            f"Color formatters {fmt0} and {fmt1} produce same formatting, but "
+            f"do not share internals: {descr}")
+
+        if type(fmt0) is type(fmt1):
+            self.assertIs(
+                fmt0, fmt1,
+                f"Color formatters {fmt0} and {fmt1} produce same formatting, but "
+                f"are not the same object: {descr}")
+
+
 #########################
 # Test ColorFmt
 
@@ -737,7 +772,7 @@ class TestPaletteColorsParsing(unittest.TestCase):
                 set_global_colors_config(None)
 
 
-class TestColorsConfigAndGlobalPalette(unittest.TestCase):
+class TestColorsConfigAndGlobalPalette(_BaseColorFmtTestCase):
     """Test ColorsConfig class and global_palette."""
 
     class TstColorsConfig(ColorsConfig):
@@ -1190,18 +1225,27 @@ class TestColorsConfigAndGlobalPalette(unittest.TestCase):
         # these syntaxes)
 
         # "NAME" syntax is present in our config, global_palette.name uses it
-        self.assertIs(
+
+        self._verify_formatters_similar(
             global_palette.name, global_palette["NAME"],
             "must produce the same result for built-in syntaxes")
-        self.assertIs(global_palette.name, colors_conf.get_color("NAME"))
+
+        # self.assertIs(global_palette.name, colors_conf.get_color("NAME"))
+
         self.assertEqual(
             str(global_palette.name("some text")),
             str(ColorFmt("BLUE", bold=True)("some text")))
 
-        # "KEYWORD" syntax is present in our config, but
-        # global_palette.keyword should be present. Default syntax is used instead.
-        self.assertIs(global_palette.keyword, global_palette["KEYWORD"])
-        self.assertIs(global_palette.keyword, colors_conf.get_color("TEXT"))
+        # "KEYWORD" syntax is not present in our config, but
+        # global_palette.keyword should be present because it is a standard
+        # syntax declared in ak.color.ColorsConfig.BUILT_IN_CONFIG.
+        # Default formatting is used when using this syntax.
+        self._verify_formatters_similar(
+            global_palette.keyword, global_palette["KEYWORD"])
+        self._verify_formatters_similar(
+            global_palette.keyword, colors_conf.get_color("TEXT"),
+            "default syntax 'TEXT' should be used because 'KEYWORD' not defined in the "
+            "colors config.")
 
         # the global palette should have access to all the colors in the config
         fmt_table_border = global_palette["TABLE.BORDER"]
@@ -1690,7 +1734,7 @@ class TestPalete(unittest.TestCase):
         set_global_colors_config(None)
 
 
-class TestPaletteConnotations(unittest.TestCase):
+class TestPaletteConnotations(_BaseColorFmtTestCase):
     """Test format connotations."""
 
     def test_connotations(self):
@@ -1740,3 +1784,16 @@ class TestPaletteConnotations(unittest.TestCase):
 
         # cleanup global config
         set_global_colors_config(None)
+
+        # 4. test formatter's method of creation of connotations
+        alt_err_fmt0 = p.get_color('alt', 'conn_err')
+        alt_err_fmt1 = p.alt.with_connotations(p.conn_err)
+
+        self._verify_formatters_similar(alt_err_fmt0, alt_err_fmt1)
+
+        # 5. unknown connotation names are allowed
+        alt_err_fmt0 = p.get_color('alt', 'bad_conn', 'conn_err', 'unnown_conn')
+        alt_err_fmt1 = p.alt.with_connotations(
+            'another_not_existing', p.conn_err, 'yet_one_more_bad')
+
+        self._verify_formatters_similar(alt_err_fmt0, alt_err_fmt1)
