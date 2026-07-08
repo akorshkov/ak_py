@@ -18,7 +18,7 @@ from datetime import datetime
 from numbers import Number
 
 from ak.color import CHText, ConfColor
-from ak.ppobj import PPTrait, FieldType, FieldValueType, _DefaultTitleFieldType
+from ak.ppobj import FieldType, FieldValueType, _DefaultTitleFieldType
 
 
 #########################

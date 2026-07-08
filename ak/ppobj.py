@@ -750,6 +750,19 @@ class PPTrait:
     def __init__(self, *connotations):
         self.connotations = connotations
 
+    @classmethod
+    def find(cls, traits):
+        """Find and return the first trait which is instance of cls.
+
+        Return None if not found.
+        """
+        return next((t for t in traits if isinstance(t, cls)), None)
+
+    @classmethod
+    def find_all(cls, traits):
+        """Return list of all elements of 'traits' which are instances of cls."""
+        return [t for t in traits if isinstance(t, cls)]
+
 
 #########################
 # class FieldType

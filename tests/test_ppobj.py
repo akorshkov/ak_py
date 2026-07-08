@@ -6,7 +6,7 @@ import json
 from collections import namedtuple
 
 from ak.color import CHText, ConfColor, ColorFmt, Palette, CompoundPalette
-from ak.ppobj import CHTextResult, PPStdFormatter, pp
+from ak.ppobj import PPTrait, CHTextResult, PPStdFormatter, pp
 from ak.ppobj import (
     PPObj,
     FieldType, FieldValueType, RecordField,
@@ -548,6 +548,43 @@ class TestPPObjWithOnlyOneCHTextMethodImplemented(unittest.TestCase):
 
         err_msg = str(exc.exception)
         self.assertIn("PPObjWithNotImplementedGenMethods", err_msg)
+
+
+#########################
+# Test PPTest class
+
+class TestPPTrait(unittest.TestCase):
+    """Test PPTrait class."""
+    # The class is a simple container, not much to test in it.
+
+    def test_find_methods(self):
+        """Test 'find' methods."""
+
+        class Trait1(PPTrait):
+            pass
+
+        class Trait2(PPTrait):
+            pass
+
+        class Trait11(Trait1):
+            pass
+
+        t1 = Trait1()
+        t2 = Trait2()
+        t11 = Trait11()
+
+
+        self.assertIs(t11, Trait11.find([t2, t11, t1]))
+        self.assertIs(t2, Trait2.find([t2, t11, t1]))
+
+        self.assertIs(t1, Trait1.find([t2, t1, t11]))
+        self.assertIs(t11, Trait1.find([t2, t11, t1]), "because t11 is instance of Trait1")
+
+        self.assertIs(None, Trait2.find([t11, t1]))
+
+        self.assertEqual([t11, t1], Trait1.find_all([t2, t11, t1]))
+
+        self.assertEqual([], Trait2.find_all([t11, t1]))
 
 
 #########################
