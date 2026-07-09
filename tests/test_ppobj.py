@@ -1359,7 +1359,10 @@ class TestPPTable(unittest.TestCase):
                 elif r[0] == 5:
                     cols_conn = {"descr": "conn_warn", "status": "conn_warn"}
                 elif r[0] == 6:
-                    cols_conn = {"descr": "conn_err", "status": "conn_err"}
+                    cols_conn = {
+                        "descr": "conn_err",
+                        "status": ["conn_err", None],  # 'None' trait should be ignored
+                    }
                 else:
                     cols_conn = None
                 yield RecordWithTraits(r, record_conn, cols_conn)

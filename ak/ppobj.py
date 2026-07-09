@@ -1248,7 +1248,7 @@ class RecordWithTraits:
                     result.append(PPTrait(*accumulated_connotations))
                     accumulated_connotations = []
                 result.append(arg)
-            else:
+            elif arg is not None:
                 assert False, (
                     f"Unexpected trait argument '{arg}'. Type is '{type(arg)}'; "
                     f"expected 'str' or 'PPTrait'")
