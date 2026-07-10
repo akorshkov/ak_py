@@ -573,12 +573,13 @@ class TestPPTrait(unittest.TestCase):
         t2 = Trait2()
         t11 = Trait11()
 
-
         self.assertIs(t11, Trait11.find([t2, t11, t1]))
         self.assertIs(t2, Trait2.find([t2, t11, t1]))
 
-        self.assertIs(t1, Trait1.find([t2, t1, t11]))
-        self.assertIs(t11, Trait1.find([t2, t11, t1]), "because t11 is instance of Trait1")
+        # t1 and t11 are instances of Trait1 class.
+        # The find method returns the LAST matching object
+        self.assertIs(t1, Trait1.find([t11, t1, t2]))
+        self.assertIs(t11, Trait1.find([t1, t11, t2]))
 
         self.assertIs(None, Trait2.find([t11, t1]))
 
@@ -1368,12 +1369,17 @@ class TestPPTable(unittest.TestCase):
                 yield RecordWithTraits(r, record_conn, cols_conn)
 
         table = PPTable(
-            _apply_connotations(records), fields=['id', 'descr', 'status'],
+            _apply_connotations(records),
+            fields=['id', 'descr', 'status'],
             fmt="id, descr, status, descr",
         )
 
         # print(table)
 
+        verify_table_format(
+            self, table,
+            cols_titles=['id', 'descr', 'status', 'descr'],
+        )
         s = str(table)
 
         # analyse appearence of several cells in the table
@@ -1392,6 +1398,51 @@ class TestPPTable(unittest.TestCase):
             str(ColorFmt("BLUE", bold=True, crossed=True)("False")),
             s,
         )
+
+    def test_pptable_with_own_traits(self):
+        """Test PPTable which has own traits to apply to all records"""
+        records = [
+            (1, "usual", 10),
+        ]
+
+        global_traits = [PPTrait('keyword')]
+
+        table = PPTable(
+            [
+                RecordWithTraits(
+                    r,
+                    None, # record traits
+                    None, # field traits
+                    {"descr_1": PPTrait('number')}, # column traits
+                    )
+                for r in records
+            ],
+            fields=['id', 'descr', 'status'],
+            fmt="id, descr, status, descr",
+            traits=global_traits,
+        )
+
+        # print(table)
+
+        verify_table_format(
+            self, table,
+            cols_titles=['id', 'descr', 'status', 'descr'],
+        )
+
+        s = str(table)
+
+        # all the fields by default are printed as keywords (because of the global_traits)
+        # except for the value of the second 'descr' column:
+        table_palette = PPTable.make_palette()
+        field_palette = table_palette.get_sub_palette(FieldType.PALETTE_CLASS)
+
+        # print(field_palette.make_report())
+
+        self.assertIn(str(field_palette.keyword("1")), s) # 'id' column
+        self.assertIn(str(field_palette.keyword("usual")), s) # first 'descr' column
+
+        fmt = field_palette.keyword.with_connotations(field_palette.number)
+        self.assertIn(str(fmt("usual")), s) # second 'descr' column
 
 
 class TestCustomTableLines(unittest.TestCase):
@@ -2301,6 +2352,59 @@ class TestPPRecordFormatter(unittest.TestCase):
             # built-in config defins format for number as "yellow color"
             # 'conn_err' connotation adds red curly underline
         )
+
+    def test_record_fmt_with_traits(self):
+        """Test PPTraits attached to record or field"""
+
+        tupletype = namedtuple("SomeRecord", ["id", "description", "department"])
+        record = tupletype(10, "short", 245)
+
+        rec_fmt_palette = PPRecordFmt.make_palette()
+        field_palette = rec_fmt_palette.get_sub_palette(FieldType.PALETTE_CLASS)
+        #print(field_palette.make_report())
+
+        trait_text_kw = PPTrait('keyword')  # text will be printed same color as keyword
+        trait_text_num = PPTrait('number')
+        trait_del = PPTrait('conn_deleted')
+
+        global_traits = [trait_text_num, ]
+
+        # 1. formatter w/o own traits
+        rec_fmt = PPRecordFmt("id:7,description:7,department:9")
+
+        s = str(rec_fmt(
+            RecordWithTraits(
+                record,
+                None,
+                {"department": trait_text_kw},
+            )))
+
+        # print(s)
+
+        self.assertIn(
+            str(field_palette.keyword(245)), s,
+            "because of trait 'department' field is formatted as keyword")
+
+        # 2. formatter with own traits
+        rec_fmt = PPRecordFmt("id:7,description:7,department:9", traits=[trait_text_num])
+
+        s = str(rec_fmt(
+            RecordWithTraits(
+                record,
+                None,
+                {"department": trait_text_kw},
+            )))
+
+        # print(s)
+
+        self.assertIn(
+            str(field_palette.number("short")), s,
+            "formatter has own traits: by default all values are formatted as numbers")
+
+        self.assertIn(
+            str(field_palette.keyword(245)), s,
+            "because of explicitely specified trait the 'department' field is "
+            "formatted as keyword")
 
 
 #########################

@@ -2200,11 +2200,12 @@ class PaletteUser:
 
         return palette_class(no_color)
 
+    @classmethod
     def make_palette(
-        self, *, palette=None, no_color=False,
+        cls, *, palette=None, no_color=False,
         compound_palette=None, shade_name=None,
     ):
-        return self._mk_palette(palette, no_color, compound_palette, shade_name)
+        return cls._mk_palette(palette, no_color, compound_palette, shade_name)
 
 
 def get_global_colors_config():

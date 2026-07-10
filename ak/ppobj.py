@@ -752,11 +752,14 @@ class PPTrait:
 
     @classmethod
     def find(cls, traits):
-        """Find and return the first trait which is instance of cls.
+        """Find and return the LAST trait which is instance of cls.
+
+        Connotations of the first traits can be overwritten by connotations of
+        later traits, so later traits have higher precedence.
 
         Return None if not found.
         """
-        return next((t for t in traits if isinstance(t, cls)), None)
+        return next((t for t in reversed(traits) if isinstance(t, cls)), None)
 
     @classmethod
     def find_all(cls, traits):
@@ -1210,7 +1213,7 @@ class RecordWithTraits:
 
         Possible names of connotations are the names of ConfColor's in FieldType.FieldPalette.
         """
-        self.record = record
+        self._record = record
         self.record_traits = self._parse_traits_arg(record_traits)
         self.fields_traits = fields_traits
         if self.fields_traits is not None:
@@ -1224,6 +1227,14 @@ class RecordWithTraits:
                 col_name: self._parse_traits_arg(col_traits)
                 for col_name, col_traits in self.cols_traits.items()
             }
+
+    @property
+    def record(self):
+        # find actual record in case of enclosed RecordWithTraits objects
+        r = self._record
+        while isinstance(r, RecordWithTraits):
+            r = r._record
+        return r
 
     @staticmethod
     def _parse_traits_arg(traits) -> [PPTrait]:
@@ -1268,9 +1279,17 @@ class RecordWithTraits:
                 yield from tt
 
         if self.cols_traits is not None:
-            tt = self.cols_traits.get(colum_name)
+            tt = self.cols_traits.get(column_name)
             if tt is not None:
                 yield from tt
+
+        # case of enclosed RecordWithTraits objects
+        # it is important that enclosed traits be reported after own.
+        # In case the record formatter has own traits these traits
+        # will be in the outer RecordWithTraits object and should be
+        # reported first becuase the later traits have higher precedence
+        if isinstance(self._record, RecordWithTraits):
+            yield from self._record.gen_traits(field_name, column_name)
 
 
 class ReprColumn:
@@ -2012,6 +2031,7 @@ class PPRecordFmt(PaletteUser):
         fields=None, fields_types=None, columns_titles=None, sample_record=None,
         style=None,
         repr_structure=None,
+        traits=None,
         palette=None, no_color=None, compound_palette=None, shade_name=None,
     ):
         """ PPRecordFmt constructor.
@@ -2022,6 +2042,7 @@ class PPRecordFmt(PaletteUser):
             doc for more detailed description.
         - repr_structure: optional ReprStructure object, can be specified instead of
             all the previous arguments.
+        - traits: optional list of PPTrait objects to be applied to all record columns
         - palette, no_color, compound_palette, shade_name: set of arguments which
             specify default palette used for formatting records. Check PPObj.ch_text
             doc string for detailed description of these arguments.
@@ -2042,6 +2063,8 @@ class PPRecordFmt(PaletteUser):
             assert style is None
 
         self.repr_structure = repr_structure
+
+        self.traits = traits
 
         self._plt = None
         self._cols_plts = None
@@ -2102,6 +2125,9 @@ class PPRecordFmt(PaletteUser):
                 f"both 'record' and keyword arguments are specified specified: "
                 f"{record=}; {kwargs=}")
             record = kwargs
+
+        if self.traits is not None:
+            record = RecordWithTraits(record, self.traits)
 
         if not self.repr_structure.col_widths_finalized():
             self.repr_structure.detect_actual_columns_widths(
@@ -2513,6 +2539,7 @@ class PPTable(PPObj):
             fields=None,
             fields_types=None,
             columns_titles=None,
+            traits=None,
             style=None,
     ):
         """Constructor of PPTable object - this object prints table.
@@ -2542,6 +2569,7 @@ class PPTable(PPObj):
             - string containing new-line characters (for multi-line title)
             - list of strings or other simple objects (for multi-line title)
         - fields_types: (optional) dictionary {field_name: FieldType}.
+        - traits: optional list of PPTraits to apply to all records
         - style: optional PPTable.Style object which affects table look: characters
             to be used as borders, whether to print summary, etc.
 
@@ -2600,6 +2628,8 @@ class PPTable(PPObj):
                 fmt, fields, fields_types, columns_titles,
                 self.records[0] if self.records else None,
                 style=style or self._DFLT_STYLE)
+
+        self.traits = traits
 
         self._ppt_fmt.set_limits(limits)
 
@@ -2662,7 +2692,9 @@ class PPTable(PPObj):
 
         tbl_plt = self._mk_palette(palette, no_color, compound_palette, shade_name)
         return PPRecordFmt(
-            None, repr_structure=self._ppt_fmt.repr_structure, palette=tbl_plt)
+            None, repr_structure=self._ppt_fmt.repr_structure,
+            traits=self.traits,
+            palette=tbl_plt)
 
     def gen_ch_lines(self, tbl_plt: Palette) -> Iterator[CHText]:
         """Generate CHText objects - lines of the printed table"""
