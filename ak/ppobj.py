@@ -1197,7 +1197,11 @@ class RecordWithTraits:
     - a field of the record (for example: "field value is invalid")
     - a value of this record in a specific column. If some record field is displayed in
         several columns you may associate the trait with a specific column.
+
+    RecordWithTraits objects may be 'composite': if the record argument of the constructor
+    is itself a RecordWithTraits then the result just adds some new traits to the existing.
     """
+    __slots__ = 'record', '_enclosed', 'record_traits', 'fields_traits', 'cols_traits'
     def __init__(self, record, record_traits=None, fields_traits=None, cols_traits=None):
         """RecordWithTraits constructor.
 
@@ -1213,7 +1217,12 @@ class RecordWithTraits:
 
         Possible names of connotations are the names of ConfColor's in FieldType.FieldPalette.
         """
-        self._record = record
+        if isinstance(record, RecordWithTraits):
+            self.record = record.record
+            self._enclosed = record
+        else:
+            self.record = record
+            self._enclosed = None
         self.record_traits = self._parse_traits_arg(record_traits)
         self.fields_traits = fields_traits
         if self.fields_traits is not None:
@@ -1227,14 +1236,6 @@ class RecordWithTraits:
                 col_name: self._parse_traits_arg(col_traits)
                 for col_name, col_traits in self.cols_traits.items()
             }
-
-    @property
-    def record(self):
-        # find actual record in case of enclosed RecordWithTraits objects
-        r = self._record
-        while isinstance(r, RecordWithTraits):
-            r = r._record
-        return r
 
     @staticmethod
     def _parse_traits_arg(traits) -> [PPTrait]:
@@ -1288,8 +1289,8 @@ class RecordWithTraits:
         # In case the record formatter has own traits these traits
         # will be in the outer RecordWithTraits object and should be
         # reported first becuase the later traits have higher precedence
-        if isinstance(self._record, RecordWithTraits):
-            yield from self._record.gen_traits(field_name, column_name)
+        if self._enclosed is not None:
+            yield from self._enclosed.gen_traits(field_name, column_name)
 
 
 class ReprColumn:
