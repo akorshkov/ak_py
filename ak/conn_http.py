@@ -116,6 +116,9 @@ class HttpConn:
     _HDR_NAME_REQ_ID = 'X-request-id'
     _HDR_NAME_CONT_TYPE = 'Content-type'
 
+    # to make it possible to catch http exceptions in client code without import urllib.error:
+    Error = urllib.error.HTTPError
+
     def __init__(
         self,
         conn_data,
@@ -386,9 +389,16 @@ class HttpConn:
         try:
             response = self.opener.open(request)
         except urllib.error.HTTPError as err:
+            # store error data in the exception in a more convenient way
             with err:
                 err.data = err.read()
             self._log_response(err, url)
+
+            try:
+                err.data = json.loads(err.data.decode('utf-8'))
+            except Exception:
+                pass
+
             raise
 
         with response:
